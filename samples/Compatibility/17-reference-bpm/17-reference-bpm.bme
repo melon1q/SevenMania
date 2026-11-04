@@ -1,0 +1,10 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE BASEBPM and EXBPM alias
+#BASEBPM 240
+#EXBPM01 60
+#00108:01
+#00219:01

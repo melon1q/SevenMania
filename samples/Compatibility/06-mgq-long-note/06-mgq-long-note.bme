@@ -1,0 +1,9 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE MGQ continuous slots
+#LNTYPE 2
+#00051:01010000
+#00019:01

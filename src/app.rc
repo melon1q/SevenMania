@@ -1,0 +1,8 @@
+﻿#include <windows.h>
+
+IDI_APP_ICON ICON "../Assets/app-icon.ico"
+
+2001 RCDATA "../Assets/Fonts/Michroma-Regular.ttf"
+
+2002 RCDATA "../Assets/Fonts/Oxanium-Regular.ttf"
+2003 RCDATA "../Assets/Fonts/Oxanium-Bold.ttf"

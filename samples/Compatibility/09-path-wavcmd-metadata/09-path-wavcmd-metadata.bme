@@ -1,0 +1,15 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Asset metadata
+#SUBARTIST Contributor
+#COMMENT Fixture comment
+#DIFFICULTY 3
+#VOLWAV 50
+#WAVCMD 00 01 72
+#WAVCMD 01 01 25
+#WAVCMD 02 01 100
+#WAV01 "../Assets/tone.wav"
+#00019:01

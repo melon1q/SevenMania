@@ -1,0 +1,12 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE STP and last STOP
+#STOP01 48
+#STOP02 96
+#00009:01
+#00009:02
+#STP 000.500 250
+#00119:01

@@ -1,0 +1,33 @@
+﻿# CMake / Visual Studio build output
+/build*/
+/out/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/CTestTestfile.cmake
+*.sln
+*.vcxproj.user
+*.pdb
+*.ilk
+*.obj
+*.exe
+*.lib
+
+# Generated packages and local validation output
+/dist*/
+/Songs/
+/Assets/browse-background.*
+/*.zip
+/구버전-dist-보관/
+/Validation/ui-test-*.ini
+/Validation/ui-import-test-*/
+/Validation/ui-playback-fixture-*/
+/Validation/ui-app-*/
+/Validation/*.bmp
+/Validation/*-preview.bmp
+/Validation/Performance/
+/Validation/Smoothness/
+/Validation/RESULTS.md
+
+# Local font experiment and sample package
+/BmsPlayer-NeoDunggeunmo/

@@ -1,0 +1,9 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Hexadecimal asset IDs
+#BASE 16
+#WAV0F ../Assets/tone.wav
+#00019:0F

@@ -1,0 +1,23 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE BGA layer and key animation
+#BMP01 ../Assets/base.bmp
+#BMP02 ../Assets/layer.bmp
+#BMP00 ../Assets/poor.bmp
+#BMP0A ../Assets/movie.avi
+#BMP0B ../Assets/offset.avi
+#@BGA03 02 0 0 128 256 128 0
+#EXBMP04 128,0,0,0 ../Assets/layer.bmp
+#ARGB01 128,0,0,0
+#SWBGA01 100:400:11:1:255,0,0,0 01020102
+#00004:01
+#00007:02
+#000A5:01
+#001A2:01
+#00204:0A
+#00207:0B
+#00404:0A
+#00819:01

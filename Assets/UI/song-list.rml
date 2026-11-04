@@ -1,0 +1,9 @@
+﻿<rml>
+<head>
+    <title>Song selection</title>
+    <link type="text/rcss" href="song-list.rcss" />
+</head>
+<body>
+    <div id="rows"></div>
+</body>
+</rml>

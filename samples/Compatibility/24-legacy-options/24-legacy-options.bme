@@ -1,0 +1,12 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Legacy authored visual options
+#OPTION 774:CRA-XWAVE1
+#OPTION 774:HID-BLINK2
+#OPTION 774:CRAZY_REVERSE
+#OPTION 774:CRAZY_SMALL
+#OPTION 774:CRAZY_LINEMOVE
+#00019:01

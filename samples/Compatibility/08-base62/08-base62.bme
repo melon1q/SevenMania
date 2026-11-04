@@ -1,0 +1,10 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Case-sensitive IDs
+#BASE 62
+#WAVaA ../Assets/tone.wav
+#WAVAa ../Assets/tone.wav
+#00019:aAAa

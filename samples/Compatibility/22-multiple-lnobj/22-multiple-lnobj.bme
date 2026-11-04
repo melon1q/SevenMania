@@ -1,0 +1,13 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Multiple LNOBJ end sounds
+#WAVBB ../Assets/tone.wav
+#WAVDD ../Assets/tone.wav
+#LNOBJ BB
+#LNOBJ DD
+#00011:01BB
+#00113:02DD
+#00219:01

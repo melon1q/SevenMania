@@ -1,0 +1,8 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Opacity FF to zero
+#0000B:FF00
+#00119:01

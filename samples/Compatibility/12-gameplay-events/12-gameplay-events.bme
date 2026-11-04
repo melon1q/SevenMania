@@ -1,0 +1,12 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Input and judgement integration
+#TOTAL 400
+#RANK 2
+#00031:02
+#001D1:0A
+#00219:01
+#00351:0102

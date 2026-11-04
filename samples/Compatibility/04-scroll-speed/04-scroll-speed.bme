@@ -1,0 +1,16 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Signed SCROLL and interpolated SPEED
+#SCROLL01 -1
+#SCROLL02 0
+#SCROLL03 1
+#SPEED01 2
+#001SC:01
+#002SC:02
+#003SC:03
+#001SP:01
+#00019:01
+#00419:01

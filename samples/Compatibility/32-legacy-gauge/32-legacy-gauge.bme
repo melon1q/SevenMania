@@ -1,0 +1,10 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Legacy gauge aliases
+#OPTION 774:GTP-FULL
+#OPTION 774:GLV-TOTAL100
+#OPTION 774:HSP-MANUAL
+#00119:01

@@ -1,0 +1,35 @@
+﻿<rml><head><title>Settings input probe</title><style>
+body { font-family: Bms UI; font-size: 18px; color: #d7e8f2; background-color: #101820; margin: 0; padding: 20px; width: 100%; height: 100%; box-sizing: border-box; }
+div, h1 { display: block; }
+h1 { font-size: 24px; margin-bottom: 14px; }
+label { display: block; margin: 12px 0; }
+input, select, button { color: white; background-color: #253b49; border: 1px #6acbe9; padding: 8px; }
+input:focus, select:focus, button:focus { border-color: white; background-color: #30556a; }
+input[type=checkbox] { width: 24px; height: 24px; }
+input[type=checkbox]:checked { background-color: #58d2ff; }
+input[type=range] { width: 280px; height: 24px; }
+input[type=range] slidertrack { height: 8px; background-color: #405969; }
+input[type=range] sliderbar { width: 14px; height: 24px; background-color: #68dcff; }
+input[type=range] sliderprogress { background-color: #68dcff; }
+select { width: 220px; }
+select selectbox { background-color: #203443; }
+select selectarrow { width: 18px; background-color: #68dcff; }
+select option { padding: 6px; }
+select option:checked { background-color: #376d88; }
+button { display: block; margin-top: 12px; width: 200px; tab-index: auto; }
+scrollbarvertical { width: 12px; }
+scrollbarvertical slidertrack { background-color: #253b49; }
+scrollbarvertical sliderbar { width: 12px; min-height: 24px; background-color: #68dcff; }
+#scroll-area { height: 330px; overflow-y: auto; }
+</style></head><body>
+<h1>RmlUi 입력 테스트 · 2단계</h1>
+<div id="scroll-area">
+<div>테스트 값은 실제 게임 설정에 적용되지 않습니다.</div>
+<label>체크박스 <input id="probe-check" type="checkbox" /></label>
+<label>슬라이더 <input id="probe-range" type="range" min="0" max="100" value="25" step="1" /></label>
+<label>선택 목록 <select id="probe-select"><option value="60">60 FPS</option><option value="144">144 FPS</option><option value="240">240 FPS</option></select></label>
+<label>문자 입력 <input id="probe-text" type="text" value="" /></label>
+<button id="probe-button">입력 확인</button>
+<div id="probe-status">Ready</div>
+<div style="height:160px; padding-top:20px;">휠 스크롤 · Tab/Shift+Tab · 방향키 · Enter · Escape 확인</div>
+</div></body></rml>

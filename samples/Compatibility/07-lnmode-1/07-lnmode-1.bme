@@ -1,0 +1,9 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE LN MODE 1
+#LNMODE 1
+#00051:0102
+#00019:01

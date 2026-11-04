@@ -1,0 +1,68 @@
+﻿body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background-color: transparent;
+    font-family: "Bms UI";
+    color: #232a33;
+    font-size: 20px;
+}
+#rows { position: absolute; width: 100%; height: 100%; overflow: hidden; }
+#selection-guide { position: absolute; left: 4px; right: 4px; background-color: transparent; border-width: 0; }
+.row {
+    position: absolute;
+    left: 20px;
+    right: 4px;
+    box-sizing: border-box;
+    padding: 5px 12px 5px 8px;
+    border: 1px #7c858f;
+    border-radius: 0px;
+    display: flex;
+    align-items: center;
+    background-color: #bcc2c9;
+    decorator: none;
+}
+.row.alternate { background-color: #bcc2c9; decorator: none; }
+.row.selected {
+    left: 4px;
+    background-color: #dce2e8;
+    decorator: none;
+    border-color: #56a8c7;
+    color: #151c24;
+}
+.lamp { width: 3px; height: 70%; margin-right: 8px; background-color: #35404e; flex-shrink: 0; }
+.lamp.clear { background-color: #4ade80; }
+.lamp.played { background-color: #f87171; }
+.level { font-family: Michroma; font-weight: normal; width: 55px; text-align: center; font-size: 24px; flex-shrink: 0; }
+.labels { flex-grow: 1; flex-shrink: 1; min-width: 0; margin-left: 10px; }
+.title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 20px; }
+.title-text { display: inline-block; white-space: nowrap; position: relative; }
+.selected .title { text-overflow: clip; }
+.artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: #8fa8bd; margin-top: 2px; }
+.selected .artist { color: #b6d9e9; }
+.blocked .title { color: #68717b; }
+.variant { font-size: 12px; color: #485562; margin-left: 10px; flex-shrink: 0; }
+.banner { width: 128px; height: 40px; margin-left: 10px; flex-shrink: 0; }
+@media (max-width: 420px) {
+    .banner { width: 96px; height: 30px; margin-left: 6px; }
+    .level { width: 42px; }
+    .labels { margin-left: 6px; }
+    .variant { margin-left: 4px; font-size: 10px; }
+}
+.empty { margin: 24px 16px; font-size: 18px; color: #8fa8bd; }
+
+/* Optional entry classes: old skin/package schemas need no new fields. */
+.row.parent-folder, .row.parent-folder.alternate {
+    background-color: #456780;
+    decorator: none;
+    border-top: 1px #8ba8ba;
+    border-bottom: 1px #253b4e;
+}
+.row.parent-folder.selected {
+    background-color: #527995;
+    decorator: none;
+    border-top: 1px #c3dfef;
+    border-bottom: 1px #304d65;
+}
+.parent-folder .title, .parent-folder .level { color: #f2f6fa; }
+.folder-entry .level, .all-songs .level { color: #394958; }

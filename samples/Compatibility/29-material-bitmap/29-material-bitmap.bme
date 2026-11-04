@@ -1,0 +1,10 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Shared bitmap material
+#MATERIALSBMP bms-compatibility-fixture
+#BMP01 base.bmp
+#00004:01
+#00119:01

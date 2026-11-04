@@ -1,0 +1,16 @@
+﻿#PLAYER 1
+#BPM 120
+#WAV01 ../Assets/tone.wav
+#WAV02 ../Assets/tone.wav
+#WAV00 ../Assets/tone.wav
+#TITLE Extended play rules
+#RANK 0
+#DEFEXRANK 100
+#TOTAL 420
+#EXRANK01 50
+#TEXT01 Compatibility sample
+#00031:02
+#001D1:0A
+#001A0:01
+#00199:01
+#00219:01
