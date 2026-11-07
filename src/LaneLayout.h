@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 struct LaneLayout {
     static constexpr int defaultKeyWidth = 68;

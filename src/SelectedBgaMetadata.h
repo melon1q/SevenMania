@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "BgaChartSnapshot.h"
 #include <condition_variable>
 #include <mutex>

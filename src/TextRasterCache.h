@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <windows.h>
 #include "PerformanceTrace.h"
 #include <algorithm>
@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <memory>
 
 // Cache GDI glyphs with the same 24-offset thick outline; compose premultiplied
 // sprites on subsequent frames, including the existing size animation.
@@ -30,6 +31,9 @@ class TextRasterCache {
         }
         ~Surface() { if (original) SelectObject(dc, original); if (bitmap) DeleteObject(bitmap); if (dc) DeleteDC(dc); }
     };
+    HDC measure_{};
+    std::unique_ptr<Surface> black_, white_;
+    int surfaceWidth_{},surfaceHeight_{};
     struct Axis { int first{}, second{}; unsigned weight{}; };
     std::vector<Sprite> sprites_;
     std::vector<Axis> xAxis_, yAxis_;
@@ -60,6 +64,7 @@ class TextRasterCache {
         target = (combinedAlpha << 24) | (std::min(r, 255u) << 16) | (std::min(g, 255u) << 8) | std::min(b, 255u);
     }
 public:
+    ~TextRasterCache() { if(measure_) DeleteDC(measure_); }
     using GpuDraw = std::function<bool(const uint32_t*, int, int, int, int, int, int, uint64_t)>;
     void clear() { std::vector<Sprite>().swap(sprites_); std::vector<Axis>().swap(xAxis_); std::vector<Axis>().swap(yAxis_); clock_ = 0; }
     template<class Renderer> bool draw(uint32_t* target, int width, int height, const std::wstring& text, RECT rect,
@@ -68,15 +73,24 @@ public:
         auto found = std::find_if(sprites_.begin(), sprites_.end(), [&](const Sprite& item) { return item.text == text && item.font == font && item.color == color && item.outlined == outlined && item.leftAligned == leftAligned; });
         if (found == sprites_.end()) {
             BMS_PERF_COUNT(textMisses);
-            HDC measure = CreateCompatibleDC(nullptr); if (!measure) return false;
-            if (font) SelectObject(measure, font);
+            if(!measure_) measure_=CreateCompatibleDC(nullptr);
+            HDC measure=measure_; if(!measure) return false;
+            const auto oldFont=font?SelectObject(measure,font):nullptr;
             SIZE size{}; TEXTMETRICW metrics{};
             GetTextExtentPoint32W(measure, text.c_str(), static_cast<int>(text.size()), &size); GetTextMetricsW(measure, &metrics);
-            DeleteDC(measure);
+            if(oldFont) SelectObject(measure,oldFont);
             Sprite sprite; sprite.text = text; sprite.font = font; sprite.color = color; sprite.outlined = outlined; sprite.leftAligned = leftAligned; sprite.id = ++nextSpriteId_;
             sprite.width = std::max(1L, size.cx) + 16; sprite.height = std::max(1L, metrics.tmHeight) + 16;
             if (sprite.width > 4096 || sprite.height > 512) return false;
-            Surface black(sprite.width, sprite.height), white(sprite.width, sprite.height);
+            if(!black_ || !white_ || surfaceWidth_!=sprite.width || surfaceHeight_!=sprite.height) {
+                auto black = std::make_unique<Surface>(sprite.width, sprite.height);
+                auto white = std::make_unique<Surface>(sprite.width, sprite.height);
+                if (!black->dc || !white->dc || !black->pixels || !white->pixels) return false;
+                black_ = std::move(black);
+                white_ = std::move(white);
+                surfaceWidth_=sprite.width;surfaceHeight_=sprite.height;
+            }
+            auto& black=*black_;auto& white=*white_;
             if (!black.dc || !white.dc || !black.pixels || !white.pixels) return false;
             const size_t count = static_cast<size_t>(sprite.width) * sprite.height;
             std::fill_n(black.pixels, count, 0xff000000u); std::fill_n(white.pixels, count, 0xffffffffu);
@@ -89,6 +103,8 @@ public:
                     std::clamp(int((b >> 8) & 255) - int((a >> 8) & 255), 0, 255), std::clamp(int(b & 255) - int(a & 255), 0, 255)});
                 sprite.pixels[i] = (static_cast<uint32_t>(255 - difference) << 24) | (a & 0xffffffu);
             }
+            // Preoutlined HUD sprites need no additional outline pass.
+            if (outlined) {
             constexpr POINT offsets[24]{{-2,0},{2,0},{0,-2},{0,2},{-1,-1},{1,-1},{-1,1},{1,1},
                 {-4,0},{4,0},{0,-4},{0,4},{-3,-3},{3,-3},{-3,3},{3,3},
                 {-6,0},{6,0},{0,-6},{0,6},{-5,-5},{5,-5},{-5,5},{5,5}};
@@ -110,6 +126,7 @@ public:
                 const unsigned g = ((body >> 8) & 255) + ((GetGValue(color) / 3 * outline[i] + 127) / 255 * inverse + 127) / 255;
                 const unsigned b = (body & 255) + ((GetBValue(color) / 3 * outline[i] + 127) / 255 * inverse + 127) / 255;
                 sprite.pixels[i] = (alpha << 24) | (std::min(r, 255u) << 16) | (std::min(g, 255u) << 8) | std::min(b, 255u);
+            }
             }
             if (sprites_.size() == 32) sprites_.erase(std::min_element(sprites_.begin(), sprites_.end(), [](const Sprite& a, const Sprite& b) { return a.used < b.used; }));
             sprites_.push_back(std::move(sprite)); found = std::prev(sprites_.end());

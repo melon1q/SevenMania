@@ -1,7 +1,8 @@
-﻿#include "RmlSongListRenderer.h"
+#include "RmlSongListRenderer.h"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -57,7 +58,7 @@ int wmain(int argc, wchar_t** argv) {
         std::vector<bms::ui::SongListVisualRow> rows;
         for (int index = 0; index < 8; ++index) {
             bms::ui::SongListVisualRow row;
-            row.top = index * 58 - 15; row.height = 58;
+            row.index = index; row.top = static_cast<float>(index * 58 - 15); row.height = 58;
             row.title = index == 0 ? L"한글 제목 <A & B> [ANOTHER]" : index == 1 ? L"日本語のタイトル [HYPER]" :
                 L"A long song title that should fit the available viewport without overflowing";
             row.artist = L"Composer / 작곡가 · Artist"; row.level = std::to_wstring(index + 4);
@@ -87,14 +88,16 @@ int wmain(int argc, wchar_t** argv) {
             if (argc == 2) {
                 for (int row : {2, 3}) {
                     size_t redPixels = 0;
-                    for (int y = rows[row].top + 10; y < rows[row].top + 45; ++y)
+                    const int rowTop = static_cast<int>(std::lround(rows[row].top));
+                    for (int y = rowTop + 10; y < rowTop + 45; ++y)
                         for (int x = 510; x < 620; ++x) {
                             const auto pixel = first[static_cast<size_t>(y) * 640 + x];
                             if (((pixel >> 16) & 255) > 180 && ((pixel >> 8) & 255) < 100 && (pixel & 255) < 80) ++redPixels;
                         }
                     require(redPixels > 1500, "PNG/JPEG banner was not rendered inside the right side of its row");
                 }
-                require((first[static_cast<size_t>(rows[4].top + 20) * 640 + 600] & 0xFFFFFFu) != 0xFFFFFFu,
+                const int rowTop = static_cast<int>(std::lround(rows[4].top));
+                require((first[static_cast<size_t>(rowTop + 20) * 640 + 600] & 0xFFFFFFu) != 0xFFFFFFu,
                     "a missing banner painted an opaque white placeholder");
             }
             require(static_cast<size_t>(std::count_if(first.begin(), first.end(), [](auto pixel) { return (pixel & 0xFFFFFF) != 0; })) > first.size() / 2,

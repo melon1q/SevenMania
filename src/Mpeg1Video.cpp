@@ -1,4 +1,4 @@
-﻿#include "Mpeg1Video.h"
+#include "Mpeg1Video.h"
 #include <array>
 #include <cstdio>
 #include <cmath>

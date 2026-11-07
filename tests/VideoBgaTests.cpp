@@ -1,4 +1,4 @@
-﻿#include "AsyncVideoBga.h"
+#include "AsyncVideoBga.h"
 #include "BgaVideoLayers.h"
 #include "BgaTimeline.h"
 #include <fstream>

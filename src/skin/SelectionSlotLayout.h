@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "SkinPackage.h"
 #include <algorithm>
 #include <cmath>
@@ -31,8 +31,9 @@ inline void synchronizeSelectionSlots(SkinPackage& package) {
         destination->resource=image->resource;destination->tint=image->tint;destination->source=image->source;destination->opacity=image->opacity;destination->visible=image->visible;destination->rotation=image->rotation;
         const auto copyText=[&](SkinElement& out,const SkinElement& in){
             out.x=originX+(x(in)-baseX)*sx;out.y=originY+(y(in)-baseY)*sy;
-            out.width=in.width*sx;out.height=in.height*sy;out.textStyle=in.textStyle;
-            out.textStyle.fontSize=std::clamp(std::round(in.textStyle.fontSize*std::min(sx,sy)),1.0,256.0);out.tint=in.tint;out.opacity=in.opacity;out.visible=in.visible;
+            out.width=in.width*sx;out.height=in.height*sy;
+            // Synchronize placement only. Typography/color are editable per screen;
+            // copying them here silently undid property edits in the editor.
         };
         if(auto* value=find(target,"slot-value-"+std::to_string(semantic[slot])))if(auto* model=find(source,values[slot]))copyText(*value,*model);
         if(auto* label=find(target,"slot-label-"+std::to_string(semantic[slot]))) {

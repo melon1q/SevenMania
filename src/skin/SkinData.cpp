@@ -7,12 +7,12 @@
 namespace sevenmania::skin {
 namespace {
 constexpr BindingDefinition definitions[]{
-    {BindingId::SongTitle,"song.title",BindingType::String,7},
-    {BindingId::SongArtist,"song.artist",BindingType::String,7},
-    {BindingId::SongGenre,"song.genre",BindingType::String,7},
-    {BindingId::SongBpm,"song.bpm",BindingType::Real,7},
-    {BindingId::ChartLevel,"chart.level",BindingType::Real,7},
-    {BindingId::ChartLevelText,"chart.levelText",BindingType::String,7},
+    {BindingId::SongTitle,"song.title",BindingType::String,31},
+    {BindingId::SongArtist,"song.artist",BindingType::String,31},
+    {BindingId::SongGenre,"song.genre",BindingType::String,31},
+    {BindingId::SongBpm,"song.bpm",BindingType::Real,31},
+    {BindingId::ChartLevel,"chart.level",BindingType::Real,31},
+    {BindingId::ChartLevelText,"chart.levelText",BindingType::String,31},
     {BindingId::ChartDifficultyColor,"chart.difficultyColor",BindingType::Integer,1},
     {BindingId::PlayCombo,"play.combo",BindingType::Integer,2},
     {BindingId::PlayScore,"play.score",BindingType::Integer,2},
@@ -31,7 +31,20 @@ constexpr BindingDefinition definitions[]{
     {BindingId::SelectGaugeMode,"select.gaugeMode",BindingType::String,1},
     {BindingId::PlayJudgementGrade,"play.judgementGrade",BindingType::Integer,2},
     {BindingId::PlayJudgementAge,"play.judgementAge",BindingType::Real,2},
-    {BindingId::PlayJudgementProfile,"play.judgementProfile",BindingType::String,2}
+    {BindingId::PlayJudgementProfile,"play.judgementProfile",BindingType::String,2},
+    {BindingId::SelectRecordBestScore,"select.record.bestScore",BindingType::String,1},
+    {BindingId::SelectRecordBestRank,"select.record.bestRank",BindingType::String,1},
+    {BindingId::SelectRecordClearType,"select.record.clearType",BindingType::String,1},
+    {BindingId::SelectRecordMaxCombo,"select.record.maxCombo",BindingType::String,1},
+    {BindingId::InfoNormalNotes,"songinformation.normalNotes",BindingType::Integer,8},
+    {BindingId::InfoLongNotes,"songinformation.longNotes",BindingType::Integer,8},
+    {BindingId::InfoDuration,"songinformation.duration",BindingType::Real,8},
+    {BindingId::SongSubtitle,"song.subtitle",BindingType::String,16},
+    {BindingId::SummarySpeed,"summary.speed",BindingType::String,32},
+    {BindingId::SummaryGauge,"summary.gauge",BindingType::String,32},
+    {BindingId::SummaryAccuracy,"summary.accuracy",BindingType::String,32},
+    {BindingId::SummaryVolume,"summary.volume",BindingType::String,32},
+
 };
 static_assert(std::size(definitions)==static_cast<std::size_t>(BindingId::Count));
 static_assert([]{for(std::size_t i=0;i<std::size(definitions);++i)if(static_cast<std::size_t>(definitions[i].id)!=i)return false;return true;}());
@@ -79,7 +92,7 @@ const BindingDefinition* SkinBindingRegistry::find(BindingId id) noexcept {
 }
 bool SkinBindingRegistry::allowed(BindingId id,ScreenKind screen) noexcept {
     const auto* d=find(id);const unsigned s=static_cast<unsigned>(screen);
-    return d&&s<3&&(d->screens&(1u<<s));
+    return d&&s<6&&(d->screens&(1u<<s));
 }
 const SkinValue& SkinDataSnapshot::value(BindingId id) const noexcept {
     static const SkinValue absent;

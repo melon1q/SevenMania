@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "RustBackend.h"
 #include <cmath>
 #include <cwctype>

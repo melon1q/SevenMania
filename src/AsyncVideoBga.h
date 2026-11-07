@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "VideoBga.h"
 #include "BgaRaster.h"
 #include <atomic>

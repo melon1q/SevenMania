@@ -23,10 +23,15 @@ public:
         return id >= 1260 && id <= 1266 ? originals[id - 1260] : id;
     }
     static bool normalize(int id, int& value) {
-        if(id==1052)return value>=0&&value<=2;
+        if(id==1096){value=std::clamp(value,0,100);return true;}
+        if(id==1097)return value==0||value==1;
+        if(id==1098)return value>=800&&value<=1500;
+        if(id==1099)return value>=0&&value<=2;
+        if(id==1052)return value>=0&&value<=3;
         if(id==1050||id==1051)return value>=-1&&value<=1;
+        if(id==1053)return value==0||value==1;
         if (id == 1049) return value >= 0 && value <= 4;
-        if (id == 1012) return std::find(frameRateValues.begin(), frameRateValues.end(), value) != frameRateValues.end();
+        if (id == 1012) return value==vsyncFps||(value>=0&&value<=1500);
         if (id == 1013) { value = std::clamp(value, 2, 40); return true; }
         if (id == 1018) { value = std::clamp(value, -4096, 4096); return true; }
         if (id == 1045 || id == 1046) { value = std::clamp(value, -256, 256); return true; }
@@ -65,7 +70,7 @@ public:
     void clearPending() { pending_.clear(); }
     std::map<int, int> snapshot() const {
         std::map<int, int> values;
-        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1270,1271,1272,1273}) values[id] = read_(id);
+        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1096,1097,1098,1099,1270,1271,1272,1273}) values[id] = read_(id);
         for (const auto& range : {std::pair{1030,1033}, std::pair{1100,1107}, std::pair{1200,1206}})
             for (int id = range.first; id <= range.second; ++id) values[id] = read_(id);
         return values;

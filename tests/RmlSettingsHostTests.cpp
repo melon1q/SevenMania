@@ -1,4 +1,4 @@
-﻿#include "../src/RmlSettingsHost.h"
+#include "../src/RmlSettingsHost.h"
 #include "../src/RmlSongListRenderer.h"
 #include <objidl.h>
 #include <gdiplus.h>

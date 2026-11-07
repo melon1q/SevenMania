@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 namespace bms::ui {
 enum class SongEntryKind { Song, Folder, ParentFolder, AllSongs, LibraryRoot };
 inline SongEntryKind navigationEntryKind(int id){return id==-1?SongEntryKind::ParentFolder:id==-2?SongEntryKind::AllSongs:SongEntryKind::Folder;}

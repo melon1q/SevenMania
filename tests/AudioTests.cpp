@@ -1,5 +1,6 @@
-﻿#include "AudioEngine.h"
+#include "AudioEngine.h"
 #include "SongPreview.h"
+#include "SelectionAudio.h"
 #include "PracticePreview.h"
 #include "PreviewTiming.h"
 
@@ -103,6 +104,13 @@ struct AudioEngineTestAccess {
 };
 
 int main(int argc, char** argv) {
+    if(argc==2&&std::string(argv[1])=="--selection-policy"){
+        for(int configured=0;configured<=100;++configured){if(SelectionAudio::musicVolume(configured,false)!=configured||SelectionAudio::musicVolume(configured,true)!=std::min(configured,5)||SelectionAudio::musicVolume(configured,false)!=configured)return 30;}
+        const auto missing=std::filesystem::current_path()/L"Validation"/(L"MissingSelectionAudio-"+std::to_wstring(GetCurrentProcessId()));std::filesystem::create_directories(missing);
+        SelectionAudio audio;audio.initialize(missing);audio.tickMusic(100,80,false,32);audio.tickMusic(100,80,true,32);audio.decide(100,100,32);audio.tickDecision();audio.stopMusic();audio.shutdown();
+        std::cout<<"PASS: 101 volume/duck/restore policies and absent optional files (no playback)\n";return 0;
+    }
+
     const HRESULT comStartup = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const HRESULT startup = MFStartup(MF_VERSION, MFSTARTUP_LITE);
     if (FAILED(startup)) {

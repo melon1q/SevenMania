@@ -1,4 +1,4 @@
-﻿#include "LatestEffectRequest.h"
+#include "LatestEffectRequest.h"
 
 #include <iostream>
 

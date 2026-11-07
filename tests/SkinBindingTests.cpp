@@ -4,6 +4,7 @@
 
 using namespace sevenmania::skin;
 using namespace skin_test;
+#include "AsyncPlaybackIntegration.inl"
 namespace {
 std::string resolve(SkinElement element,const SkinDataSnapshot* snapshot,ScreenKind screen=ScreenKind::Play) {
     std::vector<BindingDiagnostic> diagnostic;
@@ -13,6 +14,8 @@ std::string resolve(SkinElement element,const SkinDataSnapshot* snapshot,ScreenK
 void units() {
     require(SkinBindingRegistry::definitions().size()==static_cast<size_t>(BindingId::Count),"Registry count changed");
     require(!SkinBindingRegistry::find("unknown")&&!SkinBindingRegistry::find(BindingId::Invalid),"Unknown key accepted");
+    require(SkinBindingRegistry::find("select.record.bestScore")&&SkinBindingRegistry::find("select.record.bestRank")&&
+        SkinBindingRegistry::find("select.record.clearType")&&SkinBindingRegistry::find("select.record.maxCombo"),"Selection record bindings missing");
     SkinDataProvider provider;provider.beginFrame(ScreenKind::Play);
     require(provider.setWide(BindingId::SongTitle,L"한글 日本語 ABC"),"UTF-16 conversion failed");
     require(provider.set(BindingId::PlayScore,std::int64_t(882460)),"Integer rejected");
@@ -56,6 +59,12 @@ void units() {
     require(std::get<std::string>(provider.snapshot().value(BindingId::SongTitle))=="first","Mixed string setters stale");
     provider.beginFrame(ScreenKind::Select);provider.set(BindingId::SongTitle,std::string("second"));provider.setWide(BindingId::SongTitle,L"");provider.endFrame();
     require(std::get<std::string>(provider.snapshot().value(BindingId::SongTitle)).empty(),"Empty wide text retained old string");
+    provider.beginFrame(ScreenKind::SongInformation);
+    require(provider.setWide(BindingId::SongTitle,L"Information title"),"Info title scope rejected");
+    require(provider.set(BindingId::InfoNormalNotes,std::int64_t(123)),"Info count rejected");
+    require(!provider.set(BindingId::PlayScore,std::int64_t(1)),"Play value leaked into info screen");provider.endFrame();
+    e.kind=ElementKind::Number;e.binding="songinformation.normalNotes";e.numberFormat={};
+    require(resolve(e,&provider.snapshot(),ScreenKind::SongInformation)=="123","Info count binding failed");
     provider.clear();require(!provider.snapshot().active(),"Clear did not deactivate snapshot");
 }
 void styles(const SkinPackage& source,Surface& surface,const std::filesystem::path& output) {
@@ -109,12 +118,25 @@ void styles(const SkinPackage& source,Surface& surface,const std::filesystem::pa
 void integration(const std::filesystem::path& packagePath,const std::filesystem::path& output,D3D_DRIVER_TYPE driver) {
     auto loaded=SkinLoader{}.load(packagePath);require(bool(loaded),"Binding fixture load failed");
     Surface surface(640,360,driver);SkinRenderer renderer;SkinDataProvider provider;
+    {SongIntroOverlay intro;bms::Chart song;song.title=L"Intro 日本語 한글";song.subtitle=L"Subtitle";intro.prepare(song,RECT{10,10,310,350},1100,nullptr);intro.start();surface.target->BeginDraw();surface.target->Clear(D2D1::ColorF(0,0,0));intro.draw(surface.target.Get());hr(surface.target->EndDraw());surface.context->CopyResource(surface.staging.Get(),surface.texture.Get());D3D11_MAPPED_SUBRESOURCE mapped{};hr(surface.context->Map(surface.staging.Get(),0,D3D11_MAP_READ,0,&mapped));const auto pixel=*reinterpret_cast<const uint32_t*>(static_cast<const BYTE*>(mapped.pData)+20*mapped.RowPitch+20*4);surface.context->Unmap(surface.staging.Get(),0);require(pixel==0xff12171e,"Deferred intro GPU upload missing");require(intro.alpha()>0,"GPU intro inactive");}
+
+    gPlayRecordsFile=output/L"capture-records.ini";DeleteFileW(gPlayRecordsFile.c_str());gPlayRecords.clear();
     gCharts.clear();bms::Chart chart;chart.title=L"SevenMania 한글 日本語";chart.artist=L"작곡가 / Artist";
     chart.path=output/L"sample.bms";chart.playLevel=L"13.5";chart.initialBpm=150.25;chart.mode=bms::ChartMode::SevenKey;
-    chart.tempos={{0,150.25},{10,180.5}};gCharts.push_back(chart);gSongSelection.rebuild(gCharts);gSongSelection.selectGroup(0);
+    chart.tempos={{0,150.25},{10,180.5}};gCharts.push_back(chart);rebuildChartRecordKeys();gSongSelection.rebuild(gCharts);gSongSelection.selectGroup(0);
     gActiveChartIndex=0;gPlaying=false;gShowingResult=false;gLoading=false;gStartupSplash=false;
     gNoteSpeed=6.25;gGrooveGaugeMode=GrooveGaugeMode::Hard;gJudgementProfile=JudgementProfile::Easy;
     captureSevenManiaSkinData(provider);
+    require(std::get<std::string>(provider.snapshot().value(BindingId::SelectRecordBestScore))=="NO RECORD"&&
+        std::get<std::string>(provider.snapshot().value(BindingId::SelectRecordBestRank)).empty()&&
+        std::get<std::string>(provider.snapshot().value(BindingId::SelectRecordClearType)).empty()&&
+        std::get<std::string>(provider.snapshot().value(BindingId::SelectRecordMaxCombo)).empty(),"No-record selection preview is not clean");
+    savePlayRecord(chart.path,true,184,934382);captureSevenManiaSkinData(provider);
+    require(std::get<std::string>(provider.snapshot().value(BindingId::SelectRecordBestScore))=="BEST 934,382"&&
+        std::get<std::string>(provider.snapshot().value(BindingId::SelectRecordBestRank))=="RANK AAA"&&
+        std::get<std::string>(provider.snapshot().value(BindingId::SelectRecordClearType))=="CLEAR"&&
+        std::get<std::string>(provider.snapshot().value(BindingId::SelectRecordMaxCombo))=="MAX COMBO 184","Selection record fields were not split correctly");
+    gPlayRecords.erase(normalizedRecordPath(chart.path));captureSevenManiaSkinData(provider);
     require(std::get<std::string>(provider.snapshot().value(BindingId::SelectSpeedText))=="6.25x"&&
         std::get<std::string>(provider.snapshot().value(BindingId::SelectGaugeMode))=="HARD"&&
         std::get<std::string>(provider.snapshot().value(BindingId::SelectJudgementText))=="EASY","Actual select settings capture stale");
@@ -132,6 +154,10 @@ void integration(const std::filesystem::path& packagePath,const std::filesystem:
     gCharts[0].playLevel=L"unranked";captureSevenManiaSkinData(provider);renderer.update(&provider.snapshot());
     require(renderer.displayText("level")=="--"&&renderer.displayText("level-raw")=="unranked","Nonnumeric level synthesized");
     gCharts[0].playLevel=L"13.5";
+    gPlaybackLoad.begin();gPlaybackLoad.resourcesLoaded();require(gPlaybackLoad.beginPreparation(),"Skin preparation transition");
+    captureSevenManiaSkinData(provider);require(provider.snapshot().screen()==ScreenKind::Play&&!gPlaying,"Preparation skin used select snapshot");
+    require(!renderer.prepare(loaded.package,ScreenKind::Play,surface.target.Get())&&!renderer.update(&provider.snapshot()),"Preparation skin invalid");
+    surface.render(renderer);require(gPlaybackLoad.ready(),"Skin ready transition");captureSevenManiaSkinData(provider);require(provider.snapshot().screen()==ScreenKind::Play&&!gPlaying,"Ready skin used select snapshot");gPlaybackLoad.reset();
     gPlaying=true;gPaused=false;gPlayhead=12;gResultScore.reset(10);gFeedback.reset();gGrooveGauge.configure(10,GrooveGaugeMode::Normal);
     showTimingJudgement(TimingJudgement::PGreat);gFeedback.addCombo(1);
     const auto score=gResultScore.value();const auto gauge=gGrooveGauge.value();const auto combo=gFeedback.combo();
@@ -184,20 +210,38 @@ void integration(const std::filesystem::path& packagePath,const std::filesystem:
 }
 void gearIcons(const std::filesystem::path& output,D3D_DRIVER_TYPE driver) {
     auto loaded=SkinLoader{}.load(defaultSkinPath());require(bool(loaded),"Updated gear skin failed validation");
+    {SkinApplication buttons;require(!buttons.load(defaultSkinPath(),1920,1080),"selection buttons skin load failed");
+        for(auto pair:{std::pair{"select-settings",3},std::pair{"select-info",4}}){const auto& es=loaded.package->screens.at(ScreenKind::Select).elements;auto e=std::find_if(es.begin(),es.end(),[&](const auto& item){return item.id==pair.first;});require(e!=es.end()&&e->kind==ElementKind::Image,"image action button missing");require(buttons.selectShortcutAt(e->x+e->width/2,e->y+e->height/2,1920,1080)==pair.second,"image action hit test mismatch");}
+    }
+    {gPlaying=false;gShowingResult=false;gLoading=false;gSettingsWindow=nullptr;gWindowWidth=1920;gWindowHeight=1080;
+        bms::Chart chart;chart.path=output/L"info.bme";chart.title=L"Information panel test";chart.artist=L"Composer";chart.playable=true;chart.mode=bms::ChartMode::SevenKey;chart.notes.resize(3);chart.notes[2].lengthSeconds=1;gCharts={chart};buildSongGroups();gSongSelection.selectGroup(0);
+        require(!gSkinApplication.load(defaultSkinPath(),1920,1080),"information panel skin preparation failed");
+        const auto& es=loaded.package->screens.at(ScreenKind::Select).elements;auto button=std::find_if(es.begin(),es.end(),[](const auto& e){return e.id=="select-info";});
+        require(adjustBrowseShortcut(int(button->x+button->width/2),int(button->y+button->height/2),true)&&gSongInfoVisible,"information panel did not open");require(gSongInfoText.find(L"일반 노트  2")!=std::wstring::npos&&gSongInfoText.find(L"롱노트  1")!=std::wstring::npos,"information panel note counts incorrect");
+        require(std::get<std::int64_t>(gSongInformationData.snapshot().value(BindingId::InfoNormalNotes))==2&&std::get<std::int64_t>(gSongInformationData.snapshot().value(BindingId::InfoLongNotes))==1,"Info snapshot counts incorrect");
+        HDC infoDc=CreateCompatibleDC(nullptr);BITMAPINFO infoBitmap{};infoBitmap.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);infoBitmap.bmiHeader.biWidth=1920;infoBitmap.bmiHeader.biHeight=-1080;infoBitmap.bmiHeader.biPlanes=1;infoBitmap.bmiHeader.biBitCount=32;void* infoPixels{};HBITMAP infoDib=CreateDIBSection(infoDc,&infoBitmap,DIB_RGB_COLORS,&infoPixels,nullptr,0);auto oldInfo=SelectObject(infoDc,infoDib);
+        PatBlt(infoDc,0,0,1920,1080,BLACKNESS);const bool infoDrawn=gSkinApplication.drawDc(infoDc,1920,1080,gSongInformationData.snapshot());const auto infoColor=GetPixel(infoDc,170,220);SelectObject(infoDc,oldInfo);DeleteObject(infoDib);DeleteDC(infoDc);require(infoDrawn&&std::abs(int(GetRValue(infoColor))-28*200/255)<=1&&std::abs(int(GetGValue(infoColor))-30*200/255)<=1&&std::abs(int(GetBValue(infoColor))-34*200/255)<=1,"Info overlay render failed");
+        require(adjustBrowseShortcut(0,0,true)&&!gSongInfoVisible,"information panel did not close");gSkinApplication.clear();gCharts.clear();gSongSelection.clear();
+    }
+    {SkinApplication intro;require(!intro.load(defaultSkinPath(),1920,1080),"Intro skin load failed");SkinDataProvider data;data.beginFrame(ScreenKind::SongIntro);data.setWide(BindingId::SongTitle,L"Title");data.setWide(BindingId::SongSubtitle,L"Subtitle");data.endFrame();const uint32_t green=0xff00ff00;require(intro.hasBox("title",ScreenKind::SongIntro),"Independent intro image box missing");intro.updateBox("title",&green,1,1,ScreenKind::SongIntro);HDC dc=CreateCompatibleDC(nullptr);BITMAPINFO bi{};bi.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);bi.bmiHeader.biWidth=1920;bi.bmiHeader.biHeight=-1080;bi.bmiHeader.biPlanes=1;bi.bmiHeader.biBitCount=32;void* pixels;auto bmp=CreateDIBSection(dc,&bi,DIB_RGB_COLORS,&pixels,nullptr,0);auto old=SelectObject(dc,bmp);require(intro.drawDc(dc,1920,1080,data.snapshot())&&GetPixel(dc,600,100)==RGB(0,255,0),"Independent intro image not uploaded");SelectObject(dc,old);DeleteObject(bmp);DeleteDC(dc);}
     const auto& elements=loaded.package->screens.at(ScreenKind::Play).elements;
     auto element=[&](const std::string& id)->const SkinElement&{
         const auto found=std::find_if(elements.begin(),elements.end(),[&](const auto& e){return e.id==id;});
         require(found!=elements.end(),"Gear element missing");return *found;
     };
-    require(element("gear-icon-0").resource=="hi-speed-slot"&&element("gear-icon-1").resource=="gauge-mode-slot","Gear icons share a generic image");
-    require(loaded.package->resources.at("hi-speed-slot").width==64&&loaded.package->resources.at("gauge-mode-slot").width==64,"Supplied icon images missing");
+    require(loaded.package->resources.contains(element("gear-icon-0").resource)&&loaded.package->resources.contains(element("gear-icon-1").resource),"Custom gear icon resource missing");
+    require(loaded.package->resources.at(element("gear-icon-0").resource).width>0&&loaded.package->resources.at(element("gear-icon-1").resource).width>0,"Custom icon images missing");
     require(element("gear-gauge-mode").binding=="play.gaugeMode","Gauge label not bound");
     Surface surface(1920,1080,driver);SkinRenderer renderer;SkinDataProvider provider;
     require(!renderer.prepare(loaded.package,ScreenKind::Play,surface.target.Get()),"Gear renderer preparation failed");
     SkinGearState gear;gear.active=true;gear.lineY=720;gear.speed=6.5;
+    for(int lane=1;lane<=7;++lane){const auto& key=element("gear-key-"+std::to_string(lane));require(key.kind==ElementKind::Image&&loaded.package->resources.contains(key.resource),"7-key image asset missing");}
     const double centers[]={342,960,1578};
     for(int position=0;position<3;++position){
         gear.position=position;gear.centerX=centers[position];renderer.setGearState(gear);
+        auto released=surface.render(renderer);
+        for(int lane=1;lane<=7;++lane){gear.pressed[lane]=true;renderer.setGearState(gear);require(surface.render(renderer)!=released,"7-key texture did not respond to pressed state");gear.pressed[lane]=false;renderer.setGearState(gear);}
+
         Bytes previous;
         for(const auto* mode:{"NORMAL","EASY","HARD"}){
             provider.beginFrame(ScreenKind::Play);provider.set(BindingId::PlayGaugeMode,std::string(mode));provider.endFrame();
@@ -227,6 +271,7 @@ int wmain(int argc,wchar_t** argv) {
         require(playRecordForChart(0)&&playRecordForChart(0)->bestAccuracyScore==950000&&!playRecordForChart(1),"Restart or chart switch lost records");
         gPlayRecordsFile.clear();gPlayRecords.clear();gCharts.clear();
         units();integration(argv[1],output,driver);gearIcons(output,driver);
+        {auto loaded=gSkinApplication.load(defaultSkinPath(),1280,720);require(!loaded,"async skin fixture");asyncPlaybackIntegration(output,require,false);gSkinApplication.clear();}
         std::cout<<"Skin binding checks: "<<checks<<"; actual engine capture, Unicode raster, 50 prepare/update/draw/unload cycles\n";return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}
 }

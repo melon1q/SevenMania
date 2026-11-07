@@ -1,4 +1,4 @@
-﻿#include "../src/Main.cpp"
+#include "../src/Main.cpp"
 #include <fstream>
 #include <psapi.h>
 #include <dxgi1_4.h>
@@ -60,6 +60,9 @@ int wmain(int argc,wchar_t** argv) {
     int result=0;
     try {
         std::filesystem::copy_file(argv[1],config);gSettingsFile=config;
+        {bms::KeyProfiles profiles;for(int m=0;m<5;++m){profiles.keys[m][0]=VK_F6+m;profiles.save(config,m);}bms::KeyProfiles restored;restored.load(config);for(int m=0;m<5;++m)require(restored.keys[m][0]==UINT(VK_F6+m),"mode key bindings not independent/persistent");}
+        for(int mode=0;mode<5;++mode){gBindingMode=mode;beginKeyBindingCapture();for(int lane=0;lane<bms::KeyProfiles::counts[mode];++lane)acceptBindingKey('A'+lane);require(!gCapturingBindings,"mode-specific key capture did not finish");bms::KeyProfiles saved;saved.load(config);require(saved.keys[mode][bms::KeyProfiles::counts[mode]-1]==UINT('A'+bms::KeyProfiles::counts[mode]-1),"captured last key not persisted");}gBindingMode=1;
+        {std::wstring error;require(applySettingValue(ID_FPS,800,error)&&gTargetFps==800,"800 FPS not applied");require(applySettingValue(ID_FPS,937,error)&&gTargetFps==937,"custom FPS not applied");require(applySettingValue(ID_JUDGEMENT_PROFILE,3,error)&&gJudgementProfile==JudgementProfile::Normal,"manual judgement still mutable");}
         if(argc==4)gRmlSettingsAssetRoot=std::filesystem::absolute(argv[3]);
         INITCOMMONCONTROLSEX controls{sizeof(controls),ICC_LISTVIEW_CLASSES|ICC_BAR_CLASSES};InitCommonControlsEx(&controls);
         registerType(L"Phase6Owner",windowProc);registerType(L"BmsPlayerSettingsWindow",settingsProc);
@@ -72,9 +75,10 @@ int wmain(int argc,wchar_t** argv) {
         for(bool paused:{false,true}) {gPlaying=true;gPaused=paused;openSettings();require(!gSettingsWindow,"settings unexpectedly opened during gameplay");}
         gPlaying=false;gPaused=false;gLoading=true;gLoadResult.playback=true;openSettings();require(!gSettingsWindow,"playback-loading guard changed");gLoading=false;gLoadResult={};
         openSettings();require(gSettingsWindow&&gSettingsCategory==4&&gRmlSettingsPageActive,"default route did not open RML summary");
-        ShowWindow(gSettingsWindow,SW_HIDE);paintPage();
+        ShowWindow(gSettingsWindow,SW_HIDE);selectSettingsCategory(6);paintPage(output/L"keys.png");selectSettingsCategory(4);paintPage();
         for(const auto& [id,value]:settingsController().snapshot()) {
             (void)value;
+            if(id==ID_BROWSE_BACKGROUND||id==ID_JUDGEMENT_PROFILE||id==ID_COMBO_TEXT_Y||id==ID_SKIN_JUDGEMENT_MODE||id==ID_SKIN_COMBO_MODE)continue; // removed user controls; legacy keys retained
             require(std::any_of(rmlSettingBindings().begin(),rmlSettingBindings().end(),[&](const auto& binding){return bms::SettingsController::canonicalId(binding.command)==id;}),"snapshot contains an unmapped setting");
         }
         require(postSetting(ID_SPEED,13),"close queue fixture failed");

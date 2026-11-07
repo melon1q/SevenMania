@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "ExperimentProfile.h"
 
 // The profiling target uses the real player loop. The shipping target compiles

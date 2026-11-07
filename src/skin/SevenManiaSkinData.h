@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "SkinData.h"
 
 // Compiled in the main player and its dedicated integration test only.

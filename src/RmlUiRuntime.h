@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #ifdef BMS_ENABLE_RMLUI
 #include <windows.h>
 #include <d3d11.h>

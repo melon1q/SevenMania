@@ -1,4 +1,4 @@
-﻿#include "SkinRenderTestSupport.h"
+#include "SkinRenderTestSupport.h"
 #include "editor/EditorDocument.h"
 #include "skin/SelectionSlotLayout.h"
 #include <algorithm>
@@ -20,6 +20,12 @@ int wmain(int argc,wchar_t** argv) {
         require(find("slot-0").x<find("slot-2").x&&find("slot-2").x<find("slot-1").x,"Selection speed/gauge/judgement order differs from play");
         require(find("slot-0").resource=="hi-speed-slot"&&find("slot-2").resource=="gauge-mode-slot","Selection images do not match gameplay");
         require(find("slot-value-2").x==find("slot-2").x&&find("slot-value-1").x==find("slot-1").x,"Selection text detached from icon");
+        auto& editable=synchronized.screens.at(ScreenKind::Select).elements;
+        auto style=std::find_if(editable.begin(),editable.end(),[](const auto& e){return e.id=="slot-value-0";});
+        style->textStyle.fontSize=37;style->textStyle.font="Michroma";style->textStyle.align=TextAlign::Right;style->tint={12,34,56,255};style->opacity=.6;
+        synchronizeSelectionSlots(synchronized);
+        require(find("slot-value-0").textStyle.fontSize==37&&find("slot-value-0").textStyle.font=="Michroma"&&find("slot-value-0").textStyle.align==TextAlign::Right,"Slot synchronization overwrote edited font properties");
+        require(find("slot-value-0").tint.r==12&&find("slot-value-0").tint.g==34&&find("slot-value-0").opacity==.6,"Slot synchronization overwrote edited color/opacity");
         auto& play=synchronized.screens.at(ScreenKind::Play).elements;auto image=std::find_if(play.begin(),play.end(),[](const auto& e){return e.id=="gear-icon-1";});image->resource="slot";
         synchronizeSelectionSlots(synchronized);require(find("slot-2").resource=="slot","Edited gameplay image did not propagate");}
         const auto& elements=loaded.package->screens.at(ScreenKind::Play).elements;
@@ -51,8 +57,22 @@ int wmain(int argc,wchar_t** argv) {
         sevenmania::editor::write(output/L"broken.png",Bytes{1,2,3});bool rejected=false;
         try{document.replaceImage(index,output/L"broken.png");}catch(const std::exception&){rejected=true;}
         require(rejected&&document.elements()[index][L"resource"].str()==after[L"resource"].str(),"Failed replacement changed document");
+        document.screen="select";
+        for(const auto* slot:{L"slot-0",L"slot-1",L"slot-2"}){
+            const auto at=std::find_if(document.elements().begin(),document.elements().end(),[&](const auto& e){return e[L"id"].str()==slot;});require(at!=document.elements().end(),"Selection slot missing");
+            const auto slotIndex=size_t(at-document.elements().begin());const auto geometry=*at;
+            document.replaceImage(slotIndex,replacement);
+            const auto& updated=document.elements()[slotIndex];
+            require(updated[L"width"].num()==geometry[L"width"].num()&&updated[L"height"].num()==geometry[L"height"].num()&&updated[L"x"].num()==geometry[L"x"].num()&&updated[L"y"].num()==geometry[L"y"].num(),"Slot replacement changed selection geometry");
+            const auto paired=std::wstring(slot)==L"slot-0"?L"gear-icon-0":std::wstring(slot)==L"slot-1"?L"gear-icon-2":L"gear-icon-1";
+            const auto& play=document.screens.at("play")[L"elements"].array;
+            const auto source=std::find_if(play.begin(),play.end(),[&](const auto& e){return e[L"id"].str()==paired;});
+            require(source!=play.end()&&(*source)[L"resource"].str()==updated[L"resource"].str(),"Replacement would be overwritten by gameplay synchronization");
+        }
         document.save(output/L"roundtrip.semaskin");
         auto roundtrip=SkinLoader{}.load(output/L"roundtrip.semaskin");require(bool(roundtrip),"Default editor roundtrip failed");
+        {auto normalized=*roundtrip.package;synchronizeSelectionSlots(normalized);
+        for(const auto& e:normalized.screens.at(ScreenKind::Select).elements)if(e.id=="slot-0"||e.id=="slot-1"||e.id=="slot-2")require(e.resource.starts_with("replacement-"),"Saved slot replacement reverted after synchronization");}
         SkinRenderer restored;require(!restored.prepare(roundtrip.package,ScreenKind::Play,surface.target.Get()),"Saved default HUD failed to render");
         require(restored.stats().hudAtlases==1&&restored.stats().hudFontGlyphs==0,"Editor lost default image references");
         std::cout<<checks<<" default image HUD checks passed; one atlas, zero font fallback glyphs\n";

@@ -1,4 +1,4 @@
-﻿// One definition per executable. Do not redirect CRT/COM/Windows allocations:
+// One definition per executable. Do not redirect CRT/COM/Windows allocations:
 // their ownership contracts continue to use their original allocators.
 #ifdef BMS_USE_MIMALLOC
 #ifdef BMS_PERF_DIAGNOSTICS

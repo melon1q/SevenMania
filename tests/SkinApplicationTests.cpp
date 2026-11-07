@@ -1,4 +1,4 @@
-﻿#include "../src/Main.cpp"
+#include "../src/Main.cpp"
 #include "SkinRenderTestSupport.h"
 using namespace skin_test;
 using namespace sevenmania::skin;
@@ -214,7 +214,9 @@ void verifyResourceFps(const std::filesystem::path& output) {
     gFrameStatistics.reset();gFrameStatisticsView=-1;
 }
 }
+#include "SkinOverlayEntranceRegression.inl"
 int wmain(int argc,wchar_t** argv) {
+    if(argc==3&&std::wstring(argv[1])==L"--overlay-entry")return overlayEntranceRegression(argv[2]);
     if(argc!=3)return 2;
     const auto fixtures=std::filesystem::absolute(argv[1]);const auto output=std::filesystem::absolute(argv[2]);std::filesystem::create_directories(output);
     const auto config=output/(L"skin-"+std::to_wstring(GetCurrentProcessId())+L".ini");

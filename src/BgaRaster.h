@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "BmsParser.h"
 #include "VideoFrameScaler.h"
 #include "ChartRules.h"

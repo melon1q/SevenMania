@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "VideoBga.h"
 #include <vfw.h>
 #include <stdexcept>

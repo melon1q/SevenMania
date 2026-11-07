@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 $destination = Join-Path $PSScriptRoot '..\Samples\click.wav'
 $destination = [System.IO.Path]::GetFullPath($destination)
 $sampleRate = 44100

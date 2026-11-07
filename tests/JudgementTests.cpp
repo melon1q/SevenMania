@@ -1,4 +1,4 @@
-﻿#include "Judgement.h"
+#include "Judgement.h"
 
 #include <array>
 #include <cmath>

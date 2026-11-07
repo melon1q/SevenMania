@@ -1,4 +1,4 @@
-﻿param(
+param(
     [ValidateSet('Baseline', 'Optimized', 'Tracy', 'Hybrid', 'All')][string]$Variant = 'All'
 )
 $ErrorActionPreference = 'Stop'

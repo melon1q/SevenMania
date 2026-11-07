@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "BmsParser.h"
 #include <memory>
 // Workers need only immutable BGA metadata, never another copy of notes/audio events.

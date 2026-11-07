@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "ControllerDevice.h"
 #include <commctrl.h>
 #include <string_view>

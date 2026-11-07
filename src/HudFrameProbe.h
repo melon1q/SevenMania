@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // Opt-in only. No file I/O or growing containers in the measured interval.
 #ifdef BMS_HUD_FRAME_PROBE
 #include <windows.h>

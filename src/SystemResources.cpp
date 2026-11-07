@@ -1,4 +1,4 @@
-﻿#include "SystemResources.h"
+#include "SystemResources.h"
 
 #include <psapi.h>
 #include <algorithm>

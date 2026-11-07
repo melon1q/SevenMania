@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "SkinPackage.h"
 #include <array>
 #include <bitset>
@@ -14,6 +14,10 @@ enum class BindingId : std::uint8_t {
     SelectSpeedText, SelectJudgementText, SelectGaugeMode,
     PlayJudgementGrade, PlayJudgementAge,
     PlayJudgementProfile,
+    SelectRecordBestScore, SelectRecordBestRank, SelectRecordClearType, SelectRecordMaxCombo,
+    InfoNormalNotes, InfoLongNotes, InfoDuration,
+    SongSubtitle,
+    SummarySpeed, SummaryGauge, SummaryAccuracy, SummaryVolume,
     Count, Invalid=255
 };
 struct BindingDefinition { BindingId id; std::string_view name; BindingType type; unsigned screens; };

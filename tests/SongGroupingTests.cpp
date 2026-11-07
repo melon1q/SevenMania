@@ -1,4 +1,4 @@
-﻿#include "SongGrouping.h"
+#include "SongGrouping.h"
 #include "SongLibrary.h"
 #include "ChartOrdering.h"
 #include <algorithm>

@@ -1,4 +1,4 @@
-﻿include(FetchContent)
+include(FetchContent)
 option(BMS_USE_TRACY "Experimental Tracy instrumentation" OFF)
 option(BMS_USE_MIMALLOC "Experimental C++ new/delete allocator" OFF)
 option(BMS_USE_ONETBB "Experimental bounded song-scan scheduler" OFF)

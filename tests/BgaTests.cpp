@@ -1,4 +1,4 @@
-﻿#include "AsyncBgaRaster.h"
+#include "AsyncBgaRaster.h"
 #include "VideoComposite.h"
 #include "BgaRaster.h"
 #include "UserBackground.h"

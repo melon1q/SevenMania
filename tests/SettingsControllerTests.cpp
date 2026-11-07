@@ -1,4 +1,4 @@
-﻿#include "../src/SettingsController.h"
+#include "../src/SettingsController.h"
 #include <iostream>
 #include <stdexcept>
 int main() {
@@ -26,8 +26,8 @@ int main() {
         require(controller.enqueue(1012, 400), "queue failed"); controller.clearPending(); controller.drain();
         require(actual[1012] == 144, "cancelled queued command ran");
         const auto snapshot = controller.snapshot(); require(snapshot.at(1012) == 144 && snapshot.at(1013) == 11, "snapshot differs from actual state");
-        for(int condition=0;condition<3;++condition)require(controller.set(1052,condition).applied&&controller.snapshot().at(1052)==condition,"timing hint condition failed");
-        require(!controller.set(1052,-1).applied&&!controller.set(1052,3).applied,"invalid timing hint condition accepted");
+        for(int condition=0;condition<4;++condition)require(controller.set(1052,condition).applied&&controller.snapshot().at(1052)==condition,"timing hint condition failed");
+        require(!controller.set(1052,-1).applied&&!controller.set(1052,4).applied,"invalid timing hint condition accepted");
         std::cout << "Settings controller: units, validation, summary mapping, failures, persistence and deferred commands passed.\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

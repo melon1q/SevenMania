@@ -1,4 +1,4 @@
-﻿// Exercise the exact renderer used by the app, including real BGA event changes.
+// Exercise the exact renderer used by the app, including real BGA event changes.
 // This target is opt-in and never links into the distributed player.
 #include "../src/Main.cpp"
 #include <iostream>

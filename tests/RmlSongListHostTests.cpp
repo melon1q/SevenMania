@@ -1,4 +1,4 @@
-﻿#include "../src/Main.cpp"
+#include "../src/Main.cpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -134,6 +134,12 @@ int wmain(int argc, wchar_t** argv) {
         HWND window = CreateWindowW(type.lpszClassName, L"RmlUi host test", WS_OVERLAPPEDWINDOW,
             0, 0, 1280, 800, nullptr, nullptr, type.hInstance, nullptr);
         require(window && gList, "unable to create actual browse controls");
+        RECT parentBounds{};GetClientRect(window,&parentBounds);HDC parentDc=GetDC(window);
+        ensureBackBuffer(parentDc,parentBounds.right,parentBounds.bottom);
+        require(gBackBufferDc&&gBackBufferPixels,"unable to create parent-frame backdrop fixture");
+        constexpr std::uint32_t parentPixel=0xff19354bu;
+        std::fill_n(static_cast<std::uint32_t*>(gBackBufferPixels),static_cast<size_t>(gBackBufferWidth)*gBackBufferHeight,parentPixel);
+        ReleaseDC(window,parentDc);
         std::cout << "Browse controls created.\n" << std::flush;
 
         for (int song = 0; song < 60; ++song) {
@@ -170,6 +176,7 @@ int wmain(int argc, wchar_t** argv) {
         for (int step = 0; step < 12; ++step) {
             SendMessageW(gList, WM_KEYDOWN, step % 2 ? VK_UP : VK_DOWN, 0);
             const size_t selected = step % 2 ? 0 : 1;
+            gSongListScroll.snap(static_cast<double>(selected));
             std::uint64_t frame{}, repeatedFrame{};
             printList(&frame); printList(&repeatedFrame);
             require(frame == repeatedFrame, "cached list repaint changed pixels without a selection change");
@@ -185,19 +192,44 @@ int wmain(int argc, wchar_t** argv) {
         toggleSongSort();
         std::cout << "Keyboard, variant and sort processed.\n" << std::flush;
         require(gCharts[static_cast<size_t>(selectedIndex())].path == selectedPath, "sorting lost the selected chart");
-        ListView_EnsureVisible(gList, 20, FALSE);
         printList();
         std::cout << "Scrolled list painted.\n" << std::flush;
-        RECT row{}; require(ListView_GetItemRect(gList, 20, &row, LVIR_BOUNDS), "native row bounds unavailable");
-        LVHITTESTINFO hit{}; hit.pt = {20, (row.top + row.bottom) / 2};
-        require(ListView_HitTest(gList, &hit) == 20, "display row and native hit testing disagree");
-        // ListView can enter a drag-detection message loop on button-down.
-        // Queue both events so that loop can receive the matching button-up.
-        PostMessageW(gList, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(hit.pt.x, hit.pt.y));
-        PostMessageW(gList, WM_LBUTTONUP, 0, MAKELPARAM(hit.pt.x, hit.pt.y));
+        RECT viewport{}; GetClientRect(gList, &viewport);
+        const int currentRow = ListView_GetNextItem(gList, -1, LVNI_SELECTED);
+        const int listCount = ListView_GetItemCount(gList);
+        const int targetRow = std::min(currentRow + 2, ListView_GetItemCount(gList) - 1);
+        gSongListScroll.snap(static_cast<double>(currentRow));
+        const int centerY = (viewport.bottom - viewport.top) / 2;
+        gSongListScroll.snap(0.0);
+        require(songListHitTestAtVisualY(centerY).row == 0, "first row could not remain centered at the list boundary");
+        const auto rowAboveFirst = songListHitTestAtVisualY(centerY - songListRowHeight());
+        require(rowAboveFirst.row == listCount - 1 && rowAboveFirst.virtualRow == -1,
+            "visual rows did not wrap from the first song to the last");
+        gSongListScroll.snap(static_cast<double>(listCount - 1));
+        require(songListHitTestAtVisualY(centerY).row == listCount - 1, "last row could not remain centered at the list boundary");
+        const auto rowBelowLast = songListHitTestAtVisualY(centerY + songListRowHeight());
+        require(rowBelowLast.row == 0 && rowBelowLast.virtualRow == listCount,
+            "visual rows did not wrap from the last song to the first");
+        gSongListScroll.snap(-1.0);
+        gSongListScroll.rebaseCycles(listCount);
+        require(gSongListScroll.position == listCount - 1 && gSongListScroll.target == listCount - 1,
+            "negative cycle rebasing changed the selected song");
+        gSongListScroll.snap(static_cast<double>(listCount));
+        gSongListScroll.rebaseCycles(listCount);
+        require(gSongListScroll.position == 0.0 && gSongListScroll.target == 0.0,
+            "positive cycle rebasing changed the selected song");
+        gSongListScroll.snap(static_cast<double>(currentRow));
+        const int clickY = static_cast<int>(std::lround((viewport.bottom - viewport.top) * 0.5 +
+            (targetRow - gSongListScroll.position) * songListRowHeight()));
+        const auto clickHit = songListHitTestAtVisualY(clickY);
+        require(clickHit.row == targetRow && clickHit.virtualRow == targetRow,
+            "visual row hit test did not map to its logical ListView row");
+        // The Rml visual layer is translated independently of native ListView bounds.
+        PostMessageW(gList, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(20, clickY));
+        PostMessageW(gList, WM_LBUTTONUP, 0, MAKELPARAM(20, clickY));
         MSG message{};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
-        require(ListView_GetNextItem(gList, -1, LVNI_SELECTED) == 20, "native row click selection failed");
+        require(ListView_GetNextItem(gList, -1, LVNI_SELECTED) == targetRow, "visually translated row click selected the wrong chart");
         std::cout << "Mouse click processed.\n" << std::flush;
         SetWindowPos(window, nullptr, 0, 0, 960, 720, SWP_NOZORDER | SWP_NOACTIVATE);
         HDC hintDc = GetDC(window);
@@ -210,6 +242,23 @@ int wmain(int argc, wchar_t** argv) {
         captureBrowseBackdrop();
         std::cout << "Browse backdrop captured.\n" << std::flush;
         require(gResultBackdropPixels && gRmlSongList.enabled(), "browse/result capture failed with RmlUi list");
+        const auto springStart = std::chrono::steady_clock::now();
+        gSongListScroll.snap(0.0, springStart);
+        gSongListScroll.retarget(6.0, springStart);
+        const double initialPosition = gSongListScroll.position;
+        gSongListScroll.advance(springStart + std::chrono::milliseconds(20));
+        const double retargetPosition = gSongListScroll.position;
+        gSongListScroll.retarget(2.0, springStart + std::chrono::milliseconds(20));
+        require(gSongListScroll.target == 2.0 && gSongListScroll.position >= initialPosition &&
+            gSongListScroll.position == retargetPosition, "spring retarget did not preserve the visible position");
+        for (int step = 1; step <= 60 && gSongListScroll.animating; ++step) {
+            gSongListScroll.advance(springStart + std::chrono::milliseconds(20 + step * 4));
+            require(gSongListScroll.position >= 2.0, "spring retarget overshot its new target");
+        }
+        gSongListScroll.advance(springStart + std::chrono::milliseconds(250));
+        require(!gSongListScroll.animating && std::abs(gSongListScroll.position - 2.0) < 0.001,
+            "time-based spring did not settle at the new target");
+        gSongListScroll.snap(static_cast<double>(ListView_GetNextItem(gList, -1, LVNI_SELECTED)));
         if (argc == 2) {
             // Save a sharp UI preview; the result backdrop is deliberately blurred.
             drawBrowseScreen(gResultBackdropDc);
@@ -231,10 +280,28 @@ int wmain(int argc, wchar_t** argv) {
                     "unable to save the browse layout capture");
             }
         }
+        const int repeatStart = listCount - 2;
+        ListView_SetItemState(gList, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+        ListView_SetItemState(gList, repeatStart, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        gSongListScroll.snap(static_cast<double>(repeatStart));
+        SendMessageW(gList, WM_KEYDOWN, VK_DOWN, 1);
+        require(ListView_GetNextItem(gList, -1, LVNI_SELECTED) == listCount - 1,
+            "initial key press did not navigate immediately");
+        SendMessageW(gList, WM_KEYDOWN, VK_DOWN, static_cast<LPARAM>((1LL << 30) | 1));
+        require(ListView_GetNextItem(gList, -1, LVNI_SELECTED) == listCount - 1,
+            "OS key repeat duplicated the custom repeat input");
+        gSongListNextRepeat = std::chrono::steady_clock::now() - std::chrono::milliseconds(120);
+        tickSongListAnimations();
+        require(ListView_GetNextItem(gList, -1, LVNI_SELECTED) == 2,
+            "custom held-key repeat did not continue through the end of the song list");
+        gSongListNextRepeat = std::chrono::steady_clock::now() - std::chrono::milliseconds(60);
+        tickSongListAnimations();
+        require(ListView_GetNextItem(gList, -1, LVNI_SELECTED) == 4,
+            "custom repeat stopped after wrapping to the first song");
         ListView_DeleteAllItems(gList);
-        require(printList() == 0x404040u, "empty native list did not reveal the parent browse background");
+        require(printList() == (parentPixel & 0xFFFFFFu), "empty native list did not reveal the parent browse background");
         DestroyWindow(window); gWindow = nullptr;
-        std::cout << "RmlUi host: native keyboard, mouse, sort, variant, scroll, resize and browse capture passed.\n";
+        std::cout << "RmlUi host: keyboard repeat, mouse mapping, sort, variant, centered boundaries, spring retarget, resize and browse capture passed.\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n'; result = 1;
         if (gWindow && IsWindow(gWindow)) DestroyWindow(gWindow);

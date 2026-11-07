@@ -1,4 +1,4 @@
-﻿#include "BmsParser.h"
+#include "BmsParser.h"
 #include "BgaTimeline.h"
 #include "ChartOrdering.h"
 #include "PreviewTiming.h"

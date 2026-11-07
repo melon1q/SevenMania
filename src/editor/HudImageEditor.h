@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "EditorDocument.h"
 #include <wincodec.h>
 #include <wrl/client.h>

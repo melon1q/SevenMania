@@ -1,4 +1,4 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include <commctrl.h>
 #include <filesystem>
 #include <fstream>
@@ -378,6 +378,8 @@ int wmain(int argc, wchar_t** argv) {
         SendMessageW(previewVolume, TBM_SETPOS, TRUE, 39);
         SendMessageW(settings, WM_HSCROLL, MAKEWPARAM(TB_THUMBPOSITION, 39), reinterpret_cast<LPARAM>(previewVolume));
         require(GetPrivateProfileIntW(L"Sound", L"PreviewVolume", 255, config.c_str()) == 39, "preview volume not saved");
+        SendMessageW(settingsItem(settings, 1039), BM_CLICK, 0, 0);
+        require(GetPrivateProfileIntW(L"Sound", L"SongPreview", 1, config.c_str()) == 0, "preview disable state not saved");
         SendMessageW(settingsItem(settings, 1039), BM_CLICK, 0, 0);
         require(GetPrivateProfileIntW(L"Sound", L"SongPreview", 0, config.c_str()) == 1, "preview enabled state not saved");
         SendMessageW(settingsItem(settings, 1039), BM_CLICK, 0, 0);

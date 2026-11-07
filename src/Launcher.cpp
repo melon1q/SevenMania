@@ -1,4 +1,7 @@
 ﻿#include "SharedStartupSettings.h"
+#include "skin/SkinPackage.h"
+#include "UserBackground.h"
+#include <wrl/client.h>
 #include "SongLibrarySources.h"
 #include "SongScanner.h"
 #include "SongImportDialog.h"
@@ -36,6 +39,7 @@ void select(HWND c,int i){SendMessageW(c,CB_SETCURSEL,i,0);}
 void message(const std::wstring& text){SetWindowTextW(statusText,text.c_str());}
 void showPage(){int n=TabCtrl_GetCurSel(tab);for(auto [c,p]:pages)ShowWindow(c,p==n?SW_SHOW:SW_HIDE);}
 void label(const wchar_t* text,int y,int page){control(L"STATIC",text,35,y+4,215,24,0,page);}
+#include "LauncherSkinSettings.inl"
 void refreshRoots(){SendMessageW(rootList,LB_RESETCONTENT,0,0);if(sources.roots.empty())SendMessageW(rootList,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"(없음)"));EnableWindow(GetDlgItem(window,32),!sources.roots.empty());EnableWindow(GetDlgItem(window,33),!sources.roots.empty());for(size_t i=0;i<sources.roots.size();++i){std::error_code ec;auto text=sources.roots[i].wstring()+(std::filesystem::is_directory(sources.roots[i],ec)?L"":L" [연결 끊김]");SendMessageW(rootList,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(text.c_str()));}SendMessageW(rootList,LB_SETHORIZONTALEXTENT,4000,0);}
 void refreshResolutions(int width=0,int height=0){
     resolutions={{0,0}};SendMessageW(resolutionChoice,CB_RESETCONTENT,0,0);add(resolutionChoice,L"자동 (모니터 기본값)");
@@ -62,13 +66,17 @@ bool save(){
     int m=selected(monitorChoice);auto monitor=m>=0&&m<int(monitors.size())?monitors[m].name:L"";
     field(monitorChoice,monitor,monitor!=fields[0].baseline);
     field(modeChoice,std::to_wstring(selected(modeChoice)),selected(modeChoice)!=initial.mode);
-    const int fps=frameRateValues[std::clamp(selected(fpsChoice),0,5)];field(fpsChoice,std::to_wstring(fps),fps!=initial.fps);
+    int fps=frameRateValues[std::clamp(selected(fpsChoice),0,int(frameRateValues.size())-1)];if(fps==-2){BOOL valid;fps=GetDlgItemInt(window,69,&valid,FALSE);if(!valid||fps<1||fps>1500){message(L"사용자 FPS는 1~1500입니다.");return false;}}field(fpsChoice,std::to_wstring(fps),fps!=initial.fps);
     const int brightness=SendMessageW(bgaCheck,BM_GETCHECK,0,0)==BST_CHECKED?(initial.brightness?initial.brightness:50):0;
     field(bgaCheck,std::to_wstring(brightness),brightness!=initial.brightness);
     int buffer=sevenmania::startupBuffers[std::clamp(selected(bufferChoice),0,5)];field(bufferChoice,std::to_wstring(buffer),buffer!=initial.buffer);
     auto resolution=resolutions[std::clamp(selected(resolutionChoice),0,int(resolutions.size())-1)];
     change(L"Display",L"ResolutionWidth",std::to_wstring(resolution.first),resolution.first!=initial.width||resolution.second!=initial.height);
     change(L"Display",L"ResolutionHeight",std::to_wstring(resolution.second),resolution.first!=initial.width||resolution.second!=initial.height);
+    for(const auto& f:skinFields){wchar_t text[32768]{};GetWindowTextW(f.control,text,32768);std::wstring value=f.choice?std::to_wstring(selected(f.control)):text;
+        if(!f.path&&std::wstring(f.key)!=L"CustomBackground"){try{size_t used;int n=std::stoi(value,&used);if(used!=value.size()||n<(std::wstring(f.key)==L"JudgementTextYOffset"?-256:0)||n>(std::wstring(f.key)==L"JudgementTextYOffset"?256:std::wstring(f.key)==L"Background"?3:100))throw 0;}catch(...){message(L"스킨 설정의 숫자 범위를 확인하세요.");return false;}}
+        if(f.path)value=value.empty()?L"":skinPathEncode(value);if(value!=f.baseline)changes.push_back({f.section,f.key,f.baseline,value});
+    }
     bool ok=sevenmania::atomicSettingsUpdate(config,[&](const auto& temp){
         for(const auto& c:changes){if(sevenmania::iniText(temp,c.section.c_str(),c.key.c_str())!=c.expected)return false;if(!WritePrivateProfileStringW(c.section.c_str(),c.key.c_str(),c.value.c_str(),temp.c_str()))return false;}
         if(sources.roots!=originalRoots){bms::SongLibrarySources current;current.initialize(base/L"Songs",temp);if(current.roots!=originalRoots)return false;current.roots=sources.roots;if(!current.save())return false;}
@@ -77,6 +85,7 @@ bool save(){
     if(!ok){message(L"저장 실패: 게임/다른 인덱싱이 실행 중이거나 같은 설정이 변경되었습니다. 게임 종료 후 런처를 다시 여세요.");return false;}
     const int oldRootIndex=int(SendMessageW(rootList,LB_GETCURSEL,0,0));
     const auto selectedRoot=oldRootIndex>=0&&oldRootIndex<int(sources.roots.size())?sources.roots[size_t(oldRootIndex)]:std::filesystem::path{};
+    for(auto& f:skinFields)f.baseline=sevenmania::iniText(config,f.section,f.key);
     initial=sevenmania::readStartupSettings(config);sources.initialize(base/L"Songs",config);originalRoots=sources.roots;
     select(modeChoice,initial.mode);select(fpsChoice,frameRateIndex(initial.fps));
     for(size_t i=0;i<sevenmania::startupBuffers.size();++i)if(sevenmania::startupBuffers[i]==initial.buffer)select(bufferChoice,int(i));
@@ -118,9 +127,10 @@ case WM_CREATE:{window=hwnd;launcherFont=CreateFontW(-scaled(16),0,0,0,FW_NORMAL
     label(L"최대 FPS / VSync",215,0);fpsChoice=choice(255,210,13,0);for(auto text:frameRateLabels)add(fpsChoice,text);select(fpsChoice,frameRateIndex(initial.fps));
     bgaCheck=control(L"BUTTON",L"BGA 출력",255,265,400,30,14,0,BS_AUTOCHECKBOX|WS_TABSTOP);SendMessageW(bgaCheck,BM_SETCHECK,initial.brightness?BST_CHECKED:BST_UNCHECKED,0);
     control(L"STATIC",L"VSync는 기존 FPS 모드와 함께 선택합니다. 무제한은 최대 1500FPS입니다.\n이 값은 현재 게임의 플레이 제한이며, 화면별 FPS는 아직 지원하지 않습니다.",35,330,820,65,0,0);
+    label(L"사용자 FPS (1~1500)",405,0);customFps=control(L"EDIT",std::to_wstring(initial.fps>0?initial.fps:1000).c_str(),255,405,250,28,69,0,WS_BORDER|ES_NUMBER|WS_TABSTOP);
     label(L"오디오 버퍼 (frames)",75,1);bufferChoice=choice(255,70,20,1);i=0;for(auto value:sevenmania::startupBuffers){add(bufferChoice,std::to_wstring(value));if(value==initial.buffer)select(bufferChoice,i);++i;}
     control(L"STATIC",L"현재 엔진: WASAPI 공유 모드 / Windows 기본 출력 장치\n장치 선택과 별도 오디오 API 선택은 이 버전에서 제공하지 않습니다.",35,135,820,80,0,1);
-    control(L"STATIC",L"스킨 설정은 기존 게임의 [스킨] 탭과 스킨 에디터를 사용하세요.\n이 런처에서는 스킨 선택/검증을 아직 제공하지 않습니다. 기존 설정은 보존됩니다.",35,75,820,85,0,2);
+    createSkinSettings();
     rootList=control(L"LISTBOX",L"",35,65,830,270,30,3,LBS_NOTIFY|WS_BORDER|WS_VSCROLL|WS_HSCROLL|WS_TABSTOP);
     int x=35;for(auto [text,id]:{std::pair{L"폴더 추가",31},{L"등록 해제",32},{L"선택 재검색 / 취소",33},{L"전체 갱신 / 취소",34}}){control(L"BUTTON",text,x,355,195,35,id,3,WS_TABSTOP);x+=210;}refreshRoots();
     control(L"STATIC",L"외부 파일을 복사하지 않습니다. 메타데이터 캐시는 게임과 공유합니다.\n등록 해제해도 실제 파일과 플레이 기록은 삭제하지 않습니다.",35,410,830,60,0,3);
@@ -132,7 +142,7 @@ case WM_SIZE:{SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE};info.nMax=scaled(
 case WM_VSCROLL:{SCROLLINFO info{sizeof(info),SIF_ALL};GetScrollInfo(hwnd,SB_VERT,&info);int position=info.nPos;switch(LOWORD(w)){case SB_LINEUP:position-=scaled(30);break;case SB_LINEDOWN:position+=scaled(30);break;case SB_PAGEUP:position-=info.nPage;break;case SB_PAGEDOWN:position+=info.nPage;break;case SB_THUMBTRACK:position=info.nTrackPos;break;}scrollTo(position);return 0;}
 case WM_MOUSEWHEEL:{SCROLLINFO info{sizeof(info),SIF_POS};GetScrollInfo(hwnd,SB_VERT,&info);scrollTo(info.nPos-GET_WHEEL_DELTA_WPARAM(w)/WHEEL_DELTA*scaled(60));return 0;}
 case WM_NOTIFY:if(reinterpret_cast<NMHDR*>(l)->hwndFrom==tab){showPage();return 0;}break;
-case WM_COMMAND:{int id=LOWORD(w);if(id==10&&HIWORD(w)==CBN_SELCHANGE)refreshResolutions();
+case WM_COMMAND:{int id=LOWORD(w);if(id==61||id==68)pickSkinAsset(id==61);if(id==62)SetWindowTextW(GetDlgItem(window,60),L"");if(id==10&&HIWORD(w)==CBN_SELCHANGE)refreshResolutions();
     if(id==31&&!scanning){std::vector<std::filesystem::path> paths;if(bms::ui::chooseSongSources(window,base,paths)){for(auto path:paths){std::error_code ec;if(!std::filesystem::is_directory(path,ec))path=path.parent_path();sources.add(path);}refreshRoots();}}
     if(id==32&&!scanning){int index=int(SendMessageW(rootList,LB_GETCURSEL,0,0));if(index>=0)sources.remove(size_t(index));refreshRoots();}
     if(id==33||id==34)scan(id==34);

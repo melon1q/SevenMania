@@ -1,4 +1,5 @@
 ﻿#include "SkinInternal.h"
+#include "SkinEntrance.h"
 #include "FontPolicy.h"
 #include <algorithm>
 #include <cmath>
@@ -35,6 +36,9 @@ Resolution resolution(const J& j,const std::string& path) {
     return {integer(j[L"width"],path,1,16384),integer(j[L"height"],path,1,16384)};
 }
 ScreenKind screen(const std::string& name,const std::string& path) {
+    if(name=="settingssummary")return ScreenKind::SettingsSummary;
+    if(name=="songintro")return ScreenKind::SongIntro;
+    if(name=="songinformation")return ScreenKind::SongInformation;
     if(name=="select")return ScreenKind::Select;if(name=="play")return ScreenKind::Play;if(name=="result")return ScreenKind::Result;
     fail(ErrorCode::InvalidScreen,path,"Unknown screen name");
 }
@@ -83,7 +87,7 @@ SkinManifest manifest(const J& root) {
     m.skinVersion=string(root[L"skinVersion"],path,64);m.description=string(root[L"description"],path,4096,true);
     if(root.object.contains(L"resolution"))m.resolution=resolution(root[L"resolution"],path);
     const auto& screens=root[L"supportedScreens"];
-    if(screens.type!=T::Array||screens.array.empty()||screens.array.size()>3)fail(ErrorCode::InvalidManifest,path,"supportedScreens must list 1..3 screens");
+    if(screens.type!=T::Array||screens.array.empty()||screens.array.size()>6)fail(ErrorCode::InvalidManifest,path,"supportedScreens must list 1..6 screens");
     for(const auto& value:screens.array)m.supportedScreens.push_back(screen(string(value,path),path));
     object(root[L"resourcePaths"],path);
     for(const auto& [key,value]:root[L"resourcePaths"].object) {
@@ -113,7 +117,7 @@ SkinScreen layout(const J& root,ScreenKind kind,const Resolution& base,const std
     const auto& elements=root[L"elements"];
     if(elements.type!=T::Array||elements.array.size()>limits.elements)fail(ErrorCode::LimitExceeded,path,"elements must be a bounded array");
     for(const auto& e:elements.array) {
-        fields(e,path,{L"id",L"type",L"resource",L"x",L"y",L"width",L"height",L"z",L"opacity",L"text",L"binding",L"sprite",L"extensions",L"rotation",L"tint",L"visible",L"source",L"clip",L"font",L"fontSize",L"align",L"verticalAlign",L"clipText",L"numberFormat",L"default",L"boxMode",L"hud"});
+        fields(e,path,{L"id",L"type",L"resource",L"x",L"y",L"width",L"height",L"z",L"opacity",L"text",L"binding",L"sprite",L"extensions",L"rotation",L"tint",L"visible",L"source",L"clip",L"font",L"fontSize",L"align",L"verticalAlign",L"clipText",L"numberFormat",L"default",L"boxMode",L"hud",L"cornerRadius"});
         SkinElement item;item.id=string(e[L"id"],path,96);
         const auto type=string(e[L"type"],path);
         if(type=="image")item.kind=ElementKind::Image;else if(type=="text")item.kind=ElementKind::Text;
@@ -125,6 +129,7 @@ SkinScreen layout(const J& root,ScreenKind kind,const Resolution& base,const std
         item.width=number(e[L"width"],path,0.001,1000000);item.height=number(e[L"height"],path,0.001,1000000);
         if(e.object.contains(L"z")) {const double z=number(e[L"z"],path,-1000000,1000000);if(z!=std::floor(z))fail(ErrorCode::InvalidScreen,path,"z must be integer");item.z=static_cast<std::int32_t>(z);}
         if(e.object.contains(L"opacity"))item.opacity=number(e[L"opacity"],path,0,1);
+        if(e.object.contains(L"cornerRadius"))item.cornerRadius=number(e[L"cornerRadius"],path,0,1000000);
         if(e.object.contains(L"rotation"))item.rotation=number(e[L"rotation"],path,-360000,360000);
         if(e.object.contains(L"visible")) {
             if(e[L"visible"].type!=T::Boolean)fail(ErrorCode::InvalidScreen,path,"visible must be boolean");
@@ -214,7 +219,7 @@ void validate(SkinPackage& p,const Limits& l) {
         if(wide(*s,"manifest.json").size()>max||s->find('\0')!=std::string::npos)fail(ErrorCode::InvalidManifest,"manifest.json","Metadata string limit or NUL violation");
     }
     const auto validResolution=[](const Resolution& r){return r.width&&r.height&&r.width<=16384&&r.height<=16384;};
-    if(!validResolution(m.resolution)||m.supportedScreens.empty()||m.supportedScreens.size()>3)fail(ErrorCode::InvalidManifest,"manifest.json","Invalid resolution/screens");
+    if(!validResolution(m.resolution)||m.supportedScreens.empty()||m.supportedScreens.size()>6)fail(ErrorCode::InvalidManifest,"manifest.json","Invalid resolution/screens");
     std::set<ScreenKind> declared;
     for(const auto s:m.supportedScreens)if(!screenName(s)||!declared.insert(s).second)fail(ErrorCode::InvalidManifest,"manifest.json","Duplicate/invalid supported screen");
     if(p.screens.size()!=declared.size())fail(ErrorCode::MissingFile,"screens/","Declared screen is missing or extra screen is present");
@@ -256,9 +261,10 @@ void validate(SkinPackage& p,const Limits& l) {
         std::set<std::string> ids;
         for(const auto& e:s.elements) {
             identifier(e.id,screenName(kind));if(!ids.insert(e.id).second)fail(ErrorCode::DuplicateId,e.id,"Duplicate element ID");
-            for(double n:{e.x,e.y,e.width,e.height,e.opacity,e.rotation})if(!std::isfinite(n))fail(ErrorCode::InvalidScreen,e.id,"Nonfinite element geometry");
+            for(double n:{e.x,e.y,e.width,e.height,e.opacity,e.rotation,e.cornerRadius})if(!std::isfinite(n))fail(ErrorCode::InvalidScreen,e.id,"Nonfinite element geometry");
             if(std::abs(e.x)>1000000||std::abs(e.y)>1000000||e.width<=0||e.height<=0||e.width>1000000||e.height>1000000||e.opacity<0||e.opacity>1||std::abs(std::int64_t(e.z))>1000000)
                 fail(ErrorCode::InvalidScreen,e.id,"Invalid element geometry/layer/opacity");
+            if(e.cornerRadius<0||e.cornerRadius>1000000)fail(ErrorCode::InvalidScreen,e.id,"Invalid corner radius");
             if(std::abs(e.rotation)>360000)fail(ErrorCode::InvalidScreen,e.id,"Rotation out of range");
             for(const auto* rect:{&e.source,&e.clip})if(*rect) {
                 const auto& r=**rect;
@@ -285,9 +291,9 @@ void validate(SkinPackage& p,const Limits& l) {
             if(hud.images()&&(e.kind!=ElementKind::Text||e.binding!="play.judgementCombo"||kind!=ScreenKind::Play))fail(ErrorCode::InvalidScreen,e.id,"HUD images need a play.judgementCombo text element");
             for(const auto& id:hud.judgements)if(!id.empty())identifier(id,e.id);
             for(const auto& id:hud.digits)if(!id.empty())identifier(id,e.id);
-            extension(e.extensions,e.id);
+            extension(e.extensions,e.id);(void)Entrance::parse(e.extensions);
             if(e.kind!=ElementKind::Image&&e.kind!=ElementKind::Sprite&&e.kind!=ElementKind::Text&&e.kind!=ElementKind::Number&&e.kind!=ElementKind::Box)fail(ErrorCode::InvalidScreen,e.id,"Unknown element kind");
-            if(e.kind==ElementKind::Box&&(e.boxMode!="solid"&&e.boxMode!="title"&&e.boxMode!="bga"))fail(ErrorCode::InvalidScreen,e.id,"Invalid box mode");
+            if(e.kind==ElementKind::Box&&(e.boxMode!="solid"&&e.boxMode!="title"&&e.boxMode!="bga"&&e.boxMode!="hybrid"))fail(ErrorCode::InvalidScreen,e.id,"Invalid box mode");
             if(e.kind==ElementKind::Box&&!e.resource.empty())fail(ErrorCode::InvalidScreen,e.id,"Box cannot use a resource");
             const bool image=e.kind==ElementKind::Image||e.kind==ElementKind::Sprite;
             if(image&&e.resource.empty())fail(ErrorCode::MissingFile,e.id,"Image/sprite needs a resource ID");
@@ -321,7 +327,7 @@ template<class Work> LoadResult guarded(Work work) noexcept {
 }
 }
 const char* screenName(ScreenKind kind) noexcept {
-    switch(kind){case ScreenKind::Select:return "select";case ScreenKind::Play:return "play";case ScreenKind::Result:return "result";default:return nullptr;}
+    switch(kind){case ScreenKind::SettingsSummary:return "settingssummary";case ScreenKind::SongIntro:return "songintro";case ScreenKind::SongInformation:return "songinformation";case ScreenKind::Select:return "select";case ScreenKind::Play:return "play";case ScreenKind::Result:return "result";default:return nullptr;}
 }
 LoadResult SkinLoader::load(const std::filesystem::path& file) const noexcept {
     return guarded([&] {

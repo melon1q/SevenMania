@@ -1,4 +1,4 @@
-﻿/*
+/*
 PL_MPEG - MPEG1 Video decoder, MP2 Audio decoder, MPEG-PS demuxer
 SPDX-License-Identifier: MIT
 

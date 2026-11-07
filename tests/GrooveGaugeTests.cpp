@@ -1,4 +1,4 @@
-﻿#include "GrooveGauge.h"
+#include "GrooveGauge.h"
 #include <cmath>
 #include <iostream>
 #include <stdexcept>

@@ -1,4 +1,4 @@
-﻿#include "SkinPackage.h"
+#include "SkinPackage.h"
 
 namespace sevenmania::skin {
 std::optional<SkinError> SkinManager::add(LoadResult loaded) {

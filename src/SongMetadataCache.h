@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "BmsParser.h"
 #include "SongResourceIdentity.h"
 #include <windows.h>

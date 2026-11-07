@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <array>
 #include "JsonValue.h"
 #include <cstdint>
@@ -11,7 +11,7 @@
 #include <variant>
 
 namespace sevenmania::skin {
-enum class ScreenKind { Select, Play, Result };
+enum class ScreenKind { Select, Play, Result, SongInformation, SongIntro, SettingsSummary };
 enum class ElementKind { Image, Text, Number, Sprite, Box };
 enum class ResourceKind { Png, Jpeg, Font, AnimationData };
 enum class ErrorCode {
@@ -63,6 +63,7 @@ struct SkinElement {
     std::string boxMode = "solid";
     ElementKind kind{};
     double x{}, y{}, width{}, height{}, opacity = 1;
+    double cornerRadius{}; // design pixels; zero keeps square corners
     double rotation{}; // clockwise degrees about destination centre
     SkinTint tint;
     bool visible = true;

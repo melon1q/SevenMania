@@ -1,4 +1,4 @@
-﻿#![deny(unsafe_op_in_unsafe_fn)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};

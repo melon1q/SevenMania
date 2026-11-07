@@ -1,4 +1,4 @@
-﻿#include "SongLibrary.h"
+#include "SongLibrary.h"
 #include "SongMetadataCache.h"
 #include "RustBackend.h"
 #include "ExperimentProfile.h"

@@ -1,4 +1,4 @@
-﻿#include "SkinRenderTestSupport.h"
+#include "SkinRenderTestSupport.h"
 #include "editor/HudImageEditor.h"
 #include "skin/SkinApplication.h"
 #include <psapi.h>

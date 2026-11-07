@@ -1,4 +1,4 @@
-﻿#include "PlayFeedback.h"
+#include "PlayFeedback.h"
 #include <windows.h>
 #include <filesystem>
 #include <fstream>

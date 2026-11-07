@@ -1,4 +1,4 @@
-﻿#include <cstdint>
+#include <cstdint>
 
 #ifdef BMS_RUST_SONG_SELECTION_BUILD_CHECK
 extern "C" std::uint32_t bms_song_selection_abi_version();

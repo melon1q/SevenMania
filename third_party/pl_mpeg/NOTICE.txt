@@ -1,4 +1,4 @@
-﻿PL_MPEG by Dominic Szablewski (https://phoboslab.org)
+PL_MPEG by Dominic Szablewski (https://phoboslab.org)
 Upstream: https://github.com/phoboslab/pl_mpeg
 Upstream pl_mpeg.h declares SPDX-License-Identifier: MIT.
 Pinned revision: c871f2be022ece7ef4f64230b4fb8e1fb9eb6023

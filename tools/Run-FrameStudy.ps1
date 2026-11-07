@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Mandatory)][string]$Profiler,
     [Parameter(Mandatory)][string]$Label,
     [string]$OutputDirectory='build-frame-study/results',

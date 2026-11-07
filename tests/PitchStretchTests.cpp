@@ -1,4 +1,4 @@
-﻿#include "PitchStretch.h"
+#include "PitchStretch.h"
 #include <iostream>
 #include <stdexcept>
 

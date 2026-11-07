@@ -1,4 +1,4 @@
-﻿#include "RustBackend.h"
+#include "RustBackend.h"
 #include "JsonValue.h"
 #include "SongLibrary.h"
 #include <bit>

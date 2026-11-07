@@ -2,8 +2,9 @@
 constexpr int ID_SKIN_LOAD=1290, ID_SKIN_CLEAR=1291, ID_SKIN_ANIMATION=1292, ID_SKIN_RETRY=1293;
 sevenmania::skin::SkinApplication gSkinApplication;
 sevenmania::skin::SkinDataProvider gSkinData;
-BrowseBackdrop gSkinTitleBackdrop, gSkinBgaBackdrop;
-uint64_t gSkinTitleRevision=0, gSkinBgaRevision=0;
+void restartSongInformationEntrance(){gSkinApplication.enterScreen(sevenmania::skin::ScreenKind::SongInformation);}
+BrowseBackdrop gSkinTitleBackdrop, gSkinBgaBackdrop, gSkinHybridBackdrop;
+uint64_t gSkinTitleRevision=0, gSkinBgaRevision=0, gSkinHybridRevision=0;
 int gSkinBoxWidth=0, gSkinBoxHeight=0;
 std::filesystem::path gSkinSource;
 std::wstring gSkinStatus=L"기본 화면 사용 중";
@@ -11,7 +12,12 @@ HWND gSkinNativeStatus{};
 std::filesystem::path gSkinWanted;
 bool gSkinRetryPending=false;
 bool gSkinMirrorUi=false;
-std::filesystem::path defaultSkinPath(){return executableFolder()/L"Assets/Skins/DefaultReference.semaskin";}
+std::filesystem::path defaultSkinPath(){
+    const auto skins=executableFolder()/L"Assets/Skins";
+    const auto current=skins/L"DefaultSkin/DefaultReference.semaskin";
+    std::error_code ec;
+    return std::filesystem::is_regular_file(current,ec)?current:skins/L"DefaultReference.semaskin";
+}
 void skinVisibility(bool ready){if(!ready){for(HWND button:gPauseButtons)if(IsWindow(button))ShowWindow(button,SW_HIDE);for(HWND child:{gList,gFolder,gInfo,gStatus,gHiddenSongs,gResultNext})if(IsWindow(child))ShowWindow(child,SW_HIDE);}else{if(IsWindow(gList))ShowWindow(gList,!gPlaying&&!gShowingResult&&!gStartupSplash?SW_SHOWNA:SW_HIDE);updateHiddenSongsVisibility();if(IsWindow(gResultNext))ShowWindow(gResultNext,gShowingResult?SW_SHOWNA:SW_HIDE);for(HWND button:gPauseButtons)if(IsWindow(button))ShowWindow(button,gPlaying&&gPaused?SW_SHOWNA:SW_HIDE);}}
 void unloadSkinSelection(){if(IsWindow(gWindow)){KillTimer(gWindow,ID_SKIN_RETRY);KillTimer(gWindow,ID_SKIN_ANIMATION);}gCompositionPresenter.setFrameOverlay(nullptr);gCompositionPresenter.setFrameForeground(nullptr);gSkinApplication.clear();gSkinData.clear();gSkinRetryPending=false;gSkinWanted.clear();}
 
@@ -88,7 +94,11 @@ void clearSkinSelection(bool persist=true) {
 }
 void restoreSkinSelection() {
     unloadSkinSelection();gSkinSource.clear();const auto path=readSkinSelection();
-    if(path&&!path->empty()&&std::filesystem::path(*path).is_absolute())applySkinFile(*path,false);
+    if(path&&!path->empty()&&std::filesystem::path(*path).is_absolute()){
+        auto selected=std::filesystem::path(*path);std::error_code ec;
+        if(!std::filesystem::exists(selected,ec)&&selected.filename()==L"DefaultReference.semaskin"&&selected.parent_path().filename()==L"Skins")selected=selected.parent_path()/L"DefaultSkin"/selected.filename();
+        applySkinFile(selected,false);
+    }
     else applySkinFile(defaultSkinPath(),false);
 }
 void retrySkinSelection(){if(gSkinRetryPending&&!gSkinWanted.empty()){auto path=gSkinWanted;applySkinFile(path,false);}}
@@ -128,7 +138,7 @@ void runSkinSettingsAction(int action) {
     setBindingStatus(gSkinStatus);
 }
 void updateSkinJudgementAnchor() {
-    if(!gPlaying || gActiveChartIndex<0 || gActiveChartIndex>=static_cast<int>(gCharts.size()))return;
+    if((!gPlaying&&!gPlaybackLoad.preparing()) || gActiveChartIndex<0 || gActiveChartIndex>=static_cast<int>(gCharts.size()))return;
     const auto& chart=gCharts[static_cast<size_t>(gActiveChartIndex)];
     const bool dp=chart.mode==bms::ChartMode::TenKey||chart.mode==bms::ChartMode::FourteenKey;
     const int lane=dp?std::max(28,LaneLayout::defaultKeyWidth*2/3):LaneLayout::defaultKeyWidth;
@@ -142,6 +152,10 @@ void updateSkinJudgementAnchor() {
     sevenmania::skin::SkinGearState gear;gear.judgementColor=gJudgementColor;gear.judgementScale=gJudgementPop.scale();gear.position=gGearPosition;gear.mirrorUi=gSkinMirrorUi;gear.active=chart.mode==bms::ChartMode::SevenKey||chart.mode==bms::ChartMode::Unknown;gear.centerX=left+width/2.0;gear.lineY=line;gear.gauge=gGrooveGauge.value();gear.speed=gNoteSpeed;gear.rotation=gScratchDisc.angle()*180/3.141592653589793;gear.pressed=primaryPressed();gSkinApplication.setGearState(gear);
 }
 void drawAppliedSkinDc(HDC dc) {
+    if(gPlaybackLoad.preparing()){
+        if(captureSevenManiaSkinData(gSkinData))gSkinApplication.drawDc(dc,gWindowWidth,gWindowHeight,gSkinData.snapshot());
+        return; // Keep prepared GPU resources; do not run browse-media decoders here.
+    }
     if(gGpuFrame||gLoading||gStartupSplash||!gSkinApplication.active())return;
     gSkinApplication.releaseGpu();
     if(!captureSevenManiaSkinData(gSkinData))return;
@@ -154,10 +168,15 @@ void drawAppliedSkinDc(HDC dc) {
         time=gSongPreview.chartTime(time);
         const int w=std::clamp(gWindowWidth,1,1920),h=std::clamp(gWindowHeight,1,1080);
         if(gSkinBoxWidth!=gWindowWidth||gSkinBoxHeight!=gWindowHeight){gSkinTitleRevision=0;gSkinBgaRevision=0;gSkinBoxWidth=gWindowWidth;gSkinBoxHeight=gWindowHeight;}
-        for(auto mode:{std::string_view("title"),std::string_view("bga")})if(gSkinApplication.hasBox(mode)) {
-            auto& backdrop=mode=="title"?gSkinTitleBackdrop:gSkinBgaBackdrop;
-            const auto& pixels=backdrop.render(chart,mode=="title"?2:1,{},gBackgroundBlur,gBackgroundOpacity,w,h,time);
-            auto& revision=mode=="title"?gSkinTitleRevision:gSkinBgaRevision;
+        for(auto mode:{std::string_view("title"),std::string_view("bga"),std::string_view("hybrid")})if(gSkinApplication.hasBox(mode)) {
+            auto& backdrop=mode=="title"?gSkinTitleBackdrop:mode=="hybrid"?gSkinHybridBackdrop:gSkinBgaBackdrop;
+            if((mode=="bga"||(mode=="hybrid"&&gBrowseBackgroundMode==1))&&std::chrono::steady_clock::now()-gBrowseSelectedAt<std::chrono::milliseconds(500)){
+                backdrop.reset();const std::uint32_t gray=0xff404040;gSkinApplication.updateBox(mode,&gray,1,1);
+                if(mode=="bga")gSkinBgaRevision=0;else gSkinHybridRevision=0;
+                continue;
+            }
+            const auto& pixels=backdrop.render(chart,mode=="hybrid"?gBrowseBackgroundMode:mode=="title"?2:1,mode=="hybrid"&&!gCustomBackgroundName.empty()?executableFolder()/L"Assets"/gCustomBackgroundName:std::filesystem::path{},gBackgroundBlur,gBackgroundOpacity,w,h,time);
+            auto& revision=mode=="title"?gSkinTitleRevision:mode=="hybrid"?gSkinHybridRevision:gSkinBgaRevision;
             if(revision!=backdrop.revision()){
                 if(!pixels.empty())gSkinApplication.updateBox(mode,pixels.data(),w,h);
                 else {const std::uint32_t gray=0xff404040;gSkinApplication.updateBox(mode,&gray,1,1);}
@@ -170,7 +189,7 @@ void drawAppliedSkinDc(HDC dc) {
     gSkinApplication.setJudgementOffset(gJudgementTextYOffset);
     gSkinApplication.drawDc(dc,gWindowWidth,gWindowHeight,gSkinData.snapshot());
     if(!gPlaying&&!gShowingResult){
-        gBrowseTextOverflow=gSkinApplication.scrolling()||gSkinApplication.hasBox("bga");
+        gBrowseTextOverflow=gSkinApplication.scrolling()||(gSkinApplication.hasBox("bga")||gSkinApplication.hasBox("hybrid"));
         if(boxResized){gSkinTitleRevision=0;gSkinBgaRevision=0;InvalidateRect(gWindow,nullptr,FALSE);}
     }
 }

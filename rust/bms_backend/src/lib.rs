@@ -1,4 +1,4 @@
-﻿#![deny(unsafe_op_in_unsafe_fn)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use std::collections::BTreeMap;
 use std::ffi::{OsString, c_void};

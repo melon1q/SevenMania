@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Judgement.h"
 #include <algorithm>
 #include <cstddef>

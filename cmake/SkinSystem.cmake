@@ -1,4 +1,4 @@
-﻿# Reuse the zlib sources already supplied by FreeType; do not link its UI runtime.
+# Reuse the zlib sources already supplied by FreeType; do not link its UI runtime.
 enable_language(C)
 set(skin_zlib_dir "${PROJECT_SOURCE_DIR}/third_party/freetype/src/gzip")
 if(NOT EXISTS "${skin_zlib_dir}/inflate.c")

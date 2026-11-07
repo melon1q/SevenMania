@@ -1,4 +1,4 @@
-﻿#include "PerformanceTrace.h"
+#include "PerformanceTrace.h"
 #include "AudioEngine.h"
 #include "ExperimentProfile.h"
 #include "PitchStretch.h"
@@ -342,6 +342,7 @@ bool AudioEngine::resume() noexcept {
 
 bool AudioEngine::startOutput(std::wstring& error, bool effectsOnly, double startSeconds, double playbackRate) {
     stop();
+    exclusiveModeFallback_ = false;
     if (!preparePlaybackRate(playbackRate, error)) return false;
     framesPerBuffer_ = requestedBufferFrames_.load();
     if ((effectsOnly && effects_.empty()) || (!effectsOnly && samples_.empty() && effects_.empty())) {
@@ -375,15 +376,56 @@ bool AudioEngine::startOutput(std::wstring& error, bool effectsOnly, double star
     const DWORD flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | (outputFloat_ ? 0 : AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY);
     ComPtr<IAudioClient3> lowLatency;
     bool initialized = false;
-    if (SUCCEEDED(audioClient_->QueryInterface(IID_PPV_ARGS(&lowLatency)))) {
-        UINT32 defaultPeriod{}, fundamental{}, minimum{}, maximum{};
-        hr = lowLatency->GetSharedModeEnginePeriod(streamFormat, &defaultPeriod, &fundamental, &minimum, &maximum);
-        if (SUCCEEDED(hr) && fundamental > 0) {
-            const UINT32 period = std::clamp(((framesPerBuffer_ + fundamental - 1) / fundamental) * fundamental, minimum, maximum);
-            initialized = SUCCEEDED(lowLatency->InitializeSharedAudioStream(flags, period, streamFormat, nullptr));
+    const bool requestExclusive = exclusiveOutputRequested_.load(std::memory_order_relaxed);
+    exclusiveModeActive_ = false;
+    if (requestExclusive) {
+        WAVEFORMATEX* closestMatch{};
+        const HRESULT formatResult = audioClient_->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, streamFormat, &closestMatch);
+        if (closestMatch) CoTaskMemFree(closestMatch);
+        if (formatResult == S_OK) {
+            REFERENCE_TIME minimumPeriod{};
+            REFERENCE_TIME duration = static_cast<REFERENCE_TIME>(
+                (static_cast<uint64_t>(framesPerBuffer_) * 10'000'000ull + sampleRate_ - 1) / sampleRate_);
+            if (SUCCEEDED(audioClient_->GetDevicePeriod(nullptr, &minimumPeriod)))
+                duration = std::max(duration, minimumPeriod);
+
+            constexpr DWORD exclusiveFlags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+            hr = audioClient_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, exclusiveFlags, duration, duration, streamFormat, nullptr);
+            if (hr == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED) {
+                UINT32 alignedFrames{};
+                if (SUCCEEDED(audioClient_->GetBufferSize(&alignedFrames)) && alignedFrames > 0) {
+                    const REFERENCE_TIME alignedDuration = static_cast<REFERENCE_TIME>(
+                        (static_cast<uint64_t>(alignedFrames) * 10'000'000ull + streamFormat->nSamplesPerSec / 2) /
+                        streamFormat->nSamplesPerSec);
+                    audioClient_->Release(); audioClient_ = nullptr;
+                    hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&audioClient_));
+                    if (SUCCEEDED(hr))
+                        hr = audioClient_->Initialize(AUDCLNT_SHAREMODE_EXCLUSIVE, exclusiveFlags,
+                            alignedDuration, alignedDuration, streamFormat, nullptr);
+                }
+            }
+            initialized = SUCCEEDED(hr);
+            if (initialized) exclusiveModeActive_ = true;
         }
     }
-    if (!initialized) hr = audioClient_->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0, streamFormat, nullptr);
+    if (!initialized) {
+        if (requestExclusive) {
+            exclusiveModeFallback_ = true;
+            lowLatency.Reset();
+            if (audioClient_) { audioClient_->Release(); audioClient_ = nullptr; }
+            hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&audioClient_));
+            if (FAILED(hr)) { error = L"WASAPI 출력 장치를 다시 열지 못했습니다."; stop(); return false; }
+        }
+        if (SUCCEEDED(audioClient_->QueryInterface(IID_PPV_ARGS(&lowLatency)))) {
+            UINT32 defaultPeriod{}, fundamental{}, minimum{}, maximum{};
+            hr = lowLatency->GetSharedModeEnginePeriod(streamFormat, &defaultPeriod, &fundamental, &minimum, &maximum);
+            if (SUCCEEDED(hr) && fundamental > 0) {
+                const UINT32 period = std::clamp(((framesPerBuffer_ + fundamental - 1) / fundamental) * fundamental, minimum, maximum);
+                initialized = SUCCEEDED(lowLatency->InitializeSharedAudioStream(flags, period, streamFormat, nullptr));
+            }
+        }
+        if (!initialized) hr = audioClient_->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0, streamFormat, nullptr);
+    }
     if (deviceFormat) CoTaskMemFree(deviceFormat);
     if (!initialized && FAILED(hr)) { error = L"WASAPI 오디오 버퍼를 준비하지 못했습니다."; stop(); return false; }
     audioEvent_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -403,6 +445,10 @@ bool AudioEngine::startOutput(std::wstring& error, bool effectsOnly, double star
     lastRawPositionSeconds_ = lastPositionSeconds_ = static_cast<double>(transportStartFrame_) / sampleRate_;
     useWallClock_ = false;
     nextFrame_ = static_cast<uint64_t>(std::llround(transportStartFrame_ / playbackRate_)); nextBgm_ = 0; voices_.clear();
+    musicFadeStartFrame_ = nextFrame_.load(std::memory_order_relaxed);
+    const uint64_t fadeFrames = musicFadeDurationFrames_.load(std::memory_order_relaxed);
+    musicFadeEndFrame_ = fadeFrames > std::numeric_limits<uint64_t>::max() - musicFadeStartFrame_
+        ? std::numeric_limits<uint64_t>::max() : musicFadeStartFrame_ + fadeFrames;
     { std::lock_guard lock(triggerMutex_); pendingTriggers_.clear(); pendingEffect_.clear(); }
     running_ = true;
     if (!renderAvailable() || FAILED(audioClient_->Start())) {
@@ -432,6 +478,7 @@ void AudioEngine::stop() {
     qpcFrequency_ = 0;
     lastRawPositionSeconds_ = lastPositionSeconds_ = 0;
     useWallClock_ = false;
+    exclusiveModeActive_ = false;
     { std::lock_guard lock(triggerMutex_); pendingTriggers_.clear(); pendingEffect_.clear(); }
 }
 
@@ -466,6 +513,11 @@ void AudioEngine::setVolumes(int master, int music, int keys, int effects) noexc
     musicVolume_.store(std::clamp(music, 0, 100) / 100.0f, std::memory_order_relaxed);
     keyVolume_.store(std::clamp(keys, 0, 100) / 100.0f, std::memory_order_relaxed);
     effectVolume_.store(std::clamp(effects, 0, 100) / 100.0f, std::memory_order_relaxed);
+}
+
+void AudioEngine::setMusicFadeIn(uint32_t durationMs) noexcept {
+    const uint64_t frames = static_cast<uint64_t>(sampleRate_) * durationMs / 1000;
+    musicFadeDurationFrames_.store(frames, std::memory_order_relaxed);
 }
 
 bool AudioEngine::setBufferFrames(uint32_t frames) noexcept {
@@ -513,11 +565,14 @@ double AudioEngine::positionSeconds() const {
 bool AudioEngine::renderAvailable() {
     BMS_TRACE_ZONE("WASAPI render buffer");
     UINT32 padding{};
-    if (FAILED(audioClient_->GetCurrentPadding(&padding)) || padding > deviceBufferFrames_) return false;
+    if (!exclusiveModeActive_.load(std::memory_order_relaxed) &&
+        (FAILED(audioClient_->GetCurrentPadding(&padding)) || padding > deviceBufferFrames_)) return false;
 #ifdef BMS_PERF_DIAGNOSTICS
-    if (padding == 0 && running_.load() && !paused_.load()) ++emptyPaddingEvents_;
+    if (!exclusiveModeActive_.load(std::memory_order_relaxed) && padding == 0 && running_.load() && !paused_.load())
+        ++emptyPaddingEvents_;
 #endif
-    const UINT32 available = deviceBufferFrames_ - padding;
+    const UINT32 available = exclusiveModeActive_.load(std::memory_order_relaxed)
+        ? deviceBufferFrames_ : deviceBufferFrames_ - padding;
     if (!available) return true;
     if (playbackEpoch_ != std::chrono::steady_clock::time_point{}) {
         const auto elapsed = static_cast<uint64_t>(std::chrono::duration<double>(std::chrono::steady_clock::now() - playbackEpoch_).count() * sampleRate_);
@@ -589,11 +644,25 @@ void AudioEngine::fillBuffer(int16_t* target, uint32_t frames) {
         const uint64_t first = std::max(start, voice.startFrame);
         const uint64_t last = std::min(end, voice.startFrame + voice.data->pcm.size() / channels_);
         if (first >= last) continue;
-        const float gain = voice.effectSound ? effects : voice.keySound ? keys : music;
         const auto* source = voice.data->pcm.data() + static_cast<size_t>(first - voice.startFrame) * channels_;
         auto* destination = mixBuffer_.data() + static_cast<size_t>(first - start) * channels_;
-        const size_t count = static_cast<size_t>(last - first) * channels_;
-        for (size_t i = 0; i < count; ++i) destination[i] += source[i] * gain;
+        if (!voice.effectSound && !voice.keySound && musicFadeEndFrame_ > musicFadeStartFrame_ && first < musicFadeEndFrame_) {
+            const size_t frameCount = static_cast<size_t>(last - first);
+            for (size_t frame = 0; frame < frameCount; ++frame) {
+                const uint64_t outputFrame = first + frame;
+                const float progress = outputFrame <= musicFadeStartFrame_ ? 0.0f :
+                    outputFrame >= musicFadeEndFrame_ ? 1.0f :
+                    static_cast<float>(outputFrame - musicFadeStartFrame_) / static_cast<float>(musicFadeEndFrame_ - musicFadeStartFrame_);
+                const float fade = progress * progress * (3.0f - 2.0f * progress);
+                const float gain = music * fade;
+                destination[frame * channels_] += source[frame * channels_] * gain;
+                destination[frame * channels_ + 1] += source[frame * channels_ + 1] * gain;
+            }
+        } else {
+            const float gain = voice.effectSound ? effects : voice.keySound ? keys : music;
+            const size_t count = static_cast<size_t>(last - first) * channels_;
+            for (size_t i = 0; i < count; ++i) destination[i] += source[i] * gain;
+        }
     }
     if (target) for (size_t i = 0, count = static_cast<size_t>(frames) * channels_; i < count; ++i)
         target[i] = static_cast<int16_t>(std::clamp(mixBuffer_[i], -32768.0f, 32767.0f));

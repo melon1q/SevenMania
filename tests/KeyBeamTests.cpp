@@ -1,4 +1,4 @@
-﻿#include "KeyBeams.h"
+#include "KeyBeams.h"
 #include <windows.h>
 #include <filesystem>
 #include <fstream>

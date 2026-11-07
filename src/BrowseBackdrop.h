@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "AsyncVideoBga.h"
 #include "SelectedBgaMetadata.h"
 #include <array>

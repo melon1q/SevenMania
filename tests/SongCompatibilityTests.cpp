@@ -1,4 +1,4 @@
-﻿#include "AudioEngine.h"
+#include "AudioEngine.h"
 #include "VideoBga.h"
 #include <filesystem>
 #include <iostream>

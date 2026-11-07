@@ -1,4 +1,4 @@
-﻿// Opt-in diagnostic runner for the real application, audio transport and paint loop.
+// Opt-in diagnostic runner for the real application, audio transport and paint loop.
 #include "../src/Main.cpp"
 #include <iostream>
 #include <fstream>

@@ -1,4 +1,4 @@
-﻿body {
+body {
     margin: 0;
     width: 100%;
     height: 100%;
@@ -8,6 +8,7 @@
     font-size: 20px;
 }
 #rows { position: absolute; width: 100%; height: 100%; overflow: hidden; }
+#row-track { position: absolute; left: 0; right: 0; top: 0; }
 #selection-guide { position: absolute; left: 4px; right: 4px; background-color: transparent; border-width: 0; }
 .row {
     position: absolute;
@@ -30,16 +31,15 @@
     border-color: #56a8c7;
     color: #151c24;
 }
-.lamp { width: 3px; height: 70%; margin-right: 8px; background-color: #35404e; flex-shrink: 0; }
+.lamp { width: 3px; height: 70%; margin-right: 8px; background-color: #687480; flex-shrink: 0; }
 .lamp.clear { background-color: #4ade80; }
 .lamp.played { background-color: #f87171; }
 .level { font-family: Michroma; font-weight: normal; width: 55px; text-align: center; font-size: 24px; flex-shrink: 0; }
 .labels { flex-grow: 1; flex-shrink: 1; min-width: 0; margin-left: 10px; }
-.title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 20px; }
-.title-text { display: inline-block; white-space: nowrap; position: relative; }
+.title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 28px; }
+.title-text { display: block; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
 .selected .title { text-overflow: clip; }
-.artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: #8fa8bd; margin-top: 2px; }
-.selected .artist { color: #b6d9e9; }
+.selected .title-text { display: inline-block; overflow: visible; text-overflow: clip; }
 .blocked .title { color: #68717b; }
 .variant { font-size: 12px; color: #485562; margin-left: 10px; flex-shrink: 0; }
 .banner { width: 128px; height: 40px; margin-left: 10px; flex-shrink: 0; }

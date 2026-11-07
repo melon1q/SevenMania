@@ -1,4 +1,4 @@
-﻿# Bundled fonts
+# Bundled fonts
 
 - Michroma Regular: Google Fonts / googlefonts/Michroma-font. The official family provides weight 400 only; no fabricated bold file is included.
 - Oxanium Regular and Bold: sevmeyer/oxanium, commit a8f39e0c71186190027a093e9001459410192d1e, fonts/ttf/.

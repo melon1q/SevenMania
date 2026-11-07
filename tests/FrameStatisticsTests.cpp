@@ -1,4 +1,4 @@
-﻿#include "FrameStatistics.h"
+#include "FrameStatistics.h"
 #include <iostream>
 #include <stdexcept>
 static void check(bool value,const char* text){if(!value)throw std::runtime_error(text);}

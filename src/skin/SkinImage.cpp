@@ -1,4 +1,4 @@
-﻿#include "SkinInternal.h"
+#include "SkinInternal.h"
 #include <windows.h>
 #include <wincodec.h>
 #include <wrl/client.h>

@@ -1,4 +1,4 @@
-﻿#include "BmsParser.h"
+#include "BmsParser.h"
 #include "RustBackend.h"
 #include "PreviewTiming.h"
 #include "BmsControlFlow.h"

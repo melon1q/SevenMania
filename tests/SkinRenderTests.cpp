@@ -1,4 +1,4 @@
-﻿#include "SkinRenderTestSupport.h"
+#include "SkinRenderTestSupport.h"
 using namespace skin_test;
 #include <d3d11.h>
 #include <wincodec.h>

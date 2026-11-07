@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "BgaChartSnapshot.h"
 #include "AsyncVideoBga.h"
 #include "ChartRules.h"

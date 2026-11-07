@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "BmsParser.h"
 #include "LatestEffectRequest.h"
@@ -39,9 +39,14 @@ public:
     bool isPaused() const noexcept { return paused_.load(); }
     void stop();
     void releaseSong();
+    void setWasapiExclusiveEnabled(bool enabled) noexcept { exclusiveOutputRequested_.store(enabled, std::memory_order_relaxed); }
+    bool wasapiExclusiveEnabled() const noexcept { return exclusiveOutputRequested_.load(std::memory_order_relaxed); }
+    bool usingWasapiExclusive() const noexcept { return exclusiveModeActive_.load(std::memory_order_relaxed); }
+    bool fellBackFromWasapiExclusive() const noexcept { return exclusiveModeFallback_.load(std::memory_order_relaxed); }
     void trigger(const std::wstring& sampleId);
     bool triggerEffect(const std::wstring& effectId);
     void setVolumes(int master, int music, int keys, int effects) noexcept;
+    void setMusicFadeIn(uint32_t durationMs) noexcept;
     bool setBufferFrames(uint32_t frames) noexcept;
     uint32_t bufferFrames() const noexcept { return requestedBufferFrames_.load(); }
     uint32_t deviceBufferFrames() const noexcept { return deviceBufferFrames_; }
@@ -104,10 +109,14 @@ private:
     std::set<std::wstring> triggeredSlices_;
     std::atomic_bool running_{ false };
     std::atomic_bool paused_{ false };
+    std::atomic_bool exclusiveOutputRequested_{ false };
+    std::atomic_bool exclusiveModeActive_{ false }, exclusiveModeFallback_{ false };
     mutable std::mutex deviceMutex_;
     double pausedPositionSeconds_{};
     std::chrono::steady_clock::time_point pausedAt_{};
     std::atomic<uint64_t> nextFrame_{ 0 };
+    std::atomic<uint64_t> musicFadeDurationFrames_{};
+    uint64_t musicFadeStartFrame_{}, musicFadeEndFrame_{};
     std::atomic<float> masterVolume_{ 1.0f }, musicVolume_{ 1.0f }, keyVolume_{ 1.0f }, effectVolume_{ 1.0f };
     IAudioClient* audioClient_{};
     IAudioRenderClient* renderClient_{};

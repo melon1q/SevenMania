@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #ifdef BMS_USE_TRACY
 #include <tracy/Tracy.hpp>
 #define BMS_TRACE_ZONE(name) ZoneScopedN(name)

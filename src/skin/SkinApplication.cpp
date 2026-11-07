@@ -1,5 +1,6 @@
 ﻿#include "SkinApplication.h"
 #include "SelectionSlotLayout.h"
+#include "SkinEntrance.h"
 #include "HudFrameProbe.h"
 #include "SkinInternal.h"
 #include <d3d11.h>
@@ -11,6 +12,26 @@
 namespace sevenmania::skin {
 using Microsoft::WRL::ComPtr;
 namespace {
+void ensureSelectionRecordElements(SkinScreen& screen) {
+    struct Definition { const char* id; const char* binding; const char* text; double y; };
+    constexpr Definition definitions[]{
+        {"record-best-score","select.record.bestScore","NO RECORD",540},
+        {"record-best-rank","select.record.bestRank","",584},
+        {"record-clear-type","select.record.clearType","",628},
+        {"record-max-combo","select.record.maxCombo","",672}
+    };
+    for(const auto& definition:definitions) {
+        const bool exists=std::any_of(screen.elements.begin(),screen.elements.end(),[&](const SkinElement& e){
+            return e.id==definition.id||e.binding==definition.binding;
+        });
+        if(exists)continue;
+        SkinElement e;e.id=definition.id;e.kind=ElementKind::Text;e.binding=definition.binding;e.text=definition.text;e.defaultValue=std::string(definition.text);
+        e.x=24;e.y=definition.y;e.width=1212;e.height=40;e.z=100+static_cast<std::int32_t>(&definition-definitions);
+        e.textStyle.fontSize=28;e.textStyle.align=TextAlign::Left;e.textStyle.verticalAlign=TextVerticalAlign::Center;e.tint={226,232,240,255};
+        screen.elements.push_back(std::move(e));
+    }
+    std::stable_sort(screen.elements.begin(),screen.elements.end(),[](const SkinElement& a,const SkinElement& b){return a.z<b.z;});
+}
 void check(HRESULT value,const char* message) {
     if(FAILED(value))detail::fail(ErrorCode::InvalidImage,"skin application",message);
 }
@@ -54,10 +75,12 @@ struct SkinApplication::Impl {
     std::shared_ptr<const SkinPackage> package,source;
     SkinGearState gear;
     std::unique_ptr<Surface> surface;
-    std::array<std::unique_ptr<SkinRenderer>,3> renderers;
+    std::array<std::unique_ptr<SkinRenderer>,6> renderers;
     SkinRenderer gpu;
     ComPtr<ID2D1RenderTarget> gpuTarget;
-    bool gpuFailed{},cpuFailed{},cached{},entered{};
+    bool gpuFailed{},cpuFailed{},cached{};
+    std::array<bool,6> entered{};
+    std::optional<ScreenKind> scene;
     bool judgementRainbow{},needsText=true,imageHud{};
     double judgementOffset{},anchorX{},anchorY{},anchorWidth{},anchorHeight{};
     ScreenKind cachedScreen{};
@@ -65,17 +88,18 @@ struct SkinApplication::Impl {
     int attemptedWidth{},attemptedHeight{};
     void resize(int w,int h) {
         auto next=std::make_unique<Surface>();next->create(w,h);
-        std::array<std::unique_ptr<SkinRenderer>,3> prepared;
+        std::array<std::unique_ptr<SkinRenderer>,6> prepared;
         for(const auto& [kind,screen]:package->screens) {
             (void)screen;auto renderer=std::make_unique<SkinRenderer>();
             if(auto error=renderer->prepare(package,kind,next->target.Get()))throw detail::Failure{*error};
+            if(kind==ScreenKind::Play)renderer->forceEntranceDuration(gameplayEntranceDurationSeconds);
             prepared[static_cast<std::size_t>(kind)]=std::move(renderer);
         }
         needsText=false;imageHud=false;
         const auto play=package->screens.find(ScreenKind::Play);
         if(play==package->screens.end())needsText=true;
         else for(const auto& e:play->second.elements)if(e.visible){if(e.binding=="play.judgement"||(e.binding=="play.judgementCombo"&&!e.hud.images()))needsText=true;if(e.binding=="play.judgementCombo"&&e.hud.images())imageHud=true;}
-        renderers=std::move(prepared);surface=std::move(next);cached=false;cpuFailed=false;
+        renderers=std::move(prepared);surface=std::move(next);cached=false;cpuFailed=false;entered.fill(false);scene.reset();
     }
 };
 SkinApplication::SkinApplication()=default;
@@ -88,8 +112,14 @@ void SkinApplication::setJudgementRainbow(bool enabled) noexcept {if(impl_)impl_
 void SkinApplication::setJudgementAnchor(double x,double y,double w,double h) noexcept {if(impl_&&(impl_->anchorX!=x||impl_->anchorY!=y||impl_->anchorWidth!=w||impl_->anchorHeight!=h)){impl_->anchorX=x;impl_->anchorY=y;impl_->anchorWidth=w;impl_->anchorHeight=h;impl_->cached=false;}}
 void SkinApplication::setJudgementOffset(double offset) noexcept {if(impl_&&impl_->judgementOffset!=offset){impl_->judgementOffset=offset;impl_->cached=false;}}
 bool SkinApplication::scrolling() const noexcept {return impl_&&impl_->renderers[0]&&impl_->renderers[0]->scrolling();}
-bool SkinApplication::hasBox(std::string_view mode) const noexcept {return impl_&&impl_->renderers[0]&&impl_->renderers[0]->hasBox(mode);}
-void SkinApplication::updateBox(std::string_view mode,const std::uint32_t* pixels,unsigned width,unsigned height) noexcept {if(impl_&&impl_->renderers[0]&&impl_->renderers[0]->updateBox(mode,pixels,width,height))impl_->cached=false;}
+bool SkinApplication::hasBox(std::string_view mode,ScreenKind screen) const noexcept {return supports(screen)&&impl_->renderers[static_cast<std::size_t>(screen)]->hasBox(mode);}
+void SkinApplication::updateBox(std::string_view mode,const std::uint32_t* pixels,unsigned width,unsigned height,ScreenKind screen) noexcept {if(supports(screen)&&impl_->renderers[static_cast<std::size_t>(screen)]->updateBox(mode,pixels,width,height))impl_->cached=false;}
+void SkinApplication::enterScreen(ScreenKind screen) noexcept {
+    if(!supports(screen))return;
+    const auto index=static_cast<std::size_t>(screen);
+    impl_->renderers[index]->emit("screen.enter");impl_->entered[index]=true;impl_->cached=false;
+    if(screen!=ScreenKind::SongInformation&&screen!=ScreenKind::SettingsSummary)impl_->scene=screen;
+}
 bool SkinApplication::active() const noexcept {return impl_!=nullptr;}
 const SkinManifest* SkinApplication::manifest() const noexcept {return impl_?&impl_->package->manifest:nullptr;}
 bool SkinApplication::ownsJudgement() const noexcept {
@@ -104,7 +134,7 @@ int SkinApplication::selectShortcutAt(double x,double y,int width,int height) co
     const double scale=std::min(double(width)/screen.resolution.width,double(height)/screen.resolution.height);
     x=(x-(width-screen.resolution.width*scale)/2)/scale;y=(y-(height-screen.resolution.height*scale)/2)/scale;
     for(auto it=screen.elements.rbegin();it!=screen.elements.rend();++it){const auto& e=*it;
-        const int slot=e.id=="slot-0"?0:e.id=="slot-1"?1:e.id=="slot-2"?2:-1;
+        const int slot=e.id=="slot-0"?0:e.id=="slot-1"?1:e.id=="slot-2"?2:e.id=="select-settings"?3:e.id=="select-info"?4:-1;
         if(slot<0||!e.visible||e.opacity<=0||e.tint.a==0)continue;
         if(e.clip&&(x<e.clip->x||x>=e.clip->x+e.clip->width||y<e.clip->y||y>=e.clip->y+e.clip->height))continue;
         // Undo the element's centre rotation, just as the renderer applies it.
@@ -147,6 +177,7 @@ std::optional<SkinError> SkinApplication::setHudModes(int judgement,int combo) n
         judgementMode_=judgement;comboMode_=combo;return {};
     }catch(const detail::Failure& e){return e.error;}catch(...){return SkinError{ErrorCode::AllocationFailed,"HUD modes","Cannot prepare HUD mode"};}
 }
+const SkinScreen* SkinApplication::screenLayout(ScreenKind screen) const noexcept {if(!supports(screen))return nullptr;return &impl_->package->screens.at(screen);}
 bool SkinApplication::supports(ScreenKind screen) const noexcept {return impl_&&impl_->package->screens.contains(screen);}
 std::uint64_t SkinApplication::readbacks() const noexcept {return impl_?impl_->readbacks:0;}
 std::optional<SkinError> SkinApplication::load(const std::filesystem::path& file,int width,int height) noexcept {
@@ -155,6 +186,7 @@ std::optional<SkinError> SkinApplication::load(const std::filesystem::path& file
         // Editing references are displayed by the editor only; the live engine owns notes and key input.
         auto runtime=std::make_shared<SkinPackage>(*loaded.package);
         for(auto& [kind,screen]:runtime->screens){(void)kind;std::erase_if(screen.elements,[](const auto& element){return element.extensions[L"editorOnly"].boolean;});}
+        if(auto select=runtime->screens.find(ScreenKind::Select);select!=runtime->screens.end())ensureSelectionRecordElements(select->second);
         // Upgrade only the original reference controls in memory. Never rewrite a user's skin.
         if(auto select=runtime->screens.find(ScreenKind::Select);select!=runtime->screens.end())for(auto& e:select->second.elements){
             if(e.binding.empty()){
@@ -188,7 +220,8 @@ bool SkinApplication::drawDc(HDC destination,int width,int height,const SkinData
         if(impl_->surface->width!=width||impl_->surface->height!=height)impl_->resize(width,height);
         if(impl_->cpuFailed)return false;
         auto& renderer=*impl_->renderers[static_cast<std::size_t>(snapshot.screen())];
-        if(!impl_->entered||impl_->cachedScreen!=snapshot.screen()){renderer.emit("screen.enter");impl_->entered=true;}
+        const auto screen=snapshot.screen();const bool overlay=screen==ScreenKind::SongInformation||screen==ScreenKind::SettingsSummary;
+        if(!impl_->entered[static_cast<std::size_t>(screen)]||(!overlay&&impl_->scene!=screen))enterScreen(screen);
         renderer.setGearState(impl_->gear);
         renderer.setJudgementRainbow(impl_->judgementRainbow);
         renderer.setJudgementOffset(impl_->judgementOffset);
@@ -215,8 +248,10 @@ bool SkinApplication::prepareGpu(ID2D1RenderTarget* target,const SkinDataSnapsho
         HUD_COUNT(PrepareTargetChanges);
         impl_->gpu.unload();impl_->gpuTarget=target;impl_->gpuFailed=false;
         if(auto error=impl_->gpu.prepare(impl_->package,ScreenKind::Play,target)){error_=*error;impl_->gpuFailed=true;}
+        else impl_->gpu.forceEntranceDuration(gameplayEntranceDurationSeconds);
     }
     if(impl_->gpuFailed)return false;
+    if(impl_->scene!=ScreenKind::Play){impl_->gpu.emit("screen.enter");impl_->scene=ScreenKind::Play;}
     impl_->gpu.setGearState(impl_->gear);
     impl_->gpu.setJudgementRainbow(impl_->judgementRainbow);
     impl_->gpu.setJudgementOffset(impl_->judgementOffset);

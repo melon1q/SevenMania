@@ -5,14 +5,13 @@
 <button id="nav-gameplay">게임플레이</button>
 <button id="nav-graphics">그래픽</button>
 <button id="nav-sound">사운드</button>
-<button id="nav-skin">스킨</button>
+<button id="nav-keys">키 설정</button>
 <button id="nav-other" class="active">기타</button>
 </div><div class="content" id="settings-content">
 <div id="page-summary" style="display:none"><h2>요약</h2><div class="description">실제 연결된 일반 설정을 빠르게 조정합니다.</div><div class="card">
 <div class="form-row"><label for="summary-fps">FPS</label><select id="summary-fps"></select></div>
 <div class="form-row"><label for="summary-speed">노트 배속</label><select id="summary-speed"></select></div>
 <div class="form-row"><label for="summary-brightness">BGA 밝기</label><select id="summary-brightness"></select></div>
-<div class="form-row"><label for="summary-judgement">판정</label><select id="summary-judgement"></select></div>
 <div class="form-row"><label for="summary-gauge">게이지 모드</label><select id="summary-gauge"></select></div>
 <div class="form-row"><label for="summary-accuracy">정확도 제한</label><select id="summary-accuracy"></select></div>
 <div class="description">선택한 판정보다 낮은 판정이 나오면 자동으로 재시작합니다. F5로도 재시작할 수 있습니다.</div>
@@ -27,10 +26,9 @@
 <div class="card">
 <div class="form-row"><label for="game-speed">노트 배속</label><select id="game-speed"></select></div>
 <div class="form-row"><label for="game-brightness">BGA 밝기</label><div class="range-row"><input id="game-brightness" type="range" min="0" max="100" step="10" value="0" /><div id="game-brightness-value" class="range-value">0%</div></div></div>
-<div class="form-row"><label for="game-judgement">판정</label><select id="game-judgement"></select></div>
 <div class="form-row"><label for="game-gauge">게이지 모드</label><select id="game-gauge"></select></div>
-<div class="form-row"><label for="game-timing-hint">FAST / SLOW 표시 조건</label><select id="game-timing-hint"></select></div>
-<div class="form-row"><label for="game-accuracy">정확도 제한</label><select id="game-accuracy"></select></div>
+<div class="form-row"><label for="game-timing-hint">FAST / SLOW 표시</label><select id="game-timing-hint"></select></div>
+<div class="form-row"><label for="intro-enabled">곡 진입 연출</label><select id="intro-enabled"></select></div><div class="form-row"><label for="intro-duration">연출 시간</label><select id="intro-duration"></select></div><div class="form-row"><label for="separator-opacity">레인 구분선 불투명도</label><div class="range-row"><input id="separator-opacity" type="range" min="0" max="100" step="1" value="100" /><div id="separator-opacity-value" class="range-value">100%</div></div></div><div class="form-row"><label for="game-accuracy">정확도 제한</label><select id="game-accuracy"></select></div>
 <div class="description">선택한 판정보다 낮은 판정이 나오면 자동으로 재시작합니다. F5로도 재시작할 수 있습니다.</div>
 <div class="form-row"><label for="game-height">노트 높이</label><select id="game-height"></select></div>
 <div class="form-row"><label for="lane-opacity">레인 투명도</label><div class="range-row"><input id="lane-opacity" type="range" min="0" max="100" step="1" value="0" /><div id="lane-opacity-value" class="range-value">0%</div></div></div>
@@ -54,21 +52,18 @@
 <div class="card"><h3>상세 설정</h3>
 <div class="form-row"><label for="gear-position">기어 위치</label><select id="gear-position"></select></div>
 <div class="form-row"><label for="judge-position">판정선 위치</label><div class="range-row"><input id="judge-position" type="range" min="-4096" max="4096" step="1" /><div class="range-value" id="judge-position-value"></div></div></div>
-<div class="form-row"><label for="combo-y">콤보 텍스트 위치</label><div class="range-row"><input id="combo-y" type="range" min="-256" max="256" step="1" /><div class="range-value" id="combo-y-value"></div></div></div>
 
-<button id="game-preview">플레이 화면 미리보기 켜기 / 끄기</button><div class="description">설정 창을 옆으로 이동하면 미리보기를 함께 볼 수 있습니다.</div><h3>컨트롤러</h3><button id="controller-settings">컨트롤러 입력 설정...</button><div class="description">IIDX 컨트롤러의 건반 버튼과 턴테이블 축을 지정하고 입력을 확인합니다.</div><h3>키 배치</h3><div id="key-summary" class="description"></div><button id="bind-keys">키 순서대로 지정</button><button id="cancel-keys">키 지정 취소</button><button id="reset-keys">기본 키로 복원</button><button id="settings-help">사용법</button></div>
+<button id="game-preview">플레이 화면 미리보기 켜기 / 끄기</button><div class="description">설정 창을 옆으로 이동하면 미리보기를 함께 볼 수 있습니다.</div></div>
 <div class="card secondary"><h3>추가 설정</h3><div class="description">기존 게임플레이 화면도 계속 사용할 수 있습니다.</div><button id="native-gameplay" class="secondary-button">기존 게임플레이 설정 열기</button></div>
 <div class="footnote">설정은 변경 즉시 적용되고 저장됩니다.</div></div>
-<div id="page-skin" style="display:none"><h2>스킨</h2><div class="card"><h3>외부 스킨</h3>
+<div id="page-keys" style="display:none"><h2>키 설정</h2><h3>컨트롤러</h3><button id="controller-settings">컨트롤러 입력 설정...</button><div class="description">IIDX 컨트롤러의 건반 버튼과 턴테이블 축을 지정하고 입력을 확인합니다.</div><select id="key-mode"></select><h3>키 배치</h3><div id="key-summary" class="description"></div><button id="bind-keys">키 순서대로 지정</button><button id="cancel-keys">키 지정 취소</button><button id="reset-keys">기본 키로 복원</button><button id="settings-help">사용법</button></div><div id="page-skin" style="display:none"><h2>스킨</h2><div class="card"><h3>외부 스킨</h3>
 <div id="skin-state" class="description">기본 화면 사용 중</div>
-<div class="form-row"><label for="skin-judgement-mode">판정 렌더링</label><select id="skin-judgement-mode"></select></div>
-<div class="form-row"><label for="skin-combo-mode">콤보 렌더링</label><select id="skin-combo-mode"></select></div>
-<div class="description">스킨 설정을 따르거나 폰트·이미지를 각각 선택합니다. 지정되지 않은 이미지는 미리 준비한 폰트로 표시합니다.</div>
+
 <div id="skin-path" class="skin-path"></div>
 <div class="form-row"><button id="skin-load">스킨 불러오기...</button><button id="skin-clear" class="secondary-button">기본 화면으로 복원</button></div>
 <div class="description">.semaskin 파일의 이미지·텍스트를 지원 화면에 적용합니다. 선택한 외부 파일을 그대로 사용하므로 파일을 이동하거나 삭제하지 마세요.</div>
 </div><div class="card"><h3>판정과 콤보</h3><div class="description">스킨에서 정한 기본 위치를 기준으로 세로 위치를 조정합니다.</div><div class="form-row"><label for="judgement-y">판정 텍스트 위치</label><div class="range-row"><input id="judgement-y" type="range" min="-256" max="256" step="1" /><div class="range-value" id="judgement-y-value"></div></div></div></div></div>
-<div id="page-graphics" style="display:none"><h2>그래픽</h2><div class="description">프레임 목표와 일반 렌더링 옵션을 조정합니다.</div><div class="card">
+<div id="page-graphics" style="display:none"><h2>그래픽</h2><div class="form-row"><label>사용자 FPS (1~1500)</label><input id="custom-fps" type="range" min="1" max="1500" step="1" /></div><div class="description">프레임 목표와 일반 렌더링 옵션을 조정합니다.</div><div class="card">
 <div class="form-row"><label for="graphics-fps">프레임 목표</label><select id="graphics-fps"></select></div>
 <div class="form-row check-row"><div class="setting-copy"><label for="note-subpixel">노트 서브픽셀 렌더링</label></div><div class="toggle"><input id="note-subpixel" type="checkbox" /></div></div>
 <div class="form-row check-row"><div class="setting-copy"><label for="note-antialias">노트 안티앨리어싱</label></div><div class="toggle"><input id="note-antialias" type="checkbox" /></div></div>
@@ -93,12 +88,13 @@
 </div>
 <div class="card"><h3>상세 설정</h3>
 <div class="form-row"><label for="sound-buffer">오디오 출력 버퍼</label><select id="sound-buffer"></select></div>
+<div class="form-row"><label for="audio-output">게임 플레이 WASAPI 출력 모드</label><select id="audio-output"></select></div>
+<div class="description">독점 모드는 게임 중 지연 감소를 시도합니다. 다른 앱 소리가 중단될 수 있으며, 장치가 지원하지 않으면 공유 모드로 전환합니다.</div>
 </div>
 <div class="card secondary"><h3>추가 설정</h3><div class="description">기존 사운드 화면도 계속 사용할 수 있습니다.</div><button id="native-sound" class="secondary-button">기존 사운드 설정 열기</button></div>
 <div class="footnote">설정은 변경 즉시 적용되고 저장됩니다.</div></div>
 <div id="page-other"><h2>표시와 시스템</h2><div class="description">필요한 정보와 곡 선택 배경을 조정합니다.</div><div class="card">
 <div class="form-row check-row"><div class="setting-copy"><label for="resource-usage">시스템 자원 보기</label><div class="description">CPU · 메모리 · GPU 사용량과 플레이 화면의<br/>FPS · BPM · 배속을 함께 표시합니다.</div></div><div class="toggle"><input id="resource-usage" type="checkbox" /><div id="resource-state">꺼짐</div></div></div>
-<div class="form-row"><label for="browse-background">곡 선택 화면 배경</label><select id="browse-background"></select></div>
 <div class="form-row"><label for="bg-blur">배경 블러 강도</label><div class="range-row"><input id="bg-blur" type="range" min="0" max="100" step="1" value="0" /><div id="bg-blur-value" class="range-value">0%</div></div></div>
 <div class="form-row"><label for="bg-opacity">배경 불투명도</label><div class="range-row"><input id="bg-opacity" type="range" min="0" max="100" step="1" value="0" /><div id="bg-opacity-value" class="range-value">0%</div></div></div>
 </div>
@@ -111,7 +107,7 @@
 <div class="form-row"><label for="library-grouping">채보 표시</label><select id="library-grouping"></select></div>
 <div class="description">차분 모아 보기는 같은 폴더의 같은 곡을 SP/DP 구분 없이 묶습니다. 곡 선택 후 ← / →로 채보를 변경합니다. 파일과 기록은 유지됩니다.</div>
 <div id="library-status" class="description">대기 중</div></div>
-<div class="card secondary"><h3>사용자 배경 이미지</h3><div id="background-name" class="description">선택된 이미지 없음</div><button id="browse-image" class="secondary-button">이미지 선택</button></div>
+
 <div class="card"><h3>상세 설정</h3>
 <div class="form-row"><label for="cpu-performance">CPU 성능 우선</label><input id="cpu-performance" type="checkbox" /></div>
 <div class="form-row"><label for="cpu-limit">CPU 사용 상한</label><div class="range-row"><input id="cpu-limit" type="range" min="10" max="100" step="1" /><div class="range-value" id="cpu-limit-value"></div></div></div>

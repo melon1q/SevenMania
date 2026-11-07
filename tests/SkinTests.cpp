@@ -1,4 +1,4 @@
-﻿#include "skin/SkinPackage.h"
+#include "skin/SkinPackage.h"
 #include <fstream>
 #include <iostream>
 #include <limits>

@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Mandatory=$true)][string[]]$Charts,
     [ValidateRange(1,10)][int]$Rounds=3,
     [string]$OutputDirectory,

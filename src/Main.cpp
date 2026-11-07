@@ -1,4 +1,7 @@
 ﻿#include "AudioEngine.h"
+#include "PlaybackLoadState.h"
+#include "PlaybackLoadJob.h"
+#include <psapi.h>
 #include "ControllerDialog.h"
 #ifdef BMS_ENABLE_SKIN_BINDINGS
 #include "skin/SevenManiaSkinData.h"
@@ -9,9 +12,13 @@ bool skinOwnsJudgement();
 int selectSkinShortcutAt(int x,int y);
 bool skinNeedsJudgementText();
 void prepareSkinForPlayback();
+bool preparingSkinAnimated();
+bool drawPreparingSkin(HDC);
 bool skinCoversLegacySlots(int left,int top,int right,int bottom);
 #endif
 #include "BmsParser.h"
+#include "GameplayModePolicy.h"
+#include "KeyProfiles.h"
 #include "SongCatalog.h"
 #include "ChartRules.h"
 #include "ChartOptions.h"
@@ -151,6 +158,7 @@ constexpr int ID_NOTE_HEIGHT = 1027;
 constexpr int ID_HIDDEN_SONGS = 1028;
 constexpr int ID_GROOVE_GAUGE = 1029;
 constexpr int ID_SOUND_BUFFER = 1034;
+constexpr int ID_AUDIO_OUTPUT_MODE = 1053;
 constexpr int ID_BROWSE_BACKGROUND = 1035;
 constexpr int ID_CUSTOM_BACKGROUND = 1036;
 constexpr int ID_BACKGROUND_BLUR = 1037;
@@ -170,6 +178,7 @@ constexpr int ID_CPU_PERFORMANCE = 1047;
 constexpr int ID_PRACTICE_PLAY = 1048;
 constexpr int ID_CATEGORY_BASE = 1060;
 constexpr int ID_VOLUME_BASE = 1030;
+constexpr UINT WM_PLAY_CHART_READY=WM_APP+48;
 constexpr UINT WM_LOAD_FINISHED = WM_APP + 20;
 constexpr UINT WM_LOAD_PROGRESS = WM_APP + 21;
 constexpr UINT WM_APPLY_SETTINGS = WM_APP + 42;
@@ -180,6 +189,8 @@ constexpr UINT WM_RML_SETTINGS_ACTION = WM_APP + 46;
 constexpr UINT WM_ACCURACY_RESTART=WM_APP+47;
 constexpr int ID_COLOR_BASE = 1100;
 constexpr int ID_SEPARATOR_BASE = 1200;
+constexpr int ID_SEPARATOR_OPACITY=1096;
+int gSeparatorOpacity=100;
 constexpr int ID_RESULT_NEXT = 1250;
 constexpr int ID_PAUSE_RESUME = 1251;
 constexpr int ID_PAUSE_RESTART = 1252;
@@ -192,6 +203,8 @@ constexpr int ID_SUMMARY_JUDGEMENT = 1263;
 constexpr int ID_SUMMARY_SCREEN_MODE = 1264;
 constexpr int ID_SUMMARY_GAUGE = 1265;
 constexpr int ID_TIMING_HINT=1052;
+constexpr int ID_INTRO_ENABLE=1097,ID_INTRO_DURATION=1098;
+constexpr int ID_PREVIEW_START=1099;
 constexpr int ID_ACCURACY_LIMIT=1049,ID_SUMMARY_ACCURACY_LIMIT=1266;
 constexpr int ID_RESOLUTION = 1048;
 constexpr int JUDGE_OFFSET_MIN = -4096;
@@ -237,7 +250,7 @@ HWND gFpsChoice{}, gSpeedChoice{}, gJudgementChoice{}, gNoteHeightChoice{}, gGro
 HWND gTimingHintChoice{};
 HWND gAccuracyLimitChoice{},gSummaryAccuracyLimit{};
 HWND gSummaryFps{}, gSummaryBga{}, gSummarySpeed{}, gSummaryJudgement{}, gSummaryScreenMode{}, gSummaryGauge{};
-HWND gSoundBufferChoice{};
+HWND gSoundBufferChoice{}, gAudioOutputModeChoice{};
 HWND gBrowseBackgroundChoice{}, gCustomBackgroundLabel{}, gBackgroundBlurSlider{}, gBackgroundBlurValue{};
 HWND gBackgroundOpacitySlider{}, gBackgroundOpacityValue{}, gSongPreviewChoice{}, gPreviewVolumeSlider{}, gPreviewVolumeValue{};
 HWND gCpuLimitSlider{}, gCpuLimitValue{}, gMemoryLimitSlider{}, gMemoryLimitValue{}, gGpuLimitSlider{}, gGpuLimitValue{}, gResourceUsageChoice{}, gCpuPerformanceChoice{};
@@ -251,16 +264,44 @@ int gDefaultThreadPriority = THREAD_PRIORITY_NORMAL;
 std::wstring gCustomBackgroundName, gBrowseMediaKey, gBrowseAudioKey, gBrowseAudioError;
 std::wstring gMemoryLimitError;
 BrowseBackdrop gBrowseBackdrop;
+#include "SelectionAudio.h"
 SongPreview gSongPreview;
+SelectionAudio gSelectionAudio;
 std::chrono::steady_clock::time_point gBrowseSelectedAt{};
 std::chrono::steady_clock::time_point gBrowseTextStartedAt = std::chrono::steady_clock::now();
 std::wstring gBrowseTextKey;
 bool gBrowseTextOverflow{};
+struct BrowseDifficultyCarousel {
+    std::wstring groupKey;
+    double from{};
+    double target{};
+    std::chrono::steady_clock::time_point started{};
+    bool animating{};
+
+    double position(std::chrono::steady_clock::time_point now) const {
+        if (!animating) return target;
+        constexpr double durationSeconds = 0.160;
+        const double t = std::clamp(std::chrono::duration<double>(now - started).count() / durationSeconds, 0.0, 1.0);
+        const double eased = 1.0 - std::pow(1.0 - t, 3.0);
+        return from + (target - from) * eased;
+    }
+
+    bool active(std::chrono::steady_clock::time_point now) {
+        if (!animating) return false;
+        if (now - started >= std::chrono::milliseconds(160)) {
+            from = target;
+            animating = false;
+            return false;
+        }
+        return true;
+    }
+};
+BrowseDifficultyCarousel gBrowseDifficultyCarousel;
 bool gStartupSplash{};
 int gStartupProgress{};
 std::unique_ptr<Gdiplus::Bitmap> gStartupSplashImage;
 constexpr std::array<int, 6> SOUND_BUFFER_OPTIONS{32, 64, 128, 256, 512, 1024};
-int gSoundBufferFrames = 256;
+int gSoundBufferFrames = 256, gAudioOutputMode{};
 HWND gJudgePosition{}, gJudgeValue{};
 HWND gLaneTransparencySlider{}, gLaneTransparencyValue{};
 HWND gBgaDarknessChoice{};
@@ -277,7 +318,7 @@ HWND gSubpixelChoice{}, gAntialiasChoice{}, gLowLatencyChoice{};
 bool gNoteSubpixel = true, gNoteAntialias = true;
 bool gReflexRequested = false;
 bool gLatencyInputPump = false;
-std::array<HWND, 6> gCategoryButtons{};
+std::array<HWND, 7> gCategoryButtons{};
 std::array<HWND, 4> gVolumeSliders{}, gVolumeValues{};
 std::unordered_map<HWND, int> gSettingsControlCategory;
 std::unordered_map<HWND, RECT> gSettingsControlRects;
@@ -289,6 +330,10 @@ bool gCompositionEnabled{};
 bool gDirectCompositionEnabled = true;
 CompositionPresenter gCompositionPresenter;
 SystemResources gSystemResources;
+bool gSongInfoVisible{};std::wstring gSongInfoText;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+sevenmania::skin::SkinDataProvider gSongInformationData;
+#endif
 bool gGpuFrame{}, gGpuNotePass{}, gGpuUnavailable{};
 int gGpuFrameAccumulator = 100;
 std::thread gLoadWorker;
@@ -413,13 +458,61 @@ std::filesystem::path gCurrentFolder;
 std::filesystem::path gSettingsFile;
 constexpr UINT_PTR ID_SONG_LIST_ANIMATION = 0xB501;
 constexpr UINT_PTR ID_PAUSE_PRESENT_RETRY = 0xB502;
-constexpr auto songListScrollDuration = std::chrono::milliseconds(260);
-constexpr auto songListRepeatInterval = std::chrono::milliseconds(100);
-std::chrono::steady_clock::time_point gLastSongNavigation{};
-std::chrono::steady_clock::time_point gSongListScrollStarted{};
-int gSongListScrollTarget{};
-int gSongListScrollApplied{};
-bool gSongListScrolling{};
+constexpr auto songListRepeatInitialDelay = std::chrono::milliseconds(220);
+constexpr auto songListRepeatInterval = std::chrono::milliseconds(50);
+constexpr double songListSpringOmega = 75.0;
+constexpr int songListFallbackRowHeight = 58;
+struct SongListScrollSpring {
+    double position{}, target{}, velocity{};
+    std::chrono::steady_clock::time_point lastUpdate{};
+    bool animating{};
+
+    void snap(double value, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) {
+        position = target = value; velocity = 0.0; lastUpdate = now; animating = false;
+    }
+    bool advance(std::chrono::steady_clock::time_point now) {
+        if (!animating) return false;
+        if (lastUpdate == std::chrono::steady_clock::time_point{}) { lastUpdate = now; return true; }
+        const double dt = std::max(0.0, std::chrono::duration<double>(now - lastUpdate).count());
+        lastUpdate = now;
+        if (dt <= 0.0) return true;
+        if (dt >= 1.0) { snap(target, now); return false; }
+        const double error = position - target;
+        const double c = velocity + songListSpringOmega * error;
+        const double decay = std::exp(-songListSpringOmega * dt);
+        position = target + (error + c * dt) * decay;
+        velocity = (velocity - songListSpringOmega * c * dt) * decay;
+        const double nextError = position - target;
+        if ((error > 0.0 && nextError <= 0.0) || (error < 0.0 && nextError >= 0.0)) {
+            snap(target, now);
+            return false;
+        }
+        if (std::abs(position - target) < 0.001 && std::abs(velocity) < 0.05) snap(target, now);
+        return animating;
+    }
+    void retarget(double next, std::chrono::steady_clock::time_point now) {
+        advance(now); target = next;
+        if (!animating && std::abs(position - target) < 0.001) { snap(next, now); return; }
+        if (lastUpdate == std::chrono::steady_clock::time_point{}) lastUpdate = now;
+        animating = true;
+    }
+    void rebaseCycles(int rowCount) {
+        if (rowCount <= 0 || !std::isfinite(position) || !std::isfinite(target)) return;
+        const double cycleOffset = std::floor(position / static_cast<double>(rowCount)) * rowCount;
+        if (cycleOffset == 0.0) return;
+        position -= cycleOffset;
+        target -= cycleOffset;
+    }
+};
+SongListScrollSpring gSongListScroll;
+UINT gSongListHeldKey{};
+std::chrono::steady_clock::time_point gSongListNextRepeat{};
+int gSongListWheelRemainder{};
+constexpr std::int64_t songListInvalidRenderWindow = std::numeric_limits<std::int64_t>::min();
+std::int64_t gSongListRenderWindowStart{songListInvalidRenderWindow};
+int gSongListRenderWindowSize{};
+void scheduleSongListAnimationTimer();
+void clearSongListHeldKey();
 AudioEngine gAudio;
 bool gPlaying = false;
 bool gPaused{};
@@ -460,7 +553,13 @@ bool gCaptureAwaitRelease = false;
 bool gTimerResolutionRequested = false;
 int gActiveChartIndex = -1;
 double gPlayhead = 0;
-bool gPlaybackLoadReady{};
+bms::PlaybackLoadState gPlaybackLoad;
+PlaybackLoadJob gPlaybackJob;
+#include "SongIntroOverlay.h"
+SongIntroOverlay gSongIntro;int gIntroEnabled=1,gIntroDuration=1100;
+#include "PlayPreview.h"
+PlayPreview gPlayPreview;
+int gPreviewStartMode{};
 std::chrono::steady_clock::time_point gPlaybackLoadStarted{};
 std::chrono::steady_clock::time_point gTitleFadeOutStarted{};
 constexpr auto titleFadeDuration = std::chrono::milliseconds(250);
@@ -468,6 +567,7 @@ double gNoteSpeed = 1.0;
 int gNoteHeight = 12;
 JudgementProfile gJudgementProfile = JudgementProfile::Normal;
 GrooveGaugeMode gGrooveGaugeMode = GrooveGaugeMode::Normal;
+int gTimingHintCondition=0;
 AccuracyLimit gAccuracyLimit=AccuracyLimit::None;
 bool gAccuracyRestartPending=false;
 std::uint64_t gPlaybackGeneration=0;
@@ -481,10 +581,12 @@ const wchar_t* activeGaugeModeText() {
     switch(gGrooveGaugeMode){case GrooveGaugeMode::Easy:return L"EASY";case GrooveGaugeMode::Hard:return L"HARD";default:return L"NORMAL";}
 }
 std::array<UINT, 8> gLaneKeys = DEFAULT_KEYS;
-std::array<UINT, 8> gPendingLaneKeys{};
+std::array<UINT, 16> gPendingLaneKeys{};
+bms::KeyProfiles gKeyProfiles;int gBindingMode=1;
 int gCaptureLane{};
 size_t gMissScanIndex{};
 std::vector<unsigned char> gHit;
+std::vector<size_t> gLingeringLongNotes;
 std::array<std::vector<size_t>, 16> gLaneNoteIndices;
 std::vector<bool> gMineHit;
 std::array<bool, 16> gPressed{};
@@ -542,7 +644,6 @@ void setText(HWND control, const std::wstring& text) {
         }
     }
 }
-int gTimingHintCondition=0;
 
 void setStatus(const std::wstring& text) {
     setText(gStatus, text);
@@ -553,9 +654,19 @@ void updateBrowseMedia();
 void stopBrowseMedia();
 std::filesystem::path executableFolder();
 void openSettings();
+void openFullSettings();
+void restartSongInformationEntrance();
+RECT playBgaViewport();
 void layoutControls();
 void saveDisplaySettings();
 void beginSelectedChart(bool practice = false);
+void beginSongEntry(const bms::Chart&);
+bool songEntryActive();
+void drawSongEntry(HDC);
+
+void drawPreviewNotes(HDC);
+bool previewKey(WPARAM);
+void beginPlaybackLoadWorker(const std::filesystem::path&,int,int,PracticeMode);
 void openPracticeSetup();
 
 std::wstring practiceTime(double seconds) {
@@ -659,6 +770,8 @@ void loadKeyBindings() {
         loaded[i] = value;
     }
     gLaneKeys = loaded;
+    std::copy(gLaneKeys.begin(),gLaneKeys.end(),gKeyProfiles.keys[1].begin());gKeyProfiles.load(gSettingsFile);
+    std::copy_n(gKeyProfiles.keys[1].begin(),8,gLaneKeys.begin());
 }
 
 void saveKeyBindings() {
@@ -673,7 +786,7 @@ void saveKeyBindings() {
 bool applyLaneKeys(const std::array<UINT, 8>& keys) {
     for (size_t i = 0; i < keys.size(); ++i)
         if (keys[i] > 255 || reservedBinding(keys[i]) || std::find(keys.begin(), keys.begin()+i, keys[i]) != keys.begin()+i) return false;
-    gLaneKeys = keys; saveKeyBindings(); return true;
+    gLaneKeys = keys; saveKeyBindings();std::copy(keys.begin(),keys.end(),gKeyProfiles.keys[1].begin());gKeyProfiles.save(gSettingsFile,1);return true;
 }
 
 void loadDisplaySettings() {
@@ -684,6 +797,8 @@ void loadDisplaySettings() {
     gBackgroundOpacity = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Opacity", 10, gSettingsFile.c_str())), 0, 100);
     gSongPreviewEnabled = GetPrivateProfileIntW(L"Sound", L"SongPreview", 1, gSettingsFile.c_str()) != 0;
     gPreviewVolume = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Sound", L"PreviewVolume", 50, gSettingsFile.c_str())), 0, 100);
+    gAudioOutputMode = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Sound", L"OutputMode", 0, gSettingsFile.c_str())), 0, 1);
+    gAudio.setWasapiExclusiveEnabled(gAudioOutputMode == 1);
     gCpuLimitPercent = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"System", L"CpuLimitPercent", 100, gSettingsFile.c_str())), 10, 100);
     gMemoryLimitPercent = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"System", L"MemoryLimitPercent", 100, gSettingsFile.c_str())), 10, 100);
     gGpuLimitPercent = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"System", L"GpuLimitPercent", 100, gSettingsFile.c_str())), 10, 100);
@@ -706,13 +821,14 @@ void loadDisplaySettings() {
         gVolumes[i] = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Sound", volumeKeys[i], 100, gSettingsFile.c_str())), 0, 100);
     gAudio.setVolumes(gVolumes[0], gVolumes[1], gVolumes[2], gVolumes[3]);
     const int fps = startup.fps;
-    if (std::find(frameRateValues.begin(), frameRateValues.end(), fps) != frameRateValues.end()) gTargetFps = fps;
+    if (fps==vsyncFps||(fps>=0&&fps<=1500)) gTargetFps = fps;
     gJudgeLineOffset = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Display", L"JudgeLineOffset", 0, gSettingsFile.c_str())), JUDGE_OFFSET_MIN, JUDGE_OFFSET_MAX);
     gLaneTransparency = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Display", L"LaneTransparency", 34, gSettingsFile.c_str())), 0, 100);
     const int brightness = startup.brightness;
     gBgaBrightness = (brightness + 5) / 10 * 10; gBgaDarkness = 100 - gBgaBrightness;
     gScreenMode = startup.mode;
     gLaneCoverPercent = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Display", L"LaneCover", 0, gSettingsFile.c_str())), 0, 100);
+    gSeparatorOpacity=std::clamp(int(GetPrivateProfileIntW(L"Display",L"SeparatorOpacity",100,gSettingsFile.c_str())),0,100);
     for (size_t i = 0; i < gLaneSeparators.size(); ++i) {
         const std::wstring key = L"Separator" + std::to_wstring(i);
         gLaneSeparators[i] = GetPrivateProfileIntW(L"Display", key.c_str(), i == 0 ? 1 : 0, gSettingsFile.c_str()) != 0;
@@ -721,11 +837,15 @@ void loadDisplaySettings() {
     // to the supported 0.50x–10.00x range.
     const UINT speed = GetPrivateProfileIntW(L"Display", L"SpeedSteps", 4, gSettingsFile.c_str());
     gNoteSpeed = std::clamp(static_cast<double>(speed) / 4.0, 0.5, 10.0);
-    gJudgementProfile = static_cast<JudgementProfile>(std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gameplay", L"JudgementProfile", 2, gSettingsFile.c_str())), 0, 3));
+    gJudgementProfile = JudgementProfile::Normal;
     gGrooveGaugeMode = static_cast<GrooveGaugeMode>(std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gameplay", L"GrooveGaugeMode", 0, gSettingsFile.c_str())), 0, 2));
+    gIntroEnabled=GetPrivateProfileIntW(L"Gameplay",L"SongIntro",1,gSettingsFile.c_str())!=0;
+    gIntroDuration=std::clamp(int(GetPrivateProfileIntW(L"Gameplay",L"SongIntroMs",1100,gSettingsFile.c_str())),800,1500);
+    gPreviewStartMode=std::clamp(int(GetPrivateProfileIntW(L"Gameplay",L"PreviewStart",0,gSettingsFile.c_str())),0,2);
+    gTimingHintCondition=std::clamp(int(GetPrivateProfileIntW(L"Gameplay",L"TimingHintCondition",0,gSettingsFile.c_str())),0,3);
     gAccuracyLimit=static_cast<AccuracyLimit>(std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gameplay",L"AccuracyLimit",0,gSettingsFile.c_str())),0,4));
-    gSkinJudgementMode=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Skin",L"JudgementMode",-1,gSettingsFile.c_str())),-1,1);
-    gSkinComboMode=std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Skin",L"ComboMode",-1,gSettingsFile.c_str())),-1,1);
+    gSkinJudgementMode=1;
+    gSkinComboMode=1;
     gComboTextYOffset = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gameplay", L"ComboTextYOffset", 0, gSettingsFile.c_str())), HUD_TEXT_Y_MIN, HUD_TEXT_Y_MAX);
     gJudgementTextYOffset = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gameplay", L"JudgementTextYOffset", 0, gSettingsFile.c_str())), HUD_TEXT_Y_MIN, HUD_TEXT_Y_MAX);
     const int bufferFrames = startup.buffer;
@@ -754,6 +874,7 @@ void saveDisplaySettings() {
     WritePrivateProfileStringW(L"Sound", L"SongPreview", gSongPreviewEnabled ? L"1" : L"0", gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Sound", L"PreviewVolume", std::to_wstring(gPreviewVolume).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Sound", L"BufferFrames", std::to_wstring(gSoundBufferFrames).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Sound", L"OutputMode", std::to_wstring(gAudioOutputMode).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"System", L"CpuLimitPercent", std::to_wstring(gCpuLimitPercent).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"System", L"MemoryLimitPercent", std::to_wstring(gMemoryLimitPercent).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"System", L"GpuLimitPercent", std::to_wstring(gGpuLimitPercent).c_str(), gSettingsFile.c_str());
@@ -781,6 +902,11 @@ void saveDisplaySettings() {
     WritePrivateProfileStringW(L"Display", L"SpeedSteps", speed.c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Gameplay", L"JudgementProfile", judgementProfile.c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Gameplay", L"GrooveGaugeMode", grooveGaugeMode.c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Display",L"SeparatorOpacity",std::to_wstring(gSeparatorOpacity).c_str(),gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Gameplay",L"SongIntro",std::to_wstring(gIntroEnabled).c_str(),gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Gameplay",L"SongIntroMs",std::to_wstring(gIntroDuration).c_str(),gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Gameplay",L"PreviewStart",std::to_wstring(gPreviewStartMode).c_str(),gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Gameplay",L"TimingHintCondition",std::to_wstring(gTimingHintCondition).c_str(),gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Gameplay",L"AccuracyLimit",std::to_wstring(static_cast<int>(gAccuracyLimit)).c_str(),gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Skin",L"JudgementMode",std::to_wstring(gSkinJudgementMode).c_str(),gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Skin",L"ComboMode",std::to_wstring(gSkinComboMode).c_str(),gSettingsFile.c_str());
@@ -797,7 +923,6 @@ void saveDisplaySettings() {
     const std::wstring resolutionWidth = gResolutionConfigured ? std::to_wstring(gResolutionWidth) : L"0";
     const std::wstring resolutionHeight = gResolutionConfigured ? std::to_wstring(gResolutionHeight) : L"0";
     WritePrivateProfileStringW(L"Display", L"ResolutionWidth", resolutionWidth.c_str(), gSettingsFile.c_str());
-    gTimingHintCondition=std::clamp(int(GetPrivateProfileIntW(L"Gameplay",L"TimingHintCondition",0,gSettingsFile.c_str())),0,2);
     WritePrivateProfileStringW(L"Display", L"ResolutionHeight", resolutionHeight.c_str(), gSettingsFile.c_str());
     const std::wstring cover = std::to_wstring(gLaneCoverPercent);
     WritePrivateProfileStringW(L"Display", L"LaneCover", cover.c_str(), gSettingsFile.c_str());
@@ -819,7 +944,7 @@ bool applyCpuPerformanceMode() {
 
 void updateBindingCaptureStatus() {
     constexpr std::array<const wchar_t*, 8> laneNames{ L"스크래치", L"1번 건반", L"2번 건반", L"3번 건반", L"4번 건반", L"5번 건반", L"6번 건반", L"7번 건반" };
-    setBindingStatus(L"키 배치 설정: " + std::wstring(laneNames[static_cast<size_t>(gCaptureLane)]) + L" 키를 누르세요 (Esc 취소)");
+    setBindingStatus(L"키 배치 설정: " + std::to_wstring(gCaptureLane+1)+L"번 입력" + L" 키를 누르세요 (Esc 취소)");
 }
 
 void beginKeyBindingCapture() {
@@ -849,14 +974,14 @@ void acceptBindingKey(UINT key) {
     gPendingLaneKeys[static_cast<size_t>(gCaptureLane)] = key;
     gCaptureAwaitRelease = true;
     ++gCaptureLane;
-    if (gCaptureLane < static_cast<int>(gPendingLaneKeys.size())) {
+    if (gCaptureLane < bms::KeyProfiles::counts[gBindingMode]) {
         updateBindingCaptureStatus();
         return;
     }
-    if (!applyLaneKeys(gPendingLaneKeys)) { cancelKeyBindingCapture(); return; }
+    if(gBindingMode==1){std::array<UINT,8> seven;std::copy_n(gPendingLaneKeys.begin(),8,seven.begin());if(!applyLaneKeys(seven)){cancelKeyBindingCapture();return;}}
+    gKeyProfiles.keys[gBindingMode]=gPendingLaneKeys;gKeyProfiles.save(gSettingsFile,gBindingMode);
     gCapturingBindings = false;
     gCaptureAwaitRelease = false;
-    WritePrivateProfileStringW(L"Gameplay",L"TimingHintCondition",std::to_wstring(gTimingHintCondition).c_str(),gSettingsFile.c_str());
     setBindingStatus(L"키 배치를 저장했습니다.");
     setText(gSettingsKeys, keySummary());
     updateSelection();
@@ -897,7 +1022,7 @@ void setJudgement(const std::wstring& text, COLORREF color) {
 
 void finishPlayback();
 void captureBrowseBackdrop();
-void startUiEffects() { std::wstring ignored; gAudio.startEffectsOnly(ignored); }
+void startUiEffects() { gAudio.setWasapiExclusiveEnabled(false); std::wstring ignored; gAudio.startEffectsOnly(ignored); }
 
 JudgementWindows currentJudgementWindows() {
     if(gActiveChartIndex<0 || gActiveChartIndex>=static_cast<int>(gCharts.size())) return judgementWindows(gJudgementProfile);
@@ -941,6 +1066,7 @@ void resolveHold(size_t lane,HoldResult result) {
     if(result==HoldResult::None || gActiveChartIndex<0)return;
     const auto& notes=gCharts[gActiveChartIndex].notes;const auto index=gHolds[lane].noteIndex();
     if(index>=notes.size())return;const auto& note=notes[index];
+    if(result!=HoldResult::PGreat && note.longNote())gLingeringLongNotes.push_back(index);
     if(result==HoldResult::PGreat && !note.endSampleId.empty())gAudio.trigger(note.endSampleId);
     if(note.mode==bms::LongNoteMode::LN)showTimingJudgement(result==HoldResult::PGreat?gHolds[lane].headJudgement():TimingJudgement::Poor,2);
     else if(note.mode==bms::LongNoteMode::CN && result==HoldResult::PGreat) {
@@ -1172,7 +1298,7 @@ void updateBrowseMedia() {
 
 void tickBrowseMedia() {
     if(!gPracticeWindow&&!gSettingsWindow&&!gPlaying&&!gLoading&&gSongIndexWorker.hasPending())PostMessageW(gWindow,WM_LIBRARY_INDEX,0,0);
-    if (gPracticeWindow) return;
+    if (gPracticeWindow) {gSelectionAudio.stopMusic();return;}
     updateBrowseMedia();
     // Debounce rapid navigation; do not decode all the songs passed by the cursor.
     const int groupIndex = selectedGroupIndex();
@@ -1183,7 +1309,8 @@ void tickBrowseMedia() {
         std::chrono::steady_clock::now() - gBrowseSelectedAt >= std::chrono::milliseconds(500)) {
         gSongPreview.select(gCharts[static_cast<size_t>(index)]); gBrowseAudioKey = gBrowseMediaKey;
     }
-    gSongPreview.tick(gVolumes[0], gPreviewVolume, gSoundBufferFrames);
+    gSongPreview.tick(gVolumes[0], gPreviewVolume, gSoundBufferFrames, SongPreview::fadeDurationMs);
+    if(!gStartupSplash)gSelectionAudio.tickMusic(gVolumes[0],gVolumes[1],gSongPreview.playing(),gSoundBufferFrames);
     const auto error = gSongPreview.lastError();
     if (!error.empty() && error != gBrowseAudioError) {
         gBrowseAudioError = error; setStatus(L"미리보기: " + error);
@@ -1240,6 +1367,35 @@ void updateSelection() {
     if (scrollKey != gBrowseTextKey) {
         gBrowseTextKey = scrollKey;
         gBrowseTextStartedAt = std::chrono::steady_clock::now();
+    }
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const int groupIndex = selectedGroupIndex();
+        const auto& groups = gSongSelection.groups();
+        if (groupIndex >= 0 && groupIndex < static_cast<int>(groups.size())) {
+            const auto& group = groups[static_cast<size_t>(groupIndex)];
+            std::wstring key = group.directory;
+            key.push_back(L'\0'); key += group.title;
+            key.push_back(L'\0'); key += std::to_wstring(static_cast<int>(group.mode));
+            const double nextTarget = static_cast<double>(std::min(group.selectedVariant,
+                group.chartIndices.empty() ? size_t{} : group.chartIndices.size() - 1));
+            if (key != gBrowseDifficultyCarousel.groupKey) {
+                gBrowseDifficultyCarousel.groupKey = std::move(key);
+                gBrowseDifficultyCarousel.from = gBrowseDifficultyCarousel.target = nextTarget;
+                gBrowseDifficultyCarousel.animating = false;
+            } else if (nextTarget != gBrowseDifficultyCarousel.target) {
+                // Retarget from the visible interpolated position so rapid input stays continuous.
+                gBrowseDifficultyCarousel.from = gBrowseDifficultyCarousel.position(now);
+                gBrowseDifficultyCarousel.target = nextTarget;
+                gBrowseDifficultyCarousel.started = now;
+                gBrowseDifficultyCarousel.animating = group.chartIndices.size() > 1;
+            }
+        } else {
+            gBrowseDifficultyCarousel.groupKey.clear();
+            gBrowseDifficultyCarousel.from = gBrowseDifficultyCarousel.target = 0.0;
+            gBrowseDifficultyCarousel.animating = false;
+        }
+        if (gBrowseDifficultyCarousel.active(now)) scheduleSongListAnimationTimer();
     }
     updateBrowseMedia();
     const int index = selectedIndex();
@@ -1311,9 +1467,11 @@ void refreshSongRow(size_t index) {
 
 bms::ui::SongEntryKind navigationKind(int id);
 void rebuildSongRows(int preferred = -1) {
-    gSongListScrolling = false;
-    gLastSongNavigation = {};
+    clearSongListHeldKey();
     if (gWindow) KillTimer(gWindow, ID_SONG_LIST_ANIMATION);
+    gSongListScroll.snap(0.0);
+    gSongListRenderWindowStart = songListInvalidRenderWindow;
+    gSongListRenderWindowSize = 0;
     SendMessageW(gList, WM_SETREDRAW, FALSE, 0);
     ListView_DeleteAllItems(gList);
     if(gLibrarySources.configured())gSongFolders.configure(gLibrarySources.navigationRoots(),gLibrarySources.originalFolders);else gSongFolders.root(gCurrentFolder);gSongFolders.build(gCharts);
@@ -1339,6 +1497,7 @@ void rebuildSongRows(int preferred = -1) {
     } else {
         gSongSelection.clearSelection();
     }
+    gSongListScroll.snap(static_cast<double>(std::max(0, selectedRow)));
     SendMessageW(gList, WM_SETREDRAW, TRUE, 0);
     setText(gHiddenSongs, gShowHiddenCharts ? L"곡 목록으로 돌아가기" : L"숨겨진 파일 보기 (" + std::to_wstring(hiddenCount) + L")");
     EnableWindow(gHiddenSongs, !gLoading && (gShowHiddenCharts || hiddenCount != 0));
@@ -1358,34 +1517,132 @@ bool navigateSongFolder(bool back=false) {
     rebuildSongRows();saveLibraryNavigation();return true;
 }
 
-void beginSongListScroll(int row) {
-    if (!gList || row < 0) return;
-    RECT item{}, viewport{};
-    if (!ListView_GetItemRect(gList, row, &item, LVIR_BOUNDS) || !GetClientRect(gList, &viewport)) return;
-    gSongListScrollTarget = (item.top + item.bottom - (viewport.bottom - viewport.top)) / 2;
-    gSongListScrollApplied = 0;
-    gSongListScrollStarted = std::chrono::steady_clock::now();
-    gSongListScrolling = gSongListScrollTarget != 0;
-    if (gSongListScrolling && gWindow) SetTimer(gWindow, ID_SONG_LIST_ANIMATION, 16, nullptr);
+UINT songListAnimationIntervalMs() {
+    int refreshHz = 60;
+    if (gWindow) {
+        const HMONITOR monitor = MonitorFromWindow(gWindow, MONITOR_DEFAULTTONEAREST);
+        MONITORINFOEXW info{}; info.cbSize = sizeof(info);
+        DEVMODEW mode{}; mode.dmSize = sizeof(mode);
+        if (monitor && GetMonitorInfoW(monitor, &info) &&
+            EnumDisplaySettingsW(info.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
+            refreshHz = static_cast<int>(mode.dmDisplayFrequency);
+    }
+    return static_cast<UINT>(std::clamp(static_cast<int>(std::lround(1000.0 / refreshHz)), 4, 16));
+}
+
+void scheduleSongListAnimationTimer() {
+    if (!gWindow || gPlaying || gShowingResult || gLoading) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (gSongListScroll.animating || gSongListHeldKey || gBrowseDifficultyCarousel.active(now))
+        SetTimer(gWindow, ID_SONG_LIST_ANIMATION, songListAnimationIntervalMs(), nullptr);
+    else KillTimer(gWindow, ID_SONG_LIST_ANIMATION);
+}
+
+void clearSongListHeldKey() {
+    gSongListHeldKey = 0;
+    gSongListNextRepeat = {};
+}
+
+int songListRowHeight() {
+    if (gList && ListView_GetItemCount(gList) > 0) {
+        RECT row{};
+        if (ListView_GetItemRect(gList, 0, &row, LVIR_BOUNDS) && row.bottom > row.top)
+            return row.bottom - row.top;
+    }
+    return songListFallbackRowHeight;
+}
+
+int wrapSongListRow(std::int64_t virtualRow, int rowCount) {
+    if (rowCount <= 0) return -1;
+    const auto count = static_cast<std::int64_t>(rowCount);
+    const auto remainder = virtualRow % count;
+    return static_cast<int>(remainder < 0 ? remainder + count : remainder);
+}
+
+struct SongListVisualHit {
+    int row{-1};
+    std::int64_t virtualRow{};
+    explicit operator bool() const noexcept { return row >= 0; }
+};
+
+SongListVisualHit songListHitTestAtVisualY(int y) {
+    if (!gList) return {};
+    RECT viewport{};
+    if (!GetClientRect(gList, &viewport) || y < viewport.top || y >= viewport.bottom) return {};
+    const int count = ListView_GetItemCount(gList);
+    const int rowHeight = songListRowHeight();
+    if (count <= 0 || rowHeight <= 0) return {};
+    const double centerY = static_cast<double>(viewport.top + viewport.bottom) * 0.5;
+    const double index = gSongListScroll.position + (static_cast<double>(y) - centerY) / rowHeight;
+    const auto virtualRow = static_cast<std::int64_t>(std::llround(index));
+    return {wrapSongListRow(virtualRow, count), virtualRow};
+}
+
+void beginSongListScroll(std::int64_t virtualRow) {
+    const int count = gList ? ListView_GetItemCount(gList) : 0;
+    if (count <= 0) return;
+    if (!gRmlSongList.enabled()) {
+        ListView_EnsureVisible(gList, wrapSongListRow(virtualRow, count), FALSE);
+        return;
+    }
+    gSongListScroll.retarget(static_cast<double>(virtualRow), std::chrono::steady_clock::now());
+    scheduleSongListAnimationTimer();
+}
+
+bool selectSongListRow(int row, std::int64_t virtualRow, bool playClick = true) {
+    if (!gList || row < 0 || row >= ListView_GetItemCount(gList)) return false;
+    const int current = ListView_GetNextItem(gList, -1, LVNI_SELECTED);
+    if (current != row) {
+        ListView_SetItemState(gList, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+        ListView_SetItemState(gList, row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    }
+    if (playClick) gAudio.triggerEffect(L"click");
+    else if(current!=row)gAudio.triggerEffect(L"songlistscroll");
+    beginSongListScroll(virtualRow);
+    return true;
+}
+
+bool navigateSongList(int direction, int steps = 1) {
+    if (!gList || steps <= 0) return false;
+    const int count = ListView_GetItemCount(gList);
+    if (count <= 0) return false;
+    const int current = ListView_GetNextItem(gList, -1, LVNI_SELECTED);
+    const double base = current < 0 ? (direction > 0 ? -1.0 : 0.0) :
+        gRmlSongList.enabled() ? gSongListScroll.target : static_cast<double>(current);
+    const double nextVisualTarget = base + static_cast<double>(direction) * steps;
+    const auto virtualRow = static_cast<std::int64_t>(std::llround(nextVisualTarget));
+    const int next = wrapSongListRow(virtualRow, count);
+    return selectSongListRow(next, virtualRow, false);
 }
 
 void tickSongListAnimations() {
     if (!gWindow || !gList) return;
-    const auto now = std::chrono::steady_clock::now();
-    bool active = false;
-    if (gSongListScrolling) {
-        const double t = std::clamp(std::chrono::duration<double>(now - gSongListScrollStarted).count() /
-            std::chrono::duration<double>(songListScrollDuration).count(), 0.0, 1.0);
-        const double eased = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
-        const int nextApplied = static_cast<int>(std::lround(gSongListScrollTarget * eased));
-        const int step = nextApplied - gSongListScrollApplied;
-        if (step != 0) ListView_Scroll(gList, 0, step);
-        gSongListScrollApplied = nextApplied;
-        if (t >= 1.0) gSongListScrolling = false;
-        else active = true;
+    if (gPlaying || gShowingResult || gLoading) {
+        clearSongListHeldKey();
+        gSongListScroll.animating = false;
+        KillTimer(gWindow, ID_SONG_LIST_ANIMATION);
+        return;
     }
-    InvalidateRect(gList, nullptr, FALSE);
-    if (active) SetTimer(gWindow, ID_SONG_LIST_ANIMATION, 16, nullptr);
+    const auto now = std::chrono::steady_clock::now();
+    const bool carouselActive = gBrowseDifficultyCarousel.active(now);
+    bool selectionChanged = false;
+    if (gSongListHeldKey && now >= gSongListNextRepeat) {
+        const auto late = std::chrono::duration_cast<std::chrono::milliseconds>(now - gSongListNextRepeat);
+        const int dueSteps = std::clamp(1 + static_cast<int>(late.count() / songListRepeatInterval.count()), 1, 16);
+        selectionChanged = navigateSongList(gSongListHeldKey == VK_DOWN ? 1 : -1, dueSteps);
+        if (selectionChanged) gSongListNextRepeat = now + songListRepeatInterval;
+        else clearSongListHeldKey();
+    }
+    const double previousPosition = gSongListScroll.position;
+    const bool scrollActive = gSongListScroll.advance(now);
+    gSongListScroll.rebaseCycles(ListView_GetItemCount(gList));
+    const bool positionChanged = std::abs(gSongListScroll.position - previousPosition) >= 0.0001;
+    if (positionChanged || selectionChanged) {
+        InvalidateRect(gList, nullptr, FALSE);
+        UpdateWindow(gList);
+    }
+    if (carouselActive) { InvalidateRect(gWindow, nullptr, FALSE); UpdateWindow(gWindow); }
+    if (scrollActive || carouselActive || gSongListHeldKey) scheduleSongListAnimationTimer();
     else KillTimer(gWindow, ID_SONG_LIST_ANIMATION);
 }
 
@@ -1578,7 +1835,8 @@ void focusBrowseInput(bool activateWindow = false) {
 }
 
 void showBrowseView() {
-    if (gLoading) { gLoadCancelled = true; setStatus(L"불러오기를 취소하고 있습니다..."); return; }
+    if (gLoading) { if(gLoadResult.playback)gPlaybackLoad.cancel();gLoadCancelled = true; setStatus(L"불러오기를 취소하고 있습니다..."); return; }
+    gSongIntro.reset();
     gPlaying = false;
     gPaused = false;
     gGpuFrame = false;
@@ -1591,10 +1849,16 @@ void showBrowseView() {
         gKeyBeams.configure(layout);gFeedback.configure(layout);
     }
     gScratchDisc.reset();
-    gPlaybackLoadReady = false;
+    if(gPlaybackLoad.phase()==bms::PlaybackLoadPhase::Playing)gPlaybackLoad.reset();
+    else if(gPlaybackLoad.preparing())gPlaybackLoad.cancel();
     gTitleFadeOutStarted = {};
     resetResultFade();
     gShowingResult = false;
+    clearSongListHeldKey();
+    gSongListScroll.snap(static_cast<double>(std::max(0, ListView_GetNextItem(gList, -1, LVNI_SELECTED))));
+    gSongListRenderWindowStart = songListInvalidRenderWindow;
+    gSongListRenderWindowSize = 0;
+    if (gWindow) KillTimer(gWindow, ID_SONG_LIST_ANIMATION);
     restorePracticeNotes();
     gCapturingBindings = false;
     gCaptureAwaitRelease = false;
@@ -1605,6 +1869,7 @@ void showBrowseView() {
     startUiEffects();
     gPressed.fill(false);gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();clearAccuracyRestart();
     gHolds.fill(LongNoteHold{});
+    gLingeringLongNotes.clear();
     resetMines();
     gBgaEventIndex = 0;
     gBgaActiveImages.fill(L"");gBgaActiveImages[1]=L"00";
@@ -1635,11 +1900,16 @@ void beginSelectedChart(bool practice) {
     if (gSettingsWindow || gLoading) return;
     const int index = selectedIndex();
     if (index < 0 || index >= static_cast<int>(gCharts.size())) return;
+    if(!bms::gameplayModeAllowed(gCharts[index])){setStatus(bms::gameplayModeBlockReason(gCharts[index]));return;}
+    clearSongListHeldKey();
+    gSongListScroll.animating = false;
+    if (gWindow) KillTimer(gWindow, ID_SONG_LIST_ANIMATION);
     const auto path = gCharts[static_cast<size_t>(index)].path;
     std::error_code sourceError;
     if(!std::filesystem::is_regular_file(path,sourceError)){setStatus(L"채보가 이동되었거나 라이브러리가 연결되지 않았습니다. F5로 새로고침하세요.");return;}
     if (!gCharts[static_cast<size_t>(index)].playable) { setStatus(gCharts[static_cast<size_t>(index)].blockReason); return; }
     gPractice.enabled = practice;
+    gSelectionAudio.decide(gVolumes[0],gVolumes[3],gSoundBufferFrames);
     captureBrowseBackdrop();
     gGpuUnavailable = false;
     stopBrowseMedia();
@@ -1651,7 +1921,7 @@ void beginSelectedChart(bool practice) {
     gBgaVideos.reset();gBgaSwitch.reset();
     gLoadResult = {}; gLoadResult.playback = true; gLoadResult.index = index;
     gLoading = true; gLoadCancelled = false;
-    gPlaybackLoadReady = false;
+    gPlaybackLoad.begin();
     gPlaybackLoadStarted = std::chrono::steady_clock::now();
     gTitleFadeOutStarted = {};
     for (HWND control : {gList, gFolder, gStatus, gInfo, gHiddenSongs})
@@ -1660,126 +1930,15 @@ void beginSelectedChart(bool practice) {
     UpdateWindow(gWindow);
     const int videoWidth = gWindowWidth, videoHeight = gWindowHeight;
     const auto practiceSettings = gPractice;
-    gLoadWorker = std::thread([path, videoWidth, videoHeight, practiceSettings] {
-        const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        try {
-        #ifdef BMS_PERF_DIAGNOSTICS
-            gLoadResult.chart=bms::BmsParser(false,0x20261024).parse(path).chart;
-#else
-            gLoadResult.chart = bms::BmsParser().parse(path).chart;
-#endif
-            if (!gLoadResult.chart.playable) gLoadResult.error = gLoadResult.chart.blockReason;
-            else if (!gLoadCancelled) {
-                gBgaVideos.prepare(gLoadResult.chart,videoWidth,videoHeight,&gLoadCancelled);
-                if(gBgaVideos.failures()) {
-                    gLoadResult.chart.partialLoad=true;
-                    appendPartialLoadReason(gLoadResult.chart,L"디코딩할 수 없는 BGA 영상 "+std::to_wstring(gBgaVideos.failures())+L"개");
-                }
-                    if(!gBgaVideos.declared() && !gLoadResult.chart.fallbackVideo.empty())gVideoBga.open(gLoadResult.chart.fallbackVideo,videoWidth,videoHeight,true,gLoadResult.chart.videoFps);
-                size_t decodeFailures{};
-                if (gAudio.prepare(gLoadResult.chart, gLoadResult.error, &gLoadCancelled, true, &decodeFailures) && decodeFailures) {
-                    gLoadResult.chart.partialLoad = true;
-                    appendPartialLoadReason(gLoadResult.chart,
-                        L"디코딩할 수 없는 음원 " + std::to_wstring(decodeFailures) + L"개");
-                }
-                if(gLoadResult.error.empty() && !gLoadCancelled)
-                    gAudio.preparePlaybackRate((practiceSettings.enabled?practiceSettings.rate():1.0)*bms::forcedOptions(gLoadResult.chart).rate,gLoadResult.error,&gLoadCancelled);
-                if (gLoadResult.error.empty() && !gLoadCancelled && !gLoadResult.chart.fallbackVideo.empty()) {
-                    if (practiceSettings.enabled)
-                        gVideoBga.request(std::max(0.0, practiceSettings.startSeconds - bms::bgaVideoStartSeconds(gLoadResult.chart)), videoWidth, videoHeight);
-                    gVideoBga.waitUntilPrepared(&gLoadCancelled);
-                }
-            }
-        } catch (...) { gLoadResult.error = L"채보나 음원 준비 중 오류가 발생했습니다."; }
-        if (SUCCEEDED(initialized)) CoUninitialize();
-        PostMessageW(gWindow, WM_LOAD_FINISHED, 0, 0);
-    });
+    beginPlaybackLoadWorker(path,videoWidth,videoHeight,practiceSettings);
+    beginSongEntry(gCharts[index]);
+    InvalidateRect(gWindow,nullptr,FALSE);UpdateWindow(gWindow);
 }
 
-void finishSelectedChart() {
-    const int index = gLoadResult.index;
-    gActiveChartIndex = index;
-    gLoadResult.chart.partialLoad = gLoadResult.chart.partialLoad || gCharts[static_cast<size_t>(index)].partialLoad;
-    appendPartialLoadReason(gLoadResult.chart, gCharts[static_cast<size_t>(index)].partialLoadReason);
-    gLoadResult.chart.previewStartSeconds = gCharts[static_cast<size_t>(index)].previewStartSeconds;
-    gLoadResult.chart.previewDurationSeconds = gCharts[static_cast<size_t>(index)].previewDurationSeconds;
-    gCharts[static_cast<size_t>(index)] = std::move(gLoadResult.chart);
-    auto& playingChart = gCharts[static_cast<size_t>(index)];
-    gChartOptions=bms::forcedOptions(playingChart);gAuthoredCoverPercent=0;
-    gBgaVideoStartSeconds = bms::bgaVideoStartSeconds(playingChart);
-    if (gPractice.enabled) {
-        gPracticeNotesChartIndex = index;
-        gPracticeOriginalDuration = playingChart.durationSeconds;
-        gPracticeOriginalNotes = std::move(playingChart.notes);
-        playingChart.notes = gPractice.notesFor(gPracticeOriginalNotes);
-    }
-    rebuildPartialLoadSummary();
-    gHit.assign(gCharts[static_cast<size_t>(index)].notes.size(), false);
-    gResultScore.reset(static_cast<int>(bms::judgementNoteCount(gCharts[index])));
-    gFeedback.reset();
-    gGrooveGauge.configure(bms::judgementNoteCount(gCharts[index]),gGrooveGaugeMode,bms::chartTotal(gCharts[index],bms::judgementNoteCount(gCharts[index])));
-    if(gChartOptions.gaugeAuthored)gGrooveGauge.configureAuthored(gChartOptions.gameLevel,gChartOptions.extra);
-    gKeyBeams.reset();
-    if(gActiveChartIndex>=0 && gActiveChartIndex<static_cast<int>(gCharts.size())) {
-        const auto layout=bms::chartLayout(gCharts[gActiveChartIndex],0,68,104);
-        gKeyBeams.configure(layout);gFeedback.configure(layout);
-    }
-    gScratchDisc.reset();
-    for (auto& indices : gLaneNoteIndices) indices.clear();
-    const auto& chartNotes = gCharts[static_cast<size_t>(index)].notes;
-    for (size_t i = 0; i < chartNotes.size(); ++i) {
-        if (chartNotes[i].lane >= 0 && chartNotes[i].lane < 16)
-            gLaneNoteIndices[static_cast<size_t>(chartNotes[i].lane)].push_back(i);
-    }
-    gMissScanIndex = 0;
-    gPressed.fill(false);gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();clearAccuracyRestart();
-    gHolds.fill(LongNoteHold{});
-    resetMines();
-    gPlayhead = gPractice.enabled ? gPractice.startSeconds : 0;
-    gBgaEventIndex = 0;
-    gBgaActiveImages.fill(L"");gBgaActiveImages[1]=L"00";
-    gMissBgaUntil = 0;
-    gBgaRaster.reset();
-    gBgaRaster.start(gCharts[static_cast<size_t>(index)], gWindowWidth, gWindowHeight, gPlayhead);
-    gBgaBackplateDirty = true;
-    updateBgaState(gCharts[static_cast<size_t>(index)], gPlayhead);
-    gJudgementText.clear();
-    gJudgementUntil = {};
-    gComboPop.reset();
-    gJudgementPop.reset();
-    gTextRaster.clear(); gHudTextRaster.clear(); gHudMaskRaster.clear();
-    gFpsEpoch = std::chrono::steady_clock::now();
-    gFpsFrameCount = 0;
-    gMeasuredFps = 0;
-    gFrameStatistics.reset();
-    BMS_PERF_SESSION(executableFolder() / L"BmsPlayer-performance.csv");
-    ShowWindow(gList, SW_HIDE);
-    ShowWindow(gFolder, SW_HIDE);
-    ShowWindow(gStatus, SW_HIDE);
-    ShowWindow(gInfo, SW_HIDE);
-    ShowWindow(gHiddenSongs, SW_HIDE);
-    ShowWindow(gResultNext, SW_HIDE);
-    SetFocus(gWindow);
-    gPlaying = true;
-    gPlaybackLoadReady = false;
-    gTitleFadeOutStarted = {};
-    std::wstring error;
-#ifdef BMS_ENABLE_SKIN_BINDINGS
-    prepareSkinForPlayback();
-#endif
-    if (!(gPractice.enabled ? gAudio.startAt(gPractice.startSeconds,error,gPractice.rate()*gChartOptions.rate) : gAudio.startAt(0,error,gChartOptions.rate))) {
-        setStatus(error);
-        MessageBoxW(gWindow, error.c_str(), L"오디오 출력을 시작하지 못했습니다", MB_ICONERROR | MB_OK);
-        showBrowseView();
-        return;
-    }
-    gPlayhead = gPractice.enabled ? gPractice.startSeconds : 0;
-    gBgaEventIndex = 0;
-    gBgaActiveImages.fill(L"");gBgaActiveImages[1]=L"00";
-    updateBgaState(gCharts[static_cast<size_t>(index)], gPlayhead);
-    gFramePacer.reset(gTargetFps);
-    InvalidateRect(gWindow, nullptr, TRUE);
-}
+#include "PlaybackLoadWorker.inl"
+
+#include "PlaybackLoading.inl"
+#include "PlaybackLoadRuntime.inl"
 
 void finishPlayback() {
     if (!gPlaying) return; // Finalize scores and capture the frame only once.
@@ -1797,6 +1956,7 @@ void finishPlayback() {
     // Cover any synchronous repaint caused by tearing down the GPU child window.
     gResultFade.start();
     gPlaying = false;
+    gPlaybackLoad.reset();
     gPaused = false;
     gShowingResult = true;
     gResultGaugeCleared = gGrooveGauge.clearConditionMet();
@@ -1814,6 +1974,7 @@ void finishPlayback() {
     gBgaVideos.reset();gBgaSwitch.reset();
     gPressed.fill(false);gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();clearAccuracyRestart();
     gHolds.fill(LongNoteHold{});
+    gLingeringLongNotes.clear();
     resetMines();
     ShowWindow(gResultNext, SW_HIDE);
     for (HWND button : gPauseButtons) if (button) ShowWindow(button, SW_HIDE);
@@ -1863,6 +2024,7 @@ void restartPlayback() {
     gPaused = false;
     gPlayhead = gPractice.enabled ? gPractice.startSeconds : 0;
     gHit.assign(chart.notes.size(), false);
+    gLingeringLongNotes.clear();
     gResultScore.reset(static_cast<int>(bms::judgementNoteCount(chart)));
     gFeedback.reset();
     gGrooveGauge.configure(bms::judgementNoteCount(chart),gGrooveGaugeMode,bms::chartTotal(chart,bms::judgementNoteCount(chart)));
@@ -1986,7 +2148,7 @@ void pressLane(int lane) {
         }
         showTimingJudgement(grade,note.longNote() && note.mode==bms::LongNoteMode::LN?0:2);
         const double signedOffset=gPlayhead-note.timeSeconds;
-        gTimingHint=static_cast<int>(grade)<=gTimingHintCondition ? 0 : signedOffset < -0.000001 ? -1 : signedOffset > 0.000001 ? 1 : 0;
+        gTimingHint=gTimingHintCondition==3 ? 0 : static_cast<int>(grade)<=gTimingHintCondition ? 0 : signedOffset < -0.000001 ? -1 : signedOffset > 0.000001 ? 1 : 0;
     } else {
         const auto& indices = gLaneNoteIndices[static_cast<size_t>(lane)];
         if (!indices.empty()) {
@@ -2018,8 +2180,14 @@ void releaseLaneInput(int lane) {
 void pollControllerInput() {
     if(gControllerConfiguring)return;
     const bool wasEnabled=gController.config.enabled;
-    const bool active=GetForegroundWindow()==gWindow&&!gSettingsWindow&&!gLoading&&!gCapturingBindings;
+    const bool active=GetForegroundWindow()==gWindow&&!gSettingsWindow&&(!gLoading||gPlaybackLoad.preparing())&&!gCapturingBindings;
     gController.poll(active,[&](const bms::controller::State& state){
+        if(active&&gPlaybackLoad.preparing()){
+            constexpr WPARAM keys[]{VK_LEFT,VK_F1,VK_F2,VK_NEXT,VK_PRIOR,VK_UP,VK_DOWN,VK_RIGHT};
+            for(int lane=0;lane<8;++lane){if(state.lanes[lane]&&!gPlayPreview.held[lane])previewKey(keys[lane]);gPlayPreview.held[lane]=state.lanes[lane];}
+            if(std::any_of(state.lanes.begin(),state.lanes.end(),[](bool held){return held;}))gPlayPreview.touched();
+            if(state.menuPressed)previewKey(VK_RETURN);return;
+        }
         const bool playing=active&&gPlaying&&!gPaused;
         for(int lane=0;lane<8;++lane){
             const bool previous=gControllerPressed[lane],next=playing&&state.lanes[lane];
@@ -2093,7 +2261,9 @@ void updatePlaybackFrame() {
     for(size_t i=gMissScanIndex;i<notes.size() && notes[i].timeSeconds<gPlayhead-minimumSlow/1000*playbackTimingScale();++i) {
         if(gPractice.enabled&&notes[i].timeSeconds<gPractice.startSeconds){gHit[i]=true;continue;}
         if(!gHit[i] && bms::laneNoteExpired(chart,notes[i],gPlayhead,playbackTimingScale(),gJudgementProfile)) {
-            gHit[i]=true;showTimingJudgement(TimingJudgement::Poor);
+            gHit[i]=true;
+            if(notes[i].longNote())gLingeringLongNotes.push_back(i);
+            showTimingJudgement(TimingJudgement::Poor);
             if(!gPlaying||gAccuracyRestartPending)return;
         }
     }
@@ -2535,6 +2705,7 @@ void frameRect(HDC dc, RECT rect, COLORREF color) {
     if (found->second) FrameRect(dc, &rect, found->second);
 }
 
+#include "LaneSeparator.inl"
 void fillGameRect(HDC dc, RECT rect, COLORREF color, const RECT& clip) {
     if (gGpuNotePass) {
         gCompositionPresenter.rectangle(static_cast<float>(std::max(rect.left, clip.left)), static_cast<float>(std::max(rect.top, clip.top)),
@@ -2628,6 +2799,9 @@ bool ensureBgaBackplate(HDC referenceDc, int width, int height) {
 
 void drawBgaBackplate(HDC dc, const bms::Chart& chart, const RECT& client,
     int fieldX, int laneWidth, int top, int judgeY, int scratchWidth = 0) {
+    const RECT bgaViewport=playBgaViewport();
+    const bool customViewport=bgaViewport.left!=0||bgaViewport.top!=0||bgaViewport.right!=client.right||bgaViewport.bottom!=client.bottom;
+    if(gPlaybackLoad.preparing()){FillRect(dc,&client,static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));return;}
     const auto layout=bms::chartLayout(chart,fieldX,laneWidth,scratchWidth>0?scratchWidth:laneWidth);
     const int width = client.right - client.left;
     const int height = client.bottom - client.top;
@@ -2788,7 +2962,7 @@ void drawBgaBackplate(HDC dc, const bms::Chart& chart, const RECT& client,
                 BMS_PERF_SCOPE(shadeMs);
                 if (gBgaDarkness > 0) BgaRaster::tint(pixels, width, height, cacheRect, 0xff000000u, static_cast<unsigned>(gBgaDarkness * 255 / 100));
             }
-            if (!hybrid) {
+            if (!hybrid&&!customViewport) {
                 BMS_PERF_SCOPE(tintMs);
                 const RECT laneField{ fieldX, 0, fieldX + layout.totalWidth(), height };
                 BgaRaster::tint(pixels, width, height, laneField, 0xff000000u, static_cast<unsigned>((100 - gLaneTransparency) * 255 / 100));
@@ -2810,6 +2984,7 @@ void drawBgaBackplate(HDC dc, const bms::Chart& chart, const RECT& client,
         if (!gDirectBgaFrame || gDirectBgaFrame != previousFrame) ++backgroundGeneration;
     }
     if (hybrid) {
+        gCompositionPresenter.setBgaViewport(bgaViewport);
         const auto regions = hybridCpuRegions(width, height, fieldX, layout.totalWidth());
         static uint64_t preparedRevision = 0;
         static std::array<int,4> preparedGeometry{};
@@ -2847,23 +3022,32 @@ void drawBgaBackplate(HDC dc, const bms::Chart& chart, const RECT& client,
                     std::fill_n(destination + static_cast<size_t>(y) * width + region.left, region.right - region.left, 0xff000000u);
                 continue;
             }
-            for (int y = region.top; y < region.bottom; ++y)
-                std::copy_n(source + static_cast<size_t>(y) * width + region.left, region.right - region.left,
-                    destination + static_cast<size_t>(y) * width + region.left);
+            for (int y = region.top; y < region.bottom; ++y){
+                if(!customViewport)std::copy_n(source+static_cast<size_t>(y)*width+region.left,region.right-region.left,destination+static_cast<size_t>(y)*width+region.left);
+                else for(int x=region.left;x<region.right;++x){
+                    const int sx=int((int64_t(x)-bgaViewport.left)*width/std::max(1L,bgaViewport.right-bgaViewport.left));
+                    const int sy=int((int64_t(y)-bgaViewport.top)*height/std::max(1L,bgaViewport.bottom-bgaViewport.top));
+                    destination[size_t(y)*width+x]=x>=bgaViewport.left&&x<bgaViewport.right&&y>=bgaViewport.top&&y<bgaViewport.bottom&&sx>=0&&sx<width&&sy>=0&&sy<height?source[size_t(sy)*width+sx]:0xff000000u;
+                }
+            }
             BgaRaster::tint(destination, width, height, region, 0xff000000u, static_cast<unsigned>(darkness * 255 / 100));
             if (intersects)
                 BgaRaster::tint(destination, width, height, overlap, 0xff000000u, static_cast<unsigned>((100 - gLaneTransparency) * 255 / 100));
         }
         return;
     }
-    { BMS_PERF_SCOPE(bgaCopyMs); BitBlt(dc, client.left, client.top, width, height, gBgaBackplateDc, 0, 0, SRCCOPY); }
+    { BMS_PERF_SCOPE(bgaCopyMs);
+      if(customViewport){FillRect(dc,&client,static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));SetStretchBltMode(dc,HALFTONE);StretchBlt(dc,bgaViewport.left,bgaViewport.top,bgaViewport.right-bgaViewport.left,bgaViewport.bottom-bgaViewport.top,gBgaBackplateDc,0,0,width,height,SRCCOPY);if(dc==gBackBufferDc&&gBackBufferPixels){GdiFlush();const RECT laneField{fieldX,0,fieldX+layout.totalWidth(),height};BgaRaster::tint(static_cast<uint32_t*>(gBackBufferPixels),width,height,laneField,0xff000000u,static_cast<unsigned>((100-gLaneTransparency)*255/100));}}
+      else BitBlt(dc,client.left,client.top,width,height,gBgaBackplateDc,0,0,SRCCOPY);
+    }
 }
 
 struct BrowsePanelLayout {
     int width{}, genreY{}, titleY{}, titleHeight{}, composerY{}, bpmY{}, levelY{}, startY{}, startHeight{}, infoY{}, infoHeight{}, slotSize{}, slotTop{};
     explicit BrowsePanelLayout(int windowWidth, int windowHeight) {
         width = std::max(1, windowWidth - 24 - windowWidth / 3 - 44);
-        genreY = 24; titleY = 84;
+        constexpr int songInfoOffset = 24;
+        genreY = 24 + songInfoOffset; titleY = 84 + songInfoOffset;
         titleHeight = std::clamp(windowHeight / 6, 144, 200);
         composerY = titleY + titleHeight + 12;
         bpmY = composerY + 60;
@@ -2891,6 +3075,20 @@ bool adjustBrowseShortcut(int x, int y, bool increase) {
     const bool skinned=skinOwnsHud();
     const int skinSlot=skinned?selectSkinShortcutAt(x,y):-1;
 #endif
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    if(gSongInfoVisible){gSongInfoVisible=false;ShowWindow(gList,SW_SHOWNA);InvalidateRect(gWindow,nullptr,FALSE);return true;}
+    if(skinSlot==3){openSettings();return true;}
+    if(skinSlot==4){try{
+        const int i=selectedIndex();if(i<0||i>=int(gCharts.size()))return true;
+        auto chart=gCharts[i];if(chart.catalogOnly)chart=bms::BmsParser().parse(chart.path).chart;
+        size_t normal=0,holds=0;for(const auto& n:chart.notes)(n.longNote()?holds:normal)++;
+        using namespace sevenmania::skin;gSongInformationData.beginFrame(ScreenKind::SongInformation);
+        gSongInformationData.setWide(BindingId::SongTitle,chart.title);gSongInformationData.setWide(BindingId::SongArtist,chart.artist);gSongInformationData.setWide(BindingId::SongGenre,chart.genre);gSongInformationData.setWide(BindingId::ChartLevelText,chart.playLevel);
+        gSongInformationData.set(BindingId::SongBpm,chart.initialBpm);gSongInformationData.set(BindingId::InfoNormalNotes,std::int64_t(normal));gSongInformationData.set(BindingId::InfoLongNotes,std::int64_t(holds));gSongInformationData.set(BindingId::InfoDuration,chart.durationSeconds);gSongInformationData.endFrame();
+        gSongInfoText=chart.title+L"\n\n"+chart.artist+L"\n"+chart.genre+L"\nBPM  "+number(chart.initialBpm,1)+L"\n"+bms::BmsParser::modeLabel(chart.mode)+L"   LEVEL "+chart.playLevel+L"\n일반 노트  "+std::to_wstring(normal)+L"   롱노트  "+std::to_wstring(holds)+L"\n채보 길이  "+number(chart.durationSeconds,1)+L"초\n\nEsc 또는 클릭으로 닫기";
+        restartSongInformationEntrance();gSongInfoVisible=true;ShowWindow(gList,SW_SHOWNA);InvalidateRect(gWindow,nullptr,FALSE);return true;
+    }catch(...){setStatus(L"곡 정보를 읽을 수 없습니다. 파일 경로와 채보를 확인하세요.");return true;}}
+#endif
     for (int slot = 0; slot < 3; ++slot) {
         const RECT bounds = panel.slot(slot, gWindowHeight);
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -2900,7 +3098,7 @@ bool adjustBrowseShortcut(int x, int y, bool increase) {
 #endif
         const int step = increase ? 1 : -1;
         if (slot == 0) gNoteSpeed = std::clamp(gNoteSpeed + step * 0.25, 0.5, 10.0);
-        else if (slot == 1) gJudgementProfile = static_cast<JudgementProfile>(std::clamp(static_cast<int>(gJudgementProfile) + step, 0, 3));
+        else if (slot == 1) return false;
         else {
             constexpr std::array<GrooveGaugeMode, 3> modes{GrooveGaugeMode::Easy, GrooveGaugeMode::Normal, GrooveGaugeMode::Hard};
             const int current = static_cast<int>(std::find(modes.begin(), modes.end(), gGrooveGaugeMode) - modes.begin());
@@ -2920,6 +3118,12 @@ std::wstring browseRecordSummary(const PlayRecord* record) {
     return L"BEST  " + std::to_wstring(record->bestAccuracyScore) + L"   RANK  " +
         std::wstring(ResultScore::rankForScore(record->bestAccuracyScore)) +
         (record->cleared?L"   CLEAR":L"   FAILED") + L"\nMAX COMBO  " + std::to_wstring(record->maxCombo);
+}
+std::wstring groupedRecordScore(int score) {
+    const auto digits=std::to_wstring(std::clamp(score,0,1'000'000));
+    std::wstring result;result.reserve(digits.size()+digits.size()/3);
+    for(size_t i=0;i<digits.size();++i){if(i&&(digits.size()-i)%3==0)result.push_back(L',');result.push_back(digits[i]);}
+    return result;
 }
 void drawBrowsePlayRecord(HDC dc, const PlayRecord* record, const BrowsePanelLayout& panel) {
     const auto text=browseRecordSummary(record);
@@ -2944,7 +3148,8 @@ void drawBrowseBackground(HDC dc, const RECT* sourceRegion = nullptr) {
         backgroundTime = start + std::fmod(std::max(0.0, backgroundTime), length);
     }
     backgroundTime = gSongPreview.chartTime(backgroundTime);
-    const auto& background = gBrowseBackdrop.render(selectedChart, gBrowseBackgroundMode,
+    const bool bgaPending=gBrowseBackgroundMode==1&&std::chrono::steady_clock::now()-gBrowseSelectedAt<std::chrono::milliseconds(500);
+    const auto& background = gBrowseBackdrop.render(selectedChart, bgaPending?0:gBrowseBackgroundMode,
         gCustomBackgroundName.empty() ? std::filesystem::path{} : executableFolder() / L"Assets" / gCustomBackgroundName,
         gBackgroundBlur, gBackgroundOpacity, client.right, client.bottom, backgroundTime);
     if (!background.empty()) {
@@ -2989,15 +3194,93 @@ void drawStartupSplash(HDC dc) {
 
 COLORREF songDifficultyColor(const bms::Chart& chart);
 
+void drawBrowseDifficultyCarousel(HDC dc, const BrowsePanelLayout& panel, const bms::ui::SongGroup* group,
+    const bms::Chart& selectedChart) {
+    const size_t count = group && !group->chartIndices.empty() ? group->chartIndices.size() : 1;
+    const auto now = std::chrono::steady_clock::now();
+    const double position = std::clamp(gBrowseDifficultyCarousel.position(now), 0.0,
+        static_cast<double>(count > 0 ? count - 1 : 0));
+    constexpr float baseFontSize = 32.0f;
+    constexpr float itemGap = 24.0f;
+    const float centerX = 24.0f + panel.width / 2.0f;
+    const float centerY = (panel.levelY + panel.startY) / 2.0f;
+
+    const int saved = SaveDC(dc);
+    IntersectClipRect(dc, 24, panel.levelY, 24 + panel.width, panel.startY);
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+    Gdiplus::StringFormat format;
+    format.SetAlignment(Gdiplus::StringAlignmentCenter);
+    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+    Gdiplus::StringFormat measureFormat;
+    Gdiplus::FontFamily family(L"Segoe UI");
+
+    struct CarouselItem {
+        const bms::Chart* chart{};
+        std::wstring level;
+        float emphasis{}, fontSize{}, width{};
+    };
+    std::vector<CarouselItem> items(count);
+    std::vector<float> centers(count);
+    for (size_t index = 0; index < count; ++index) {
+        const bms::Chart* chart = &selectedChart;
+        if (group && !group->chartIndices.empty()) {
+            const size_t chartIndex = group->chartIndices[index];
+            if (chartIndex >= gCharts.size()) chart = &selectedChart;
+            else chart = &gCharts[chartIndex];
+        }
+        auto& item = items[index];
+        item.chart = chart;
+        item.level = chart->playLevel.empty() ? L"--" : chart->playLevel;
+        item.emphasis = static_cast<float>(std::clamp(1.0 - std::abs(static_cast<double>(index) - position), 0.0, 1.0));
+        item.fontSize = baseFontSize * (1.0f + 0.5f * item.emphasis);
+        Gdiplus::Font font(&family, item.fontSize, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+        Gdiplus::RectF measured{};
+        graphics.MeasureString(item.level.c_str(), static_cast<INT>(item.level.size()), &font,
+            Gdiplus::PointF(0.0f, 0.0f), &measureFormat, &measured);
+        item.width = std::max(1.0f, measured.Width);
+        if (index == 0) centers[index] = 0.0f;
+        else centers[index] = centers[index - 1] + (items[index - 1].width + item.width) / 2.0f + itemGap;
+    }
+
+    const size_t leftIndex = static_cast<size_t>(std::floor(position));
+    const size_t rightIndex = std::min(leftIndex + 1, count - 1);
+    const float fraction = static_cast<float>(position - leftIndex);
+    const float selectedCoordinate = centers[leftIndex] + (centers[rightIndex] - centers[leftIndex]) * fraction;
+    for (size_t index = 0; index < count; ++index) {
+        const auto& item = items[index];
+        const float x = centerX + centers[index] - selectedCoordinate;
+        if (x + item.width / 2.0f < 24.0f || x - item.width / 2.0f > 24.0f + panel.width) continue;
+        const int alpha = static_cast<int>(std::lround(153.0 + 102.0 * item.emphasis));
+        const COLORREF accent = songDifficultyColor(*item.chart);
+        const auto blend = [emphasis = item.emphasis](int plain, int highlighted) {
+            return static_cast<int>(std::lround(plain + (highlighted - plain) * emphasis));
+        };
+        const Gdiplus::Color color(static_cast<BYTE>(alpha), static_cast<BYTE>(blend(204, GetRValue(accent))),
+            static_cast<BYTE>(blend(216, GetGValue(accent))), static_cast<BYTE>(blend(230, GetBValue(accent))));
+        Gdiplus::SolidBrush brush(color);
+        Gdiplus::Font font(&family, item.fontSize, Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
+        const float textHeight = item.fontSize * 1.8f;
+        const Gdiplus::RectF bounds(x - item.width / 2.0f - 3.0f, centerY - textHeight / 2.0f,
+            item.width + 6.0f, textHeight);
+        graphics.DrawString(item.level.c_str(), static_cast<INT>(item.level.size()), &font, bounds, &format, &brush);
+    }
+    if (saved) RestoreDC(dc, saved);
+}
+
 #ifdef BMS_ENABLE_SKIN_BINDINGS
 #include "SkinApplicationHost.inl"
 #endif
+#include "SongIntroHost.inl"
+#include "PlayBgaViewport.inl"
 
 void drawBrowseScreen(HDC dc) {
 #ifdef BMS_ENABLE_SKIN_BINDINGS
-    if(drawSkinOnly(dc)&&!gLoading&&!gStartupSplash){
-        const int index=selectedIndex();
-        if(index>=0&&index<int(gCharts.size()))drawBrowsePlayRecord(dc,playRecordForChart(size_t(index)),BrowsePanelLayout(gWindowWidth,gWindowHeight));
+    drawSkinOnly(dc);
+    if(gSongInfoVisible&&!(gSkinApplication.supports(sevenmania::skin::ScreenKind::SongInformation)&&gSkinApplication.drawDc(dc,gWindowWidth,gWindowHeight,gSongInformationData.snapshot()))){
+        RECT box{gWindowWidth/12,gWindowHeight/5,gWindowWidth*2/3-16,gWindowHeight*4/5};fillRect(dc,box,RGB(28,30,34));
+        InflateRect(&box,-28,-20);SetTextColor(dc,RGB(240,240,240));SetBkMode(dc,TRANSPARENT);
+        auto old=SelectObject(dc,gFont);DrawTextW(dc,gSongInfoText.c_str(),-1,&box,DT_LEFT|DT_TOP|DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,old);
     }
     return;
 #endif
@@ -3029,7 +3312,7 @@ void drawBrowseScreen(HDC dc) {
             IntersectClipRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom);
             bounds.left -= bms::ui::textMarqueeOffset(overflow, seconds);
             bounds.right = bounds.left + std::max(measured.right, bounds.right - bounds.left);
-            DrawTextW(dc, text.c_str(), -1, &bounds, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+            DrawTextW(dc, text.c_str(), -1, &bounds, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | (overflow > 0 ? DT_LEFT : DT_CENTER));
             if (savedText) RestoreDC(dc, savedText);
             SelectObject(dc, previous);
         };
@@ -3046,14 +3329,14 @@ void drawBrowseScreen(HDC dc) {
         titleRect.left -= bms::ui::textMarqueeOffset(titleOverflow,
             std::chrono::duration<double>(std::chrono::steady_clock::now() - gBrowseTextStartedAt).count());
         titleRect.right = titleRect.left + std::max(measuredTitle.right, static_cast<LONG>(panel.width));
-        DrawTextW(dc, title.c_str(), -1, &titleRect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+        DrawTextW(dc, title.c_str(), -1, &titleRect, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | (titleOverflow > 0 ? DT_LEFT : DT_CENTER));
         if (titleClip) RestoreDC(dc, titleClip);
         SelectObject(dc, oldFont);
         drawSongInfo((chart.artist.empty()?std::wstring(L"작곡가 미표기"):chart.artist)+(chart.subartist.empty()?L"":L" / "+chart.subartist), panel.composerY, panel.bpmY, RGB(210, 220, 232));
         drawSongInfo(L"BPM  " + number(chart.initialBpm, 1), panel.bpmY, panel.levelY, RGB(210, 220, 232));
-        const RECT levelRect{24, panel.levelY, 24 + panel.width, panel.startY};
-        drawTextBody(dc, chart.playLevel.empty() ? L"--" : chart.playLevel, levelRect,
-            gBrowseRankFont ? gBrowseRankFont : gBrowseLevelFont, songDifficultyColor(chart));
+        const auto* group = groupIndex >= 0 && groupIndex < static_cast<int>(groups.size()) ?
+            &groups[static_cast<size_t>(groupIndex)] : nullptr;
+        drawBrowseDifficultyCarousel(dc, panel, group, chart);
         const auto* record = playRecordForChart(static_cast<size_t>(index));
         drawBrowsePlayRecord(dc, record, panel);
     } else drawText(dc, L"곡을 선택하세요", 24, panel.titleY, RGB(245, 248, 252), gBrowseSongTitleFont ? gBrowseSongTitleFont : gBrowseTitleFont);
@@ -3378,6 +3661,7 @@ void drawPauseOverlay(HDC dc) {
 }
 
 void drawGameScreen(HDC dc) {
+    gCompositionPresenter.setFrameIntro(nullptr);
     HUD_SCOPE(GamePaint);
     BMS_TRACE_ZONE("Game render CPU and GPU submission");
     RECT client{}; GetClientRect(gWindow, &client);
@@ -3424,7 +3708,7 @@ void drawGameScreen(HDC dc) {
         if (!gLaneSeparators[i]) continue;
         const int x = layout.left(static_cast<int>(i + 1));
         const RECT separator{ x, 0, x + 1, gWindowHeight };
-        fillRect(dc, separator, RGB(255, 255, 255));
+        drawLaneSeparator(dc,separator,judgeY);
     }
     RECT judge{ fieldX, judgeY, fieldX + layout.totalWidth(), judgeY + 3 };
     fillRect(dc, judge, RGB(248, 250, 252));
@@ -3451,22 +3735,24 @@ void drawGameScreen(HDC dc) {
     {
     BMS_PERF_SCOPE(notesMs);
     size_t visibleNotes = 0;
-    for (auto it = firstNote; it != chart.notes.end(); ++it) {
-        const double notePosition = bms::scrollPositionSeconds(chart, it->timeSeconds);
-        if (!fullScan && notePosition > lastVisiblePosition) break;
-        const size_t i = static_cast<size_t>(it - chart.notes.begin());
-        const auto& note = *it;
-        if (gHit[i]) continue;
-        ++visibleNotes;
+    auto drawNote = [&](size_t noteIndex) {
+        const auto& note = chart.notes[noteIndex];
+        const double notePosition = bms::scrollPositionSeconds(chart, note.timeSeconds);
         double distance=(notePosition-scrollPosition)*pixelsPerSecond;
         distance*=bms::optionVisualSpeed(gChartOptions,note,gPlayhead,gFeedback.combo(),distance);
         const auto visual=bms::optionNoteVisual(gChartOptions,note,gPlayhead,distance);distance=visual.distance;
-        const double visibility=bms::optionVisibility(gChartOptions,distance,gPlayhead);if(visibility<=0)continue;
+        const double visibility=bms::optionVisibility(gChartOptions,distance,gPlayhead);
         int x=layout.left(note.lane),right=layout.right(note.lane);
         const int shift=static_cast<int>(visual.shift*layout.width(note.lane));x+=shift;right+=shift;
         const int inset=static_cast<int>((right-x)*(1-visual.scale)/2);x+=inset;right-=inset;
         const int noteHeight=std::max(1,static_cast<int>(gNoteHeight*visual.scale));
         const double headY=noteY(distance);
+        double tailY=headY;
+        if(note.longNote())tailY=noteY((bms::scrollPositionSeconds(chart,note.timeSeconds+note.lengthSeconds)-scrollPosition)*pixelsPerSecond);
+        const double drawTop=note.longNote()?std::min(headY,tailY):headY;
+        const double drawBottom=note.longNote()?std::max(headY+noteHeight,tailY):headY+noteHeight;
+        if(drawBottom<top || drawTop>fieldBottom)return false;
+        if(visibility<=0)return true;
         COLORREF color = gPalette[gLaneColors[static_cast<size_t>(note.lane)%8]].color;
         if(gChartOptions.crazy.contains(L"star"))color=RGB(static_cast<int>((std::sin(gPlayhead*12)+1)*127),static_cast<int>((std::sin(gPlayhead*12+2)+1)*127),static_cast<int>((std::sin(gPlayhead*12+4)+1)*127));
         if(gChartOptions.crazy.contains(L"clone") || gChartOptions.crazy.contains(L"clone2") || gChartOptions.crazy.contains(L"s-clone")) {
@@ -3475,20 +3761,30 @@ void drawGameScreen(HDC dc) {
             for(int copy=0;copy<copies;++copy){const int dx=copy==0?0:(copy%2?1:-1)*(right-x)/2;const double y=headY-(reverse?-1:1)*(24+copy*12);fillGameRectSubpixel(dc,x+dx,y,right+dx,y+noteHeight,shadow,noteBounds);}
         }
         if(gChartOptions.crazy.contains(L"dark2") || visibility<1)color=RGB(GetRValue(color)*visibility*(gChartOptions.crazy.contains(L"dark2")?.5:1),GetGValue(color)*visibility*(gChartOptions.crazy.contains(L"dark2")?.5:1),GetBValue(color)*visibility*(gChartOptions.crazy.contains(L"dark2")?.5:1));
-        if (note.longNote()) {
-            const double tailY=noteY((bms::scrollPositionSeconds(chart,note.timeSeconds+note.lengthSeconds)-scrollPosition)*pixelsPerSecond);
-            if (std::max(headY + noteHeight, tailY) < top || std::min(headY, tailY) > fieldBottom) continue;
-            fillGameRectSubpixel(dc, x, std::min(headY, tailY), right, std::max(headY + noteHeight, tailY), RGB(GetRValue(color) / 2, GetGValue(color) / 2, GetBValue(color) / 2), noteBounds);
+        if(note.longNote()) {
+            fillGameRectSubpixel(dc, x, drawTop, right, drawBottom, RGB(GetRValue(color) / 2, GetGValue(color) / 2, GetBValue(color) / 2), noteBounds);
             fillGameRectSubpixel(dc, x, headY, right, headY + noteHeight, color, noteBounds);
-        } else {
-            if (headY + noteHeight < top || headY > fieldBottom) continue;
-            if(gChartOptions.crazy.contains(L"spin")) {
-                const auto& rotated=noteEffects::rotated(right-x,noteHeight,gPlayhead,color);
-                const int left=x+(right-x-rotated.size)/2,topY=static_cast<int>(std::lround(headY))+(noteHeight-rotated.size)/2;
-                if(gGpuFrame)gCompositionPresenter.sprite(rotated.pixels.data(),rotated.size,rotated.size,left,topY,rotated.size,rotated.size,rotated.id,1,true,&noteBounds);
-                else if(directRaster)noteEffects::draw(static_cast<uint32_t*>(gBackBufferPixels),gBackBufferWidth,gBackBufferHeight,rotated,left,topY,noteBounds);
-            } else fillGameRectSubpixel(dc,x,headY,right,headY+noteHeight,color,noteBounds);
-        }
+        } else if(gChartOptions.crazy.contains(L"spin")) {
+            const auto& rotated=noteEffects::rotated(right-x,noteHeight,gPlayhead,color);
+            const int left=x+(right-x-rotated.size)/2,topY=static_cast<int>(std::lround(headY))+(noteHeight-rotated.size)/2;
+            if(gGpuFrame)gCompositionPresenter.sprite(rotated.pixels.data(),rotated.size,rotated.size,left,topY,rotated.size,rotated.size,rotated.id,1,true,&noteBounds);
+            else if(directRaster)noteEffects::draw(static_cast<uint32_t*>(gBackBufferPixels),gBackBufferWidth,gBackBufferHeight,rotated,left,topY,noteBounds);
+        } else fillGameRectSubpixel(dc,x,headY,right,headY+noteHeight,color,noteBounds);
+        return true;
+    };
+    for (auto it = firstNote; it != chart.notes.end(); ++it) {
+        const double notePosition = bms::scrollPositionSeconds(chart, it->timeSeconds);
+        if (!fullScan && notePosition > lastVisiblePosition) break;
+        const size_t i = static_cast<size_t>(it - chart.notes.begin());
+        if (gHit[i]) continue;
+        ++visibleNotes;
+        drawNote(i);
+    }
+    // Missed or released long notes remain visible until their body has scrolled
+    // out of the playfield; their judgement and score are already finalized.
+    for(auto it=gLingeringLongNotes.begin();it!=gLingeringLongNotes.end();) {
+        if(*it>=chart.notes.size() || !drawNote(*it))it=gLingeringLongNotes.erase(it);
+        else {++visibleNotes;++it;}
     }
     for(size_t i=0;i<chart.mines.size();++i) {
         const auto& mine=chart.mines[i];if(i<gMineHit.size() && gMineHit[i])continue;
@@ -3665,6 +3961,8 @@ void drawGameScreen(HDC dc) {
     if (gPaused) drawPauseOverlay(dc);
 }
 
+#include "PlayPreviewRender.inl"
+
 void ensureSettingsPreviewBuffer(HDC referenceDc, int width, int height) {
     if (!gSettingsPreviewDc) gSettingsPreviewDc = CreateCompatibleDC(referenceDc);
     if (!gSettingsPreviewDc || width <= 0 || height <= 0) return;
@@ -3706,7 +4004,7 @@ void drawSettingsGameplayPreview(HDC dc, uint32_t* pixels, int width, int height
     for (size_t i = 0; i < gLaneSeparators.size(); ++i) {
         if (!gLaneSeparators[i]) continue;
         const int x = layout.left(static_cast<int>(i + 1));
-        fillRect(dc, {x, 0, x + 1, height}, RGB(255, 255, 255));
+        drawLaneSeparator(dc,{x,0,x+1,height},judgeY);
     }
     if (gLaneCoverPercent > 0) {
         const int coverBottom = judgeY * gLaneCoverPercent / 100;
@@ -4078,7 +4376,7 @@ void hideRmlSettingsPage();
 void refreshAllNativeSettings();
 void selectSettingsCategory(int category) {
     if (gCapturingBindings) cancelKeyBindingCapture();
-    gSettingsCategory = std::clamp(category, 0, 5);
+    gSettingsCategory = std::clamp(category, 0, 6);
     hideSettingsPreviewOverlay();
     // Prepare the migrated page before replacing the visible native surface.
     if (showRmlSettingsPage()) return;
@@ -4145,6 +4443,7 @@ std::wstring hudTextYOffsetLabel(int offset) {
 }
 
 #include "SettingsActions.inl"
+#include "SettingsSummaryOverlay.inl"
 #include "SettingsRmlPage.inl"
 
 void openRmlSettingsProbe() {
@@ -4183,7 +4482,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         else if (wParam==IDCANCEL) { if(gCapturingBindings) cancelKeyBindingCapture(); }
         else if (wParam==ID_RESET_KEYS) {
             if(gCapturingBindings) cancelKeyBindingCapture();
-            applyLaneKeys(DEFAULT_KEYS);setText(gSettingsKeys,keySummary());updateSelection();setBindingStatus(L"기본 키 배치로 복원했습니다.");
+            if(gBindingMode==1)applyLaneKeys(DEFAULT_KEYS);else {bms::KeyProfiles defaults;gKeyProfiles.keys[gBindingMode]=defaults.keys[gBindingMode];gKeyProfiles.save(gSettingsFile,gBindingMode);}setText(gSettingsKeys,keySummary());updateSelection();setBindingStatus(L"기본 키 배치로 복원했습니다.");
         } else if(wParam==1) {
             if(gCapturingBindings) cancelKeyBindingCapture();
             if(gSettingsPreviewShowing) hideSettingsPreviewOverlay();else showSettingsPreviewOverlay();
@@ -4208,7 +4507,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         limits->ptMinTrackSize = {780, 400}; return 0;
     }
     case WM_MOUSEWHEEL: {
-        for (HWND combo : {gFpsChoice, gSpeedChoice, gJudgementChoice, gNoteHeightChoice, gGrooveGaugeChoice, gAccuracyLimitChoice, gSummaryAccuracyLimit, gSkinJudgementChoice, gSkinComboChoice, gSoundBufferChoice, gBgaDarknessChoice, gScreenModeChoice, gResolutionChoice, gGearChoice}) if (combo) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
+        for (HWND combo : {gFpsChoice, gSpeedChoice, gJudgementChoice, gNoteHeightChoice, gGrooveGaugeChoice, gAccuracyLimitChoice, gSummaryAccuracyLimit, gSkinJudgementChoice, gSkinComboChoice, gSoundBufferChoice, gAudioOutputModeChoice, gBgaDarknessChoice, gScreenModeChoice, gResolutionChoice, gGearChoice}) if (combo) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
         for (HWND combo : gColorChoices) if (combo) SendMessageW(combo, CB_SHOWDROPDOWN, FALSE, 0);
         scrollSettings(window, gSettingsScroll - GET_WHEEL_DELTA_WPARAM(wParam) * 100 / WHEEL_DELTA);
         return 0;
@@ -4236,8 +4535,8 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         gSettingsControlCategory.clear();
         gSettingsControlRects.clear();
         gSettingsBody = CreateWindowExW(WS_EX_CONTROLPARENT, L"BmsPlayerSettingsBody", L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 96, 740, 600, window, nullptr, GetModuleHandleW(nullptr), nullptr);
-        constexpr std::array<const wchar_t*, 6> categoryNames{L"게임플레이", L"그래픽", L"사운드", L"기타", L"요약", L"스킨"};
-        constexpr std::array<int, 6> categoryOrder{4, 0, 1, 2, 3, 5};
+        constexpr std::array<const wchar_t*, 7> categoryNames{L"게임플레이", L"그래픽", L"사운드", L"기타", L"요약", L"스킨", L"키 설정"};
+        constexpr std::array<int, 6> categoryOrder{4, 0, 1, 2, 3, 6};
         for (size_t i = 0; i < categoryOrder.size(); ++i) {
             gCreatingSettingsCategory = -1;
             const int category = categoryOrder[i];
@@ -4333,10 +4632,6 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
             SendMessageW(gNoteHeightChoice, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
         }
         SendMessageW(gNoteHeightChoice, CB_SETCURSEL, (gNoteHeight - 4) / 2, 0);
-        settingsControl(window, L"STATIC", L"판정", 0, 0, 400, 272, 330, 24);
-        gJudgementChoice = settingsControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST, ID_JUDGEMENT_PROFILE, 400, 298, 330, 170);
-        for (const wchar_t* label : {L"BASIC", L"EASY", L"NORMAL", L"HARD"}) SendMessageW(gJudgementChoice, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
-        SendMessageW(gJudgementChoice, CB_SETCURSEL, static_cast<int>(gJudgementProfile), 0);
         gCreatingSettingsCategory = 5;
         heading(L"콤보 · 판정 텍스트 위치", 24, 270, 710);
         settingsControl(window, L"STATIC", L"판정 / 콤보 텍스트 Y 위치", 0, 0, 24, 312, 600, 24);
@@ -4391,11 +4686,19 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         for(const auto* label:accuracyLimitLabels)SendMessageW(gAccuracyLimitChoice,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
         SendMessageW(gAccuracyLimitChoice,CB_SETCURSEL,static_cast<int>(gAccuracyLimit),0);
         settingsControl(window,L"STATIC",L"기준 미만 판정 시 자동 재시작 · F5: 재시작",0,0,400,698,330,38);
-        heading(L"키 배치", 24, 760, 710);
-        gBind = settingsControl(window, L"BUTTON", L"키 배치 변경", WS_TABSTOP | BS_PUSHBUTTON, ID_BIND, 24, 800, 160, 40);
-        settingsControl(window, L"BUTTON", L"기본 키로 복원", WS_TABSTOP | BS_PUSHBUTTON, ID_RESET_KEYS, 208, 800, 160, 40);
-        gHelp = settingsControl(window, L"BUTTON", L"사용법", WS_TABSTOP | BS_PUSHBUTTON, ID_HELP, 392, 800, 130, 40);
-        gSettingsKeys = settingsControl(window, L"STATIC", keySummary().c_str(), 0, ID_SETTINGS_KEYS, 24, 860, 706, 48);
+        settingsControl(window,L"STATIC",L"FAST / SLOW 표시",0,0,24,630,300,24);
+        gTimingHintChoice=settingsControl(window,L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,ID_TIMING_HINT,24,658,300,180);
+        for(const auto* label:{L"PGREAT 미만",L"GREAT 미만",L"GOOD 미만",L"없음"})SendMessageW(gTimingHintChoice,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
+        SendMessageW(gTimingHintChoice,CB_SETCURSEL,gTimingHintCondition,0);
+        gCreatingSettingsCategory=6;
+        heading(L"키 배치", 24, 96, 710);
+        auto keyMode=settingsControl(window,L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,1299,24,132,300,160);
+        for(auto label:{L"5키",L"7키",L"9키",L"10키",L"14키"})SendMessageW(keyMode,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));SendMessageW(keyMode,CB_SETCURSEL,gBindingMode,0);
+        gBind = settingsControl(window, L"BUTTON", L"키 배치 변경", WS_TABSTOP | BS_PUSHBUTTON, ID_BIND, 24, 190, 160, 40);
+        settingsControl(window, L"BUTTON", L"기본 키로 복원", WS_TABSTOP | BS_PUSHBUTTON, ID_RESET_KEYS, 208, 190, 160, 40);
+        gHelp = settingsControl(window, L"BUTTON", L"사용법", WS_TABSTOP | BS_PUSHBUTTON, ID_HELP, 392, 190, 130, 40);
+        gSettingsKeys = settingsControl(window, L"STATIC", keySummary().c_str(), 0, ID_SETTINGS_KEYS, 24, 245, 706, 48);
+        gCreatingSettingsCategory=0;
         heading(L"레인별 노트 색상", 24, 940, 490);
         heading(L"구분선", 570, 940, 160);
         for (int lane = 0; lane < 8; ++lane) {
@@ -4450,16 +4753,19 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         }
         const auto bufferOption = std::find(SOUND_BUFFER_OPTIONS.begin(), SOUND_BUFFER_OPTIONS.end(), gSoundBufferFrames);
         SendMessageW(gSoundBufferChoice, CB_SETCURSEL, bufferOption - SOUND_BUFFER_OPTIONS.begin(), 0);
+        settingsControl(window, L"STATIC", L"게임 플레이 WASAPI 출력 모드", 0, 0, 340, 420, 360, 24);
+        gAudioOutputModeChoice = settingsControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST,
+            ID_AUDIO_OUTPUT_MODE, 340, 446, 380, 210);
+        SendMessageW(gAudioOutputModeChoice, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"공유 모드 (다른 앱과 함께 재생)"));
+        SendMessageW(gAudioOutputModeChoice, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"독점 모드 (게임 중 다른 앱 소리 중단 가능)"));
+        SendMessageW(gAudioOutputModeChoice, CB_SETCURSEL, gAudioOutputMode, 0);
+        settingsControl(window, L"STATIC", L"독점 모드는 게임 중 지연 감소를 시도합니다. 사용할 수 없으면 공유 모드로 전환합니다.",
+            0, 0, 340, 478, 380, 32);
         gSongPreviewChoice = settingsControl(window, L"BUTTON", L"곡 하이라이트 부분 미리보기", WS_TABSTOP | BS_AUTOCHECKBOX, ID_SONG_PREVIEW, 24, 510, 600, 32);
         SendMessageW(gSongPreviewChoice, BM_SETCHECK, gSongPreviewEnabled ? BST_CHECKED : BST_UNCHECKED, 0);
         percentageSetting(L"미리보기 음악 볼륨", ID_PREVIEW_VOLUME, 570, gPreviewVolume, gPreviewVolumeSlider, gPreviewVolumeValue);
         gCreatingSettingsCategory = 3;
         heading(L"기타", 24, 96, 710);
-        settingsControl(window, L"STATIC", L"곡 선택 화면 배경", 0, 0, 24, 142, 600, 24);
-        gBrowseBackgroundChoice = settingsControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST, ID_BROWSE_BACKGROUND, 24, 170, 400, 180);
-        for (const wchar_t* label : {L"회색", L"BGA 화면", L"타이틀 화면", L"사용자 설정 화면"})
-            SendMessageW(gBrowseBackgroundChoice, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
-        SendMessageW(gBrowseBackgroundChoice, CB_SETCURSEL, gBrowseBackgroundMode, 0);
         settingsControl(window, L"BUTTON", L"배경 이미지 불러오기", WS_TABSTOP | BS_PUSHBUTTON, ID_CUSTOM_BACKGROUND, 24, 224, 240, 40);
         gCustomBackgroundLabel = settingsControl(window, L"STATIC", gCustomBackgroundName.c_str(), 0, 0, 24, 274, 706, 28);
         percentageSetting(L"배경 블러 강도", ID_BACKGROUND_BLUR, 326, gBackgroundBlur, gBackgroundBlurSlider, gBackgroundBlurValue);
@@ -4520,7 +4826,6 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         }
         gSummarySpeed = summaryChoice(L"노트 배속", ID_SUMMARY_SPEED, 24, 246, 300, static_cast<int>(speedLabels.size()),
             std::clamp(static_cast<int>(std::lround(gNoteSpeed * 4)) - 2, 0, 38), speedLabels.data());
-        gSummaryJudgement = summaryChoice(L"판정", ID_SUMMARY_JUDGEMENT, 400, 246, 330, static_cast<int>(judgementLabels.size()), static_cast<int>(gJudgementProfile), judgementLabels.data());
         gSummaryScreenMode = summaryChoice(L"화면 모드", ID_SUMMARY_SCREEN_MODE, 24, 346, 300, static_cast<int>(screenModeLabels.size()), 2 - gScreenMode, screenModeLabels.data());
         gSummaryGauge = summaryChoice(L"게이지 모드", ID_SUMMARY_GAUGE, 400, 346, 330, static_cast<int>(gaugeLabels.size()), static_cast<int>(gGrooveGaugeMode), gaugeLabels.data());
         gSummaryAccuracyLimit=summaryChoice(L"정확도 제한",ID_SUMMARY_ACCURACY_LIMIT,24,446,300,int(accuracyLimitLabels.size()),static_cast<int>(gAccuracyLimit),accuracyLimitLabels.data());
@@ -4539,7 +4844,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
     }
     case WM_DRAWITEM: {
         auto* item = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
-        if (item->CtlID >= ID_CATEGORY_BASE && item->CtlID < ID_CATEGORY_BASE + 6) {
+        if (item->CtlID >= ID_CATEGORY_BASE && item->CtlID < ID_CATEGORY_BASE + 7) {
             const int category = static_cast<int>(item->CtlID - ID_CATEGORY_BASE);
             const bool selected = category == gSettingsCategory;
             fillRect(item->hDC, item->rcItem, selected ? RGB(34, 57, 79) : RGB(25, 32, 43));
@@ -4595,7 +4900,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         int id = LOWORD(wParam);
         if (lParam && (HIWORD(wParam) == BN_CLICKED || HIWORD(wParam) == CBN_SELCHANGE))
             gAudio.triggerEffect(L"click");
-        if (id >= ID_CATEGORY_BASE && id < ID_CATEGORY_BASE + 6) {
+        if (id >= ID_CATEGORY_BASE && id < ID_CATEGORY_BASE + 7) {
             gNativeSettingsFallback = false;
             selectSettingsCategory(id - ID_CATEGORY_BASE);
             return 0;
@@ -4621,7 +4926,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         if (gCapturingBindings && (id == ID_HELP || id == ID_RESET_KEYS || HIWORD(wParam) == CBN_SELCHANGE)) cancelKeyBindingCapture();
         if (id == ID_HELP) { SendMessageW(gWindow, WM_COMMAND, ID_HELP, 0); return 0; }
         if (id == ID_RESET_KEYS) {
-            applyLaneKeys(DEFAULT_KEYS);
+            if(gBindingMode==1)applyLaneKeys(DEFAULT_KEYS);else {bms::KeyProfiles defaults;gKeyProfiles.keys[gBindingMode]=defaults.keys[gBindingMode];gKeyProfiles.save(gSettingsFile,gBindingMode);}
             setText(gSettingsKeys, keySummary());
             setBindingStatus(L"기본 키 배치로 복원했습니다.");
             updateSelection();
@@ -4629,6 +4934,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         }
         if (HIWORD(wParam) == CBN_SELCHANGE) {
             const int selection = int(SendMessageW(reinterpret_cast<HWND>(lParam), CB_GETCURSEL, 0, 0));
+            if(id==1299){if(gCapturingBindings)cancelKeyBindingCapture();gBindingMode=std::clamp(selection,0,4);return 0;}
             if (selection < 0) return 0;
             id = bms::SettingsController::canonicalId(id);
             int value = selection;
@@ -4678,10 +4984,6 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         saveDisplaySettings();
         DestroyWindow(window);
         return 0;
-        settingsControl(window,L"STATIC",L"FAST / SLOW 표시 조건",0,0,24,630,300,24);
-        gTimingHintChoice=settingsControl(window,L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,ID_TIMING_HINT,24,658,300,180);
-        for(const auto* label:{L"PGREAT 미만",L"GREAT 미만",L"GOOD 미만"})SendMessageW(gTimingHintChoice,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
-        SendMessageW(gTimingHintChoice,CB_SETCURSEL,gTimingHintCondition,0);
     case WM_DESTROY:
         if(gCapturingBindings) cancelKeyBindingCapture();
         releaseSettingsPreviewResources();
@@ -4695,6 +4997,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         gTimingHintChoice=nullptr;gAccuracyLimitChoice=gSummaryAccuracyLimit=nullptr;gSkinJudgementChoice=gSkinComboChoice=nullptr;
         gSummaryFps = gSummaryBga = gSummarySpeed = gSummaryJudgement = gSummaryScreenMode = gSummaryGauge = nullptr;
         gSoundBufferChoice = nullptr;
+        gAudioOutputModeChoice = nullptr;
         gCpuLimitSlider = gCpuLimitValue = gMemoryLimitSlider = gMemoryLimitValue = nullptr;
         gGpuLimitSlider = gGpuLimitValue = gResourceUsageChoice = nullptr;
         gComboTextYSlider = gComboTextYValue = gJudgementTextYSlider = gJudgementTextYValue = nullptr;
@@ -4715,7 +5018,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-void openSettings() {
+void openFullSettings() {
     if (gPlaying || gPracticeWindow || (gLoading && gLoadResult.playback)) return;
     if (gSettingsWindow) { selectSettingsCategory(4); SetForegroundWindow(gSettingsWindow); return; }
     RECT owner{}, work{};
@@ -4733,10 +5036,19 @@ void openSettings() {
         if (gSettingsPreviewOverlay) SetLayeredWindowAttributes(gSettingsPreviewOverlay, 0, 255, LWA_ALPHA);
     }
     EnableWindow(gWindow, FALSE);
+    if(gList)ShowWindow(gList,SW_SHOWNA);
+    InvalidateRect(gWindow,nullptr,FALSE);
     ShowWindow(settings, SW_SHOW);
     // All categories are connected; open the summary by default. Keep native fallback.
     selectSettingsCategory(4);
     if (!gRmlSettingsPageActive && gCategoryButtons[4]) SetFocus(gCategoryButtons[4]);
+}
+
+void openSettings() {
+    if(gPlaying||gPracticeWindow||gLoading)return;
+    if(gSummaryVisible){toggleSummary();openFullSettings();}
+    else if(gSettingsWindow)SetForegroundWindow(gSettingsWindow);
+    else toggleSummary();
 }
 
 COLORREF songDifficultyColor(const bms::Chart& chart) {
@@ -4834,18 +5146,46 @@ bool paintRmlSongList(HWND window, HDC dc) {
     if (!GetClientRect(window, &client)) return false;
     std::vector<bms::ui::SongListVisualRow> rows;
     const int count = ListView_GetItemCount(window);
-    const int first = std::max(0, ListView_GetTopIndex(window));
-    const int end = std::min(count, first + std::max(1, ListView_GetCountPerPage(window)) + 2);
+    const int viewportHeight = static_cast<int>(std::max<LONG>(0, client.bottom - client.top));
+    const int rowHeight = songListRowHeight();
+    if (count > 0 && viewportHeight > 0 && rowHeight > 0) {
+        const double visualPosition = gSongListScroll.position;
+        const double halfViewportRows = static_cast<double>(viewportHeight) / (2.0 * rowHeight);
+        const int overscanRows = 4;
+        const int visibleRows = std::max(1, static_cast<int>(std::ceil(static_cast<double>(viewportHeight) / rowHeight)) + 1);
+        const int windowSize = visibleRows + overscanRows * 2;
+        const auto visibleFirst = static_cast<std::int64_t>(std::floor(visualPosition - halfViewportRows));
+        const auto visibleLast = static_cast<std::int64_t>(std::ceil(visualPosition + halfViewportRows));
+        const std::int64_t desiredStart = visibleFirst - overscanRows;
+        const bool windowInvalid = gSongListRenderWindowStart == songListInvalidRenderWindow ||
+            gSongListRenderWindowSize != windowSize;
+        const bool nearWindowEdge = !windowInvalid &&
+            (visibleFirst < gSongListRenderWindowStart + 2 ||
+             visibleLast > gSongListRenderWindowStart + gSongListRenderWindowSize - 3);
+        if (windowInvalid || nearWindowEdge) gSongListRenderWindowStart = desiredStart;
+        gSongListRenderWindowSize = windowSize;
+    } else {
+        gSongListRenderWindowStart = 0;
+        gSongListRenderWindowSize = 0;
+    }
+    const std::int64_t first = count > 0 ? gSongListRenderWindowStart : 0;
+    const std::int64_t end = first + gSongListRenderWindowSize;
     const auto& groups = gSongSelection.groups();
-    rows.reserve(static_cast<size_t>(std::max(0, end - first)));
-    for (int rowIndex = first; rowIndex < end; ++rowIndex) {
-        RECT bounds{};
-        if (!ListView_GetItemRect(window, rowIndex, &bounds, LVIR_BOUNDS) || bounds.bottom <= 0 || bounds.top >= client.bottom) continue;
+    rows.reserve(static_cast<size_t>(std::max<std::int64_t>(0, end - first)));
+    const double visualPosition = count > 0 ? gSongListScroll.position : 0.0;
+    const float guideTop = static_cast<float>((viewportHeight - rowHeight) * 0.5);
+    const float trackTop = guideTop + static_cast<float>((static_cast<double>(first) - visualPosition) * rowHeight);
+    const int selectedRow = ListView_GetNextItem(window, -1, LVNI_SELECTED);
+    const auto selectedVisualRow = static_cast<std::int64_t>(std::llround(gSongListScroll.target));
+    for (std::int64_t virtualRow = first; virtualRow < end; ++virtualRow) {
+        const int rowIndex = wrapSongListRow(virtualRow, count);
         LVITEMW item{}; item.mask = LVIF_PARAM; item.iItem = rowIndex;
         if (!ListView_GetItem(window, &item)) continue;
         bms::ui::SongListVisualRow row;
-        row.top = bounds.top; row.height = bounds.bottom - bounds.top;
-        row.selected = (ListView_GetItemState(window, rowIndex, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+        row.index = static_cast<int>(virtualRow - first);
+        row.top = static_cast<float>(virtualRow - first) * rowHeight;
+        row.height = rowHeight;
+        row.selected = rowIndex == selectedRow && virtualRow == selectedVisualRow;
         row.alternate = rowIndex % 2 != 0;
         const int groupIndex = static_cast<int>(item.lParam);
         if (groupIndex < 0 || groupIndex >= static_cast<int>(groups.size()) || groups[static_cast<size_t>(groupIndex)].chartIndices.empty()) {
@@ -4862,13 +5202,14 @@ bool paintRmlSongList(HWND window, HDC dc) {
             row.banner = chart.banner.generic_wstring();
             row.level = chart.playLevel.empty() ? L"-" : chart.playLevel;
             row.variant = std::to_wstring(variant + 1) + L" / " + std::to_wstring(group.chartIndices.size());
-            row.difficultyColor = songDifficultyColor(chart); row.blocked = !chart.playable;
+            row.difficultyColor = songDifficultyColor(chart); row.blocked = !chart.playable || !bms::gameplayModeAllowed(chart);
             if (const auto* record = playRecordForChart(chartIndex)) row.lamp = record->cleared ? 1 : 2;
         }
         rows.push_back(std::move(row));
     }
-    // Compose off-screen: clearing the visible list before rebuilding RmlUi
-    // exposed a background-only frame on every selection change.
+    // Compose off-screen over the already-rendered parent frame. The ListView
+    // suppresses WM_ERASEBKGND, so its background must come from the skin/page
+    // underneath rather than a second opaque browse-background fill.
     HDC composedDc{};
     HPAINTBUFFER buffer = BeginBufferedPaint(dc, &client, BPBF_TOPDOWNDIB, nullptr, &composedDc);
     if (!buffer || !composedDc) {
@@ -4877,14 +5218,24 @@ bool paintRmlSongList(HWND window, HDC dc) {
     }
     POINT origin{}; MapWindowPoints(window, gWindow, &origin, 1);
     const RECT source{origin.x, origin.y, origin.x + client.right, origin.y + client.bottom};
-    drawBrowseBackground(composedDc, &source);
+    if (!gBackBufferDc || source.left < 0 || source.top < 0 ||
+        source.right > gBackBufferWidth || source.bottom > gBackBufferHeight ||
+        !BitBlt(composedDc, 0, 0, client.right, client.bottom,
+            gBackBufferDc, source.left, source.top, SRCCOPY)) {
+        EndBufferedPaint(buffer, FALSE);
+        return false;
+    }
     const bool painted = gRmlSongList.paint(composedDc, client.right, client.bottom, rows,
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - gBrowseTextStartedAt).count());
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - gBrowseTextStartedAt).count(),
+        trackTop, guideTop, rowHeight);
     const HRESULT presented = EndBufferedPaint(buffer, painted ? TRUE : FALSE);
     return painted && SUCCEEDED(presented);
 }
 
 LRESULT CALLBACK songListSubclass(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR) {
+    if(gSongInfoVisible&&(message==WM_KEYDOWN||message==WM_LBUTTONDOWN||message==WM_MOUSEWHEEL)){if(message==WM_KEYDOWN&&wParam==VK_ESCAPE){gSongInfoVisible=false;ShowWindow(gList,SW_SHOWNA);InvalidateRect(gWindow,nullptr,FALSE);}return 0;}
+
+    if(summaryInput(message,wParam,lParam,window))return 0;
     if (handleBrowseShortcut(message, wParam, lParam)) return 0;
     if (gRmlSongList.enabled() && message == WM_ERASEBKGND) return 1;
     if (gRmlSongList.enabled() && message == WM_PAINT) {
@@ -4897,26 +5248,67 @@ LRESULT CALLBACK songListSubclass(HWND window, UINT message, WPARAM wParam, LPAR
     if (gRmlSongList.enabled() && (message == WM_PRINTCLIENT || (message == WM_PRINT && (lParam & PRF_CLIENT)))) {
         if (paintRmlSongList(window, reinterpret_cast<HDC>(wParam))) return 0;
     }
+    if (gRmlSongList.enabled() && !gPlaying && !gShowingResult && !gLoading) {
+        if (message == WM_LBUTTONDOWN) {
+            SetFocus(window);
+            const auto hit = songListHitTestAtVisualY(static_cast<short>(HIWORD(lParam)));
+            if (hit) selectSongListRow(hit.row, hit.virtualRow);
+            return 0;
+        }
+        if (message == WM_LBUTTONUP || message == WM_RBUTTONDOWN || message == WM_RBUTTONUP) return 0;
+        if (message == WM_LBUTTONDBLCLK) {
+            SetFocus(window);
+            const auto hit = songListHitTestAtVisualY(static_cast<short>(HIWORD(lParam)));
+            if (hit && selectSongListRow(hit.row, hit.virtualRow)) beginSelectedChart();
+            return 0;
+        }
+        if (message == WM_RBUTTONDBLCLK) {
+            const auto hit = songListHitTestAtVisualY(static_cast<short>(HIWORD(lParam)));
+            if (hit && selectSongListRow(hit.row, hit.virtualRow)) openPracticeSetup();
+            return 0;
+        }
+        if (message == WM_MOUSEWHEEL) {
+            gSongListWheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+            const int notches = gSongListWheelRemainder / WHEEL_DELTA;
+            gSongListWheelRemainder -= notches * WHEEL_DELTA;
+            if (notches != 0) {
+                const int count = ListView_GetItemCount(window);
+                const int steps = 1;
+                const long long requested = static_cast<long long>(notches) * steps;
+                const int boundedSteps = static_cast<int>(std::clamp(std::abs(requested), 1LL, static_cast<long long>(std::max(1, count))));
+                navigateSongList(requested > 0 ? -1 : 1, boundedSteps);
+            }
+            return 0;
+        }
+        if (message == WM_KEYUP && (wParam == VK_UP || wParam == VK_DOWN)) {
+            if (gSongListHeldKey == wParam) { clearSongListHeldKey(); scheduleSongListAnimationTimer(); }
+            return 0;
+        }
+        if ((message == WM_KILLFOCUS || message == WM_CANCELMODE || message == WM_CAPTURECHANGED) && gSongListHeldKey) {
+            clearSongListHeldKey(); scheduleSongListAnimationTimer();
+        }
+    }
     // Give the list the full client width without a scrollbar gutter.
     if (message == WM_KEYDOWN && !gLoading && wParam == 'S') {
         if ((lParam & (1LL << 30)) == 0) toggleSongSort();
         return 0;
     }
     if (message == WM_KEYDOWN && !gLoading && (wParam == VK_UP || wParam == VK_DOWN)) {
-        const auto now = std::chrono::steady_clock::now();
-        const bool repeated = (lParam & (1LL << 30)) != 0;
-        if (repeated && now - gLastSongNavigation < songListRepeatInterval) return 0;
-        gLastSongNavigation = now;
-        const int current = ListView_GetNextItem(window, -1, LVNI_SELECTED);
-        const int count = ListView_GetItemCount(window);
-        const int next = count > 0 ? (current < 0 ? 0 : std::clamp(current + (wParam == VK_DOWN ? 1 : -1), 0, count - 1)) : -1;
-        if (next >= 0 && next != current) {
-            ListView_SetItemState(window, current, 0, LVIS_SELECTED | LVIS_FOCUSED);
-            ListView_SetItemState(window, next, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-            gAudio.triggerEffect(L"songlistscroll");
-            beginSongListScroll(next);
+        if ((lParam & (1LL << 30)) == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            const UINT direction = static_cast<UINT>(wParam);
+            clearSongListHeldKey();
+            const bool moved = navigateSongList(direction == VK_DOWN ? 1 : -1);
+            if (moved) {
+                gSongListHeldKey = direction;
+                gSongListNextRepeat = now + songListRepeatInitialDelay;
+                scheduleSongListAnimationTimer();
+            }
         }
         return 0;
+    }
+    if (message == WM_KILLFOCUS || message == WM_CANCELMODE || message == WM_CAPTURECHANGED) {
+        if (gSongListHeldKey) { clearSongListHeldKey(); scheduleSongListAnimationTimer(); }
     }
     if(message==WM_MOUSEWHEEL&&!gLoading&&!gPlaying&&!gShowingResult&&ListView_GetItemCount(window)>1&&GET_WHEEL_DELTA_WPARAM(wParam)!=0)
         gAudio.triggerEffect(L"songlistscroll");
@@ -4993,6 +5385,7 @@ LRESULT handleCustomDraw(LPARAM lParam) {
 }
 
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    if(summaryInput(message,wParam,lParam,window))return 0;
     switch (message) {
     case WM_LBUTTONDOWN: case WM_RBUTTONDOWN:
         if (gStartupSplash) return 0;
@@ -5077,6 +5470,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     }
     case WM_SIZE:
+        if(!songEntryActive()&&(gWindowWidth!=LOWORD(lParam)||gWindowHeight!=HIWORD(lParam)))gSongIntro.reset();
         hideSettingsPreviewOverlay();
         gWindowWidth = LOWORD(lParam); gWindowHeight = HIWORD(lParam); layoutControls();
         if(gRmlSettingsPageActive) syncRmlSettingsState();
@@ -5090,8 +5484,8 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_CTLCOLORSTATIC: {
         HDC dc = reinterpret_cast<HDC>(wParam);
         SetTextColor(dc, RGB(218, 228, 240));
-        SetBkColor(dc, RGB(16, 20, 28));
-        return reinterpret_cast<LRESULT>(gControlBrush);
+        SetBkMode(dc, TRANSPARENT);
+        return reinterpret_cast<LRESULT>(GetStockObject(NULL_BRUSH));
     }
     case WM_APPLY_SETTINGS: {
         const auto results = settingsController().drain();
@@ -5142,21 +5536,22 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         const int oldIndex=selectedIndex();const auto selected=oldIndex>=0&&oldIndex<int(gCharts.size())?gCharts[size_t(oldIndex)].path:std::filesystem::path{};
         gSongFolders.remember(std::max(0,ListView_GetNextItem(gList,-1,LVNI_SELECTED)));
         gCurrentFolder=gLibrarySources.roots.empty()?std::filesystem::path{}:gLibrarySources.roots.front();
-        gCharts=std::move(update->charts);gSongFolders.knownFolders=std::move(update->folders);
+        gSongFolders.invalidate();gCharts=std::move(update->charts);gSongFolders.knownFolders=std::move(update->folders);
         rebuildPartialLoadSummary();rebuildChartRecordKeys();buildSongGroups();int preferred=restoreLibraryChart(selected);
         rebuildSongRows(preferred);gLibraryIndexStatus=gLibrarySources.roots.empty()?L"곡 폴더: (없음) · F2 또는 기타 설정에서 폴더를 등록하세요.":update->warnings.empty()?L"곡 라이브러리 확인 완료":update->warnings.front();setStatus(gLibraryIndexStatus);syncLibrarySettings();return 0;
     }
+    case WM_PLAY_CHART_READY: acceptPlaybackChart(static_cast<std::uintptr_t>(wParam));return 0;
     case WM_LOAD_FINISHED:
+        if(wParam){completePlaybackWorker(static_cast<std::uintptr_t>(wParam));return 0;}
         if (gLoadWorker.joinable()) gLoadWorker.join();
+        if(gLoadResult.playback){if(gLoadCancelled)gPlaybackLoad.cancel();else if(!gLoadResult.error.empty())gPlaybackLoad.fail();else gPlaybackLoad.resourcesLoaded();}
         if (gLoadResult.playback && !gLoadCancelled && gLoadResult.error.empty()) {
             const bool hasTitle = gLoadResult.index >= 0 && gLoadResult.index < static_cast<int>(gCharts.size()) &&
                 !gCharts[static_cast<size_t>(gLoadResult.index)].titleImage.empty();
             if (!hasTitle) {
-                gLoading = false;
                 finishSelectedChart();
                 return 0;
             }
-            gPlaybackLoadReady = true;
             gTitleFadeOutStarted = std::max(std::chrono::steady_clock::now(), gPlaybackLoadStarted + titleFadeDuration);
             InvalidateRect(window, nullptr, FALSE);
             return 0;
@@ -5192,7 +5587,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gCurrentFolder = gLoadResult.folder;
             setText(gFolder, L"곡 폴더: " + gCurrentFolder.wstring());
             if (!gSettingsFile.empty()) WritePrivateProfileStringW(L"Library", L"LastFolder", gCurrentFolder.c_str(), gSettingsFile.c_str());
-            gCharts = std::move(gLoadResult.charts);
+            gSongFolders.invalidate();gCharts = std::move(gLoadResult.charts);
             rebuildPartialLoadSummary();
             rebuildChartRecordKeys();
             buildSongGroups();
@@ -5299,8 +5694,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         break;
     }
     case WM_KEYDOWN:
+        if(gSongInfoVisible){if(wParam==VK_ESCAPE){gSongInfoVisible=false;ShowWindow(gList,SW_SHOWNA);InvalidateRect(window,nullptr,FALSE);}return 0;}
         if((wParam==VK_BACK||wParam==VK_ESCAPE)&&navigateSongFolder(true))return 0;
-        if (handleBrowseShortcut(message, wParam, lParam)) return 0;
+        if(summaryInput(message,wParam,lParam,window))return 0;
+    if (handleBrowseShortcut(message, wParam, lParam)) return 0;
         if (gLoading) { if (wParam == VK_ESCAPE) { gLoadCancelled = true; setStatus(L"불러오기를 취소하고 있습니다..."); } return 0; }
         if (gCapturingBindings) {
             if (wParam == VK_ESCAPE) { cancelKeyBindingCapture(); return 0; }
@@ -5312,6 +5709,11 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if(wParam==VK_F5&&!gSettingsWindow){if((lParam&(1LL<<30))==0)restartPlayback();return 0;}
             if (gPaused) { handlePausedKey(wParam, (lParam & (1LL << 30)) != 0); return 0; }
             if (wParam == VK_ESCAPE) { if ((lParam & (1LL << 30)) == 0) pausePlayback(); return 0; }
+            if((GetKeyState(VK_CONTROL)&0x8000)&&(wParam==VK_PRIOR||wParam==VK_NEXT||wParam==VK_UP||wParam==VK_DOWN)){
+                if(wParam==VK_PRIOR||wParam==VK_NEXT)gLaneCoverPercent=std::clamp(gLaneCoverPercent+(wParam==VK_PRIOR?1:-1),0,100);
+                else gJudgeLineOffset=std::clamp(gJudgeLineOffset+(wParam==VK_UP?-1:1),-4096,4096);
+                gBgaBackplateDirty=true;saveDisplaySettings();InvalidateRect(window,nullptr,FALSE);return 0;
+            }
             if (wParam == VK_RETURN) return 0;
             if (wParam == VK_F1 || wParam == VK_F2) {
                 const double delta = (wParam == VK_F2) ? 0.25 : -0.25;
@@ -5351,7 +5753,8 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         break;
     case WM_KEYUP:
-        if (handleBrowseShortcut(message, wParam, lParam)) return 0;
+        if(summaryInput(message,wParam,lParam,window))return 0;
+    if (handleBrowseShortcut(message, wParam, lParam)) return 0;
         if (gCapturingBindings) {
             gCaptureAwaitRelease = false;
             return 0;
@@ -5470,11 +5873,12 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (HUD_LEGACY_REFLEX()&&gPlaying&&!gPaused&&gGpuFrame) gCompositionPresenter.lowLatency().renderStart();
             if (gPlaying) drawGameScreen(gBackBufferDc);
             else if (gShowingResult) drawResultScreen(gBackBufferDc);
-            else if (gLoading && gLoadResult.playback) drawPlaybackLoadingScreen(gBackBufferDc);
+            else if (gLoading && gLoadResult.playback) drawPreparingPlayback(gBackBufferDc);
             else if (gStartupSplash) drawStartupSplash(gBackBufferDc);
             else drawBrowseScreen(gBackBufferDc);
-            if (!gStartupSplash) drawResourceUsageOverlay(gBackBufferDc);
+            if (!gStartupSplash&&!songEntryActive()) drawResourceUsageOverlay(gBackBufferDc);
             if (gShowingResult) drawResultFade(gBackBufferDc);
+            drawSummary(gBackBufferDc);
             {HUD_SCOPE(FinalGdiFlush);GdiFlush();} // Complete GDI writes before the D3D texture upload reads the DIB.
             bool pauseFrameDeferred = false;
             { BMS_PERF_SCOPE(presentMs);
@@ -5500,9 +5904,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         } else {
             if (gPlaying) drawGameScreen(dc);
             else if (gShowingResult) { drawResultScreen(dc); drawResultFade(dc); }
-            else if (gLoading && gLoadResult.playback) drawPlaybackLoadingScreen(dc);
+            else if (gLoading && gLoadResult.playback) drawPreparingPlayback(dc);
             else if (gStartupSplash) drawStartupSplash(dc);
             else drawBrowseScreen(dc);
+            drawSummary(dc);
         }
         EndPaint(window, &ps); return 0;
     }
@@ -5524,12 +5929,14 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         gStartupSplashImage.reset();
         BufferedPaintUnInit();
         resetResultFade();
-        gLoadCancelled = true;
+        gLoadCancelled = true;gPlaybackLoad.cancel();
         gPauseButtons.fill(nullptr);
         if (gLoadWorker.joinable()) gLoadWorker.join();
+        if(gPlaybackJob.active){samplePlaybackLoadMemory();reportPlaybackLoad("shutdown");gPlaybackJob.releaseChart();gPlaybackJob.active=false;}
         gCompositionPresenter.reset();
         gAudio.stop();
         gSongPreview.shutdown();
+        gSelectionAudio.shutdown();
         gBrowseBackdrop.reset();
         gVideoBga.reset();
     gBgaVideos.reset();gBgaSwitch.reset();
@@ -5658,30 +6065,43 @@ int selectSkinShortcutAt(int x,int y){return gSkinApplication.selectShortcutAt(x
 bool skinNeedsJudgementText(){return gSkinApplication.needsJudgementText();}
 bool skinCoversLegacySlots(int left,int top,int right,int bottom){return gSkinApplication.coversLegacySlots(left,top,right,bottom);}
 void prepareSkinForPlayback(){
-    if(!gPlaying||!gSkinApplication.hasImageHud()||!gCompositionEnabled||gGpuUnavailable)return;
+    if((!gPlaying&&!gPlaybackLoad.preparing())||(!gPlaybackLoad.preparing()&&!gSkinApplication.hasImageHud())||!gCompositionEnabled||gGpuUnavailable)return;
     gCompositionPresenter.setDirectComposition(gDirectCompositionEnabled);gCompositionPresenter.setVsync(gTargetFps==vsyncFps);gCompositionPresenter.setAntialias(gNoteAntialias);
     const bool previous=gGpuFrame;
     if(gCompositionPresenter.prepare(gWindow,gWindowWidth,gWindowHeight)){gGpuFrame=true;prepareAppliedSkinGpu();}
     else gGpuUnavailable=true;
     gGpuFrame=previous;
 }
+bool drawPreparingSkin(HDC dc){
+    if(!gSkinApplication.active()||!gSkinApplication.supports(sevenmania::skin::ScreenKind::Play))return false;
+    RECT bounds{0,0,gWindowWidth,gWindowHeight};FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    updateSkinJudgementAnchor();
+    return captureSevenManiaSkinData(gSkinData)&&gSkinApplication.drawDc(dc,gWindowWidth,gWindowHeight,gSkinData.snapshot());
+}
+bool preparingSkinAnimated(){return gSkinApplication.animating()||gSkinApplication.scrolling();}
 bool skinOwnsJudgement(){return skinOwnsHud()&&gSkinApplication.ownsJudgement();}
 void emitSevenManiaSkinEvent(std::string_view event) {gSkinApplication.emit(event);}
 bool captureSevenManiaSkinData(sevenmania::skin::SkinDataProvider& provider) {
     HUD_SCOPE(Snapshot);
     if(GetCurrentThreadId()!=gSkinDataOwnerThread)return false;
     using namespace sevenmania::skin;
-    const auto screen=gPlaying?ScreenKind::Play:gShowingResult?ScreenKind::Result:ScreenKind::Select;
+    const auto screen=(gPlaying||gPlaybackLoad.preparing())?ScreenKind::Play:gShowingResult?ScreenKind::Result:ScreenKind::Select;
     provider.beginFrame(screen);
     if(screen==ScreenKind::Select){
         constexpr std::array<const wchar_t*,4> judgementNames{L"BASIC",L"EASY",L"NORMAL",L"HARD"};
         provider.setWide(BindingId::SelectSpeedText,number(gNoteSpeed,2)+L"x");
         provider.setWide(BindingId::SelectJudgementText,judgementNames[static_cast<size_t>(gJudgementProfile)]);
         provider.setWide(BindingId::SelectGaugeMode,activeGaugeModeText());
+        const int selected=selectedIndex();
+        const PlayRecord* record=selected>=0&&selected<static_cast<int>(gCharts.size())?playRecordForChart(static_cast<size_t>(selected)):nullptr;
+        provider.setWide(BindingId::SelectRecordBestScore,record?L"BEST "+groupedRecordScore(record->bestAccuracyScore):L"NO RECORD");
+        provider.setWide(BindingId::SelectRecordBestRank,record?L"RANK "+std::wstring(ResultScore::rankForScore(record->bestAccuracyScore)):L"");
+        provider.setWide(BindingId::SelectRecordClearType,record?(record->cleared?L"CLEAR":L"FAILED"):L"");
+        provider.setWide(BindingId::SelectRecordMaxCombo,record?L"MAX COMBO "+std::to_wstring(record->maxCombo):L"");
     }
     if(screen==ScreenKind::Play){constexpr std::array<const wchar_t*,4> names{L"BASIC",L"EASY",L"NORMAL",L"HARD"};provider.setWide(BindingId::PlayJudgementProfile,names[static_cast<size_t>(gJudgementProfile)]);}
     const int index=screen==ScreenKind::Select?selectedIndex():gActiveChartIndex;
-    if(!gLoading&&!gStartupSplash&&index>=0&&index<static_cast<int>(gCharts.size())) {
+    if((!gLoading||gPlaybackLoad.preparing())&&!gStartupSplash&&index>=0&&index<static_cast<int>(gCharts.size())) {
         const auto& chart=gCharts[static_cast<std::size_t>(index)];
         provider.setWide(BindingId::SongTitle,chart.title);
         provider.setWide(BindingId::SongArtist,chart.artist);
@@ -5773,11 +6193,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         return 1;
     }
     const auto effectAssets = executableFolder() / L"Assets";
+    const auto skinSounds = defaultSkinPath().parent_path() / L"sounds";
+    const auto resolveUiSound = [&](const wchar_t* name) {
+        const auto skinSound = skinSounds / name;
+        std::error_code ec;
+        return std::filesystem::is_regular_file(skinSound, ec) ? skinSound : effectAssets / name;
+    };
     std::wstring effectLoadError;
     gAudio.loadEffect(L"levelchange", effectAssets / L"levelchange.mp3", effectLoadError);
     effectLoadError.clear();
-    gAudio.loadEffect(L"click", effectAssets / L"click.mp3", effectLoadError);
-    gAudio.loadEffect(L"songlistscroll", effectAssets / L"songlistscroll.mp3", effectLoadError);
+    gAudio.loadEffect(L"click", resolveUiSound(L"click.mp3"), effectLoadError);
+    gAudio.loadEffect(L"songlistscroll", resolveUiSound(L"songlistscroll.mp3"), effectLoadError);
+    gSelectionAudio.initialize(effectAssets, skinSounds);
 #ifdef BMS_FRAME_DIAGNOSTICS
     gAudio.loadDiagnosticBeep();
 #endif
@@ -5834,11 +6261,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             BMS_PERF_SCOPE(latencyWaitMs);
             latencyFrame = latencyControl.beginFrame();
         }
+        gSelectionAudio.tickDecision();
         gLatencyInputPump = latencyFrame;
         {HUD_SCOPE_IF(InputPump,latencyFrame);
         // Bound message processing so continuous input cannot starve a due frame.
         for (int processed = 0; processed < 64 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++processed) {
             if (message.message == WM_QUIT) { running = false; break; }
+            if(!gSettingsWindow&&!gPracticeWindow&&handleOverlayEscape(message.message,message.wParam))continue;
             if (handleSettingsCaptureMessage(message.message,message.wParam,message.lParam)) continue;
             if (gRmlSettingsHost.owns(message.hwnd) || gRmlSettingsPage.owns(message.hwnd)) {
                 TranslateMessage(&message); DispatchMessageW(&message); continue;
@@ -5850,6 +6279,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                 if (message.message == WM_KEYDOWN) SendMessageW(gPracticeWindow, WM_KEYDOWN, message.wParam, message.lParam);
                 continue;
             }
+            if(gLoading&&gPlaybackLoad.preparing()&&message.message==WM_KEYDOWN&&previewKey(message.wParam))continue;
             if (gLoading && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
                 gLoadCancelled = true; setStatus(L"불러오기를 취소하고 있습니다..."); continue;
             }
@@ -5923,7 +6353,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (gBrowseBackgroundMode == 1 || gBrowseTextOverflow || gRmlSongList.needsAnimation()) {
                 InvalidateRect(gWindow, nullptr, FALSE); UpdateWindow(gWindow);
             }
-        } else if (!gBrowseMediaKey.empty()) stopBrowseMedia();
+        } else {gSelectionAudio.stopMusic();if(!gBrowseMediaKey.empty())stopBrowseMedia();}
         if (gPlaying && gPaused) {
             const DWORD waitResult = waitForPlaybackWork(nullptr, gShowResourceUsage ? 500 : INFINITE);
             if (gShowResourceUsage && waitResult == WAIT_TIMEOUT) {
@@ -5955,16 +6385,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             HANDLE timer = gFramePacer.arm();
             waitForPlaybackWork(timer, timer ? INFINITE : 1);
         } else if (gLoading && gLoadResult.playback) {
-            const auto now = std::chrono::steady_clock::now();
-            if (gPlaybackLoadReady && now >= gTitleFadeOutStarted + titleFadeDuration) {
-                gLoading = false;
-                gPlaybackLoadReady = false;
-                finishSelectedChart();
-                continue;
-            }
-            InvalidateRect(gWindow, nullptr, FALSE);
-            UpdateWindow(gWindow);
-            MsgWaitForMultipleObjectsEx(0, nullptr, 16, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            pollPreparingPlayback();
+            InvalidateRect(gWindow,nullptr,FALSE);UpdateWindow(gWindow);
+            MsgWaitForMultipleObjectsEx(0,nullptr,16,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
         } else {
             const bool hasPeriodicBrowseWork = gBrowseBackgroundMode == 1 || gSongPreviewEnabled ||
                 gBrowseTextOverflow || gRmlSongList.needsAnimation();

@@ -1,4 +1,4 @@
-﻿#include "SongSelection.h"
+#include "SongSelection.h"
 
 #include "ChartOrdering.h"
 #include "PreviewTiming.h"

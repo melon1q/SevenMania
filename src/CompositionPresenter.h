@@ -59,7 +59,7 @@ class CompositionPresenter {
     bool directComposition_ = true;
     HWND outputWindow_{};
     using FrameOverlay = void (*)(ID2D1RenderTarget*,int,int);
-    FrameOverlay frameOverlay_{}, frameForeground_{};
+    FrameOverlay frameOverlay_{}, frameForeground_{},frameIntro_{};
     static LRESULT CALLBACK outputProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_ERASEBKGND) return 1;
@@ -103,6 +103,7 @@ class CompositionPresenter {
 public:
     // Generic UI overlay, prepared by the owner before drawing. Native notes/HUD stay above it.
     ID2D1RenderTarget* renderTarget() const noexcept {return drawingTarget_.Get();}
+    void setFrameIntro(FrameOverlay overlay) noexcept {frameIntro_=overlay;}
     void setFrameOverlay(FrameOverlay overlay) noexcept {frameOverlay_=overlay;}
     void setFrameForeground(FrameOverlay overlay) noexcept {frameForeground_=overlay;}
     CompositionPresenter() { lowLatency_.install(latency::Mode::Reflex, std::make_unique<latency::ReflexBackend>()); }
@@ -117,7 +118,7 @@ public:
     const latency::Controller& lowLatency() const { return lowLatency_; }
     latency::Controller& lowLatency() { return lowLatency_; }
     void reset() {
-        frameOverlay_=nullptr;frameForeground_=nullptr;
+        frameOverlay_=nullptr;frameForeground_=nullptr;frameIntro_=nullptr;
         lowLatency_.detach();
         hybridLayer_.Reset(); hybridLayerPixels_.reset(); uploadedLayerPixels_.reset();
         hybridBackdrop_.Reset(); hybridPixelOwner_.reset(); uploadedPixels_.reset(); hybridPixels_ = nullptr; hybridFrame_ = false;
@@ -211,6 +212,8 @@ public:
         hybridFrame_ = false;
         return true;
     }
+    RECT bgaViewport_{};
+    void setBgaViewport(RECT area){bgaViewport_=area;}
     void hybridBackground(const uint32_t* pixels, uint64_t generation, int darkness,
         RECT lane, int laneOpacity, const std::vector<RECT>& regions, std::shared_ptr<const uint32_t> owner = {},
         std::shared_ptr<const uint32_t> layer = {}) {
@@ -510,8 +513,10 @@ private:
         {HUD_SCOPE(D2DBegin);drawingTarget_->BeginDraw();}
         drawingTarget_->SetAntialiasMode(antialias_ ? D2D1_ANTIALIAS_MODE_PER_PRIMITIVE : D2D1_ANTIALIAS_MODE_ALIASED);
         if (hybridFrame_) {
-            drawingTarget_->DrawBitmap(hybridBackdrop_.Get());
-            if (hybridLayer_) drawingTarget_->DrawBitmap(hybridLayer_.Get());
+            drawingTarget_->Clear(D2D1::ColorF(0,0,0));
+            const auto area=bgaViewport_.right>bgaViewport_.left&&bgaViewport_.bottom>bgaViewport_.top?D2D1::RectF(float(bgaViewport_.left),float(bgaViewport_.top),float(bgaViewport_.right),float(bgaViewport_.bottom)):D2D1::RectF(0,0,float(width_),float(height_));
+            drawingTarget_->DrawBitmap(hybridBackdrop_.Get(),area);
+            if (hybridLayer_) drawingTarget_->DrawBitmap(hybridLayer_.Get(),area);
             brush_->SetColor(D2D1::ColorF(0, 0, 0)); brush_->SetOpacity(hybridDarkness_);
             drawingTarget_->FillRectangle(D2D1::RectF(0, 0, static_cast<float>(width_), static_cast<float>(height_)), brush_.Get());
             brush_->SetOpacity(hybridLaneOpacity_);
@@ -555,6 +560,7 @@ private:
                 D2D1::RectF(static_cast<float>(foregroundX), 0, static_cast<float>(foregroundX + fw), static_cast<float>(fh)),
                 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
         }
+        if(frameIntro_)frameIntro_(drawingTarget_.Get(),width_,height_); // Above the full-frame CPU foreground too.
         HRESULT drawn;{HUD_SCOPE(D2DEnd);drawn = drawingTarget_->EndDraw();}
         return SUCCEEDED(uploaded) && SUCCEEDED(drawn);
     }

@@ -331,9 +331,9 @@ add_test(NAME SevenManiaSkinAnimationTests COMMAND SevenManiaSkinAnimationTests)
 foreach(default_skin_target BmsPlayer SevenManiaSkinApplicationTests SevenManiaSkinEditor)
  # Run even when the executable is already up to date: skin-only edits must ship.
  add_custom_target(${default_skin_target}DefaultSkinAssets
- COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${default_skin_target}>/Assets/Skins"
- COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/Assets/Skins/DefaultReference.semaskin" "$<TARGET_FILE_DIR:${default_skin_target}>/Assets/Skins/DefaultReference.semaskin"
- DEPENDS "${CMAKE_SOURCE_DIR}/Assets/Skins/DefaultReference.semaskin"
+ COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${default_skin_target}>/Assets/Skins/DefaultSkin"
+ COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/Assets/Skins/DefaultSkin" "$<TARGET_FILE_DIR:${default_skin_target}>/Assets/Skins/DefaultSkin"
+ DEPENDS "${CMAKE_SOURCE_DIR}/Assets/Skins/DefaultSkin/DefaultReference.semaskin"
  VERBATIM)
  add_dependencies(${default_skin_target} ${default_skin_target}DefaultSkinAssets)
 endforeach()
@@ -343,6 +343,9 @@ add_custom_command(TARGET BmsPlayer POST_BUILD
  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/third_party/pl_mpeg/NOTICE.txt" "$<TARGET_FILE_DIR:BmsPlayer>/Assets/Licenses/PL_MPEG.txt")
 add_custom_command(TARGET BmsPlayer POST_BUILD
  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/Assets/hud-hi-speed.png" "${CMAKE_SOURCE_DIR}/Assets/hud-gauge-mode.png" "$<TARGET_FILE_DIR:BmsPlayer>/Assets")
+add_custom_command(TARGET BmsPlayer POST_BUILD
+ COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BmsPlayer>/Assets/UI"
+ COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/Assets/UI/song-list.rml" "${CMAKE_SOURCE_DIR}/Assets/UI/song-list.rcss" "$<TARGET_FILE_DIR:BmsPlayer>/Assets/UI")
 
 # Every standalone skin renderer uses the same built-in font faces as the game.
 foreach(font_target SevenManiaSkinRenderTests SevenManiaSkinBindingTests SevenManiaSkinApplicationTests SevenManiaSkinEditor)
@@ -364,7 +367,7 @@ set_tests_properties(SevenManiaSkinHudImageTests PROPERTIES TIMEOUT 120 RUN_SERI
 
 add_executable(SevenManiaDefaultHudImageTests tests/DefaultHudImageTests.cpp src/app.rc)
 target_link_libraries(SevenManiaDefaultHudImageTests PRIVATE sevenmania_skin_render d3d11 d2d1 windowscodecs ole32 comdlg32)
-add_test(NAME SevenManiaDefaultHudImageTests COMMAND SevenManiaDefaultHudImageTests "${CMAKE_SOURCE_DIR}/Assets/Skins/DefaultReference.semaskin" "${CMAKE_BINARY_DIR}/Validation/DefaultHudImages")
+add_test(NAME SevenManiaDefaultHudImageTests COMMAND SevenManiaDefaultHudImageTests "${CMAKE_SOURCE_DIR}/Assets/Skins/DefaultSkin/DefaultReference.semaskin" "${CMAKE_BINARY_DIR}/Validation/DefaultHudImages")
 set_tests_properties(SevenManiaDefaultHudImageTests PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 # Isolated diagnostic build: probes never run in the default player.
@@ -413,3 +416,11 @@ target_link_libraries(SevenManiaOfficialJudgementIntegrationTests PRIVATE sevenm
 bms_attach_song_list_ui(SevenManiaOfficialJudgementIntegrationTests)
 add_test(NAME SevenManiaOfficialJudgementIntegrationTests COMMAND SevenManiaOfficialJudgementIntegrationTests "${CMAKE_BINARY_DIR}/Validation/OfficialJudge")
 set_tests_properties(SevenManiaOfficialJudgementIntegrationTests PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+
+target_link_libraries(SevenManiaLauncher PRIVATE sevenmania_skin gdiplus)
+
+target_link_libraries(SevenManiaLauncherUiTests PRIVATE sevenmania_skin)
+
+foreach(selection_asset decide.mp3 select.mp3)
+ add_custom_command(TARGET BmsPlayer POST_BUILD COMMAND ${CMAKE_COMMAND} "-DSOURCE=${CMAKE_SOURCE_DIR}/Assets/${selection_asset}" "-DDEST=$<TARGET_FILE_DIR:BmsPlayer>/Assets/${selection_asset}" -P "${CMAKE_SOURCE_DIR}/cmake/CopyOptionalAsset.cmake")
+endforeach()

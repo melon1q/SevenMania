@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "SkinRenderer.h"
 #include <windows.h>
 
@@ -17,11 +17,13 @@ public:
     void setJudgementOffset(double offset) noexcept;
     void setJudgementRainbow(bool enabled) noexcept;
     void setJudgementAnchor(double x,double y,double width,double height) noexcept;
-    bool hasBox(std::string_view mode) const noexcept;
-    void updateBox(std::string_view mode,const std::uint32_t* pixels,unsigned width,unsigned height) noexcept;
+    bool hasBox(std::string_view mode,ScreenKind screen=ScreenKind::Select) const noexcept;
+    void updateBox(std::string_view mode,const std::uint32_t* pixels,unsigned width,unsigned height,ScreenKind screen=ScreenKind::Select) noexcept;
     void emit(std::string_view event) noexcept;
+    void enterScreen(ScreenKind screen) noexcept;
     void setGearState(const SkinGearState& state) noexcept;
     const SkinManifest* manifest() const noexcept;
+    const SkinScreen* screenLayout(ScreenKind screen) const noexcept;
     bool supports(ScreenKind screen) const noexcept;
     bool ownsJudgement() const noexcept;
     bool needsJudgementText() const noexcept;

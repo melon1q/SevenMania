@@ -1,4 +1,4 @@
-﻿#include "../src/Main.cpp"
+#include "../src/Main.cpp"
 #include <iostream>
 int wmain(int argc,wchar_t** argv){if(argc!=2)return 2;try{
     const auto directory=std::filesystem::absolute(argv[1]);std::filesystem::create_directories(directory);gSettingsFile=directory/(L"engine-"+std::to_wstring(GetCurrentProcessId())+L".ini");

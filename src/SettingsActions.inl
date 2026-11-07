@@ -1,6 +1,7 @@
 ﻿// Included by Main.cpp inside its application namespace. Device operations
 // remain here; their inputs and SettingsController contain no UI handles.
 int readSettingValue(int id) {
+    if(id==ID_SEPARATOR_OPACITY)return gSeparatorOpacity;
     if (id >= ID_VOLUME_BASE && id < ID_VOLUME_BASE + 4) return gVolumes[id - ID_VOLUME_BASE];
     if (id >= ID_COLOR_BASE && id < ID_COLOR_BASE + 8) return gLaneColors[id - ID_COLOR_BASE];
     if (id >= ID_SEPARATOR_BASE && id < ID_SEPARATOR_BASE + 7) return gLaneSeparators[id - ID_SEPARATOR_BASE];
@@ -20,9 +21,13 @@ int readSettingValue(int id) {
     case ID_JUDGEMENT_PROFILE: return int(gJudgementProfile);
     case ID_NOTE_HEIGHT: return gNoteHeight;
     case ID_GROOVE_GAUGE: return int(gGrooveGaugeMode);
+    case ID_INTRO_ENABLE: return gIntroEnabled;
+    case ID_INTRO_DURATION: return gIntroDuration;
+    case ID_PREVIEW_START: return gPreviewStartMode;
     case ID_TIMING_HINT: return gTimingHintCondition;
     case ID_ACCURACY_LIMIT: return int(gAccuracyLimit);
     case ID_SOUND_BUFFER: return gSoundBufferFrames;
+    case ID_AUDIO_OUTPUT_MODE: return gAudioOutputMode;
     case ID_BROWSE_BACKGROUND: return gBrowseBackgroundMode;
     case ID_BACKGROUND_BLUR: return gBackgroundBlur;
     case ID_BACKGROUND_OPACITY: return gBackgroundOpacity;
@@ -48,6 +53,7 @@ int readSettingValue(int id) {
 }
 
 bool applySettingValue(int id, int value, std::wstring& error) {
+    if(id==ID_SEPARATOR_OPACITY){gSeparatorOpacity=value;gPlaybackJob.previewDirty=true;return true;}
     if (id >= ID_VOLUME_BASE && id < ID_VOLUME_BASE + 4) {
         gVolumes[id - ID_VOLUME_BASE] = value;
         gAudio.setVolumes(gVolumes[0], gVolumes[1], gVolumes[2], gVolumes[3]); return true;
@@ -58,12 +64,16 @@ bool applySettingValue(int id, int value, std::wstring& error) {
     case ID_FPS: gTargetFps = value; gFramePacer.reset(value); break;
     case ID_SPEED: gNoteSpeed = value / 4.0; break;
     case ID_SKIN_JUDGEMENT_MODE:case ID_SKIN_COMBO_MODE:
+        value=1;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
         if(auto failure=gSkinApplication.setHudModes(id==ID_SKIN_JUDGEMENT_MODE?value:gSkinJudgementMode,id==ID_SKIN_COMBO_MODE?value:gSkinComboMode)){error=skinWide(failure->message);return false;}
 #endif
         (id==ID_SKIN_JUDGEMENT_MODE?gSkinJudgementMode:gSkinComboMode)=value;break;
-    case ID_JUDGEMENT_PROFILE: gJudgementProfile = static_cast<JudgementProfile>(value); break;
+    case ID_JUDGEMENT_PROFILE: gJudgementProfile = JudgementProfile::Normal; break;
     case ID_GROOVE_GAUGE: gGrooveGaugeMode = static_cast<GrooveGaugeMode>(value); break;
+    case ID_INTRO_ENABLE:gIntroEnabled=value;break;
+    case ID_INTRO_DURATION:gIntroDuration=value;break;
+    case ID_PREVIEW_START: gPreviewStartMode=std::clamp(value,0,2);break;
     case ID_TIMING_HINT: gTimingHintCondition=value;gTimingHint=0;break;
     case ID_ACCURACY_LIMIT: gAccuracyLimit=static_cast<AccuracyLimit>(value);clearAccuracyRestart();break;
     case ID_NOTE_HEIGHT: gNoteHeight = value; break;
@@ -99,6 +109,16 @@ bool applySettingValue(int id, int value, std::wstring& error) {
         break;
     }
     case ID_SOUND_BUFFER: gSoundBufferFrames = value; gAudio.setBufferFrames(value); startUiEffects(); break;
+    case ID_AUDIO_OUTPUT_MODE:
+        if (value < 0 || value > 1) { error = L"지원하지 않는 WASAPI 출력 모드입니다."; return false; }
+        gAudioOutputMode = value;
+        gAudio.setWasapiExclusiveEnabled(value == 1);
+        if (!gPlaying && !gLoading && !gShowingResult) {
+            gSongPreview.reset();
+            gBrowseAudioKey.clear();
+            gBrowseSelectedAt = std::chrono::steady_clock::now();
+        }
+        break;
     case ID_NOTE_SUBPIXEL: gNoteSubpixel = value != 0; break;
     case ID_NOTE_ANTIALIAS: gNoteAntialias = value != 0; break;
     case ID_LOW_LATENCY:
@@ -145,6 +165,7 @@ HWND settingControl(int id) {
     case ID_COMPOSITION: return gCompositionChoice; case ID_DIRECT_COMPOSITION: return gDirectCompositionChoice;
     case ID_JUDGEMENT_PROFILE: return gJudgementChoice; case ID_NOTE_HEIGHT: return gNoteHeightChoice;
     case ID_GROOVE_GAUGE: return gGrooveGaugeChoice; case ID_SOUND_BUFFER: return gSoundBufferChoice;
+    case ID_AUDIO_OUTPUT_MODE: return gAudioOutputModeChoice;
     case ID_TIMING_HINT: return gTimingHintChoice;
     case ID_ACCURACY_LIMIT: return gAccuracyLimitChoice;
     case ID_SKIN_JUDGEMENT_MODE:return gSkinJudgementChoice;

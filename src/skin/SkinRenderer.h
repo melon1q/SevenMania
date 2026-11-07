@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "SkinPackage.h"
 #include "SkinData.h"
 #include <d2d1.h>
@@ -28,6 +28,7 @@ public:
     // Uses contain scaling, preserves target transform, performs no I/O/decoding/allocation.
     bool draw(float width, float height, bool foregroundOnly=false, bool skipForeground=false) const noexcept;
     void emit(std::string_view event) noexcept;
+    void forceEntranceDuration(double seconds) noexcept;
     void setGearState(const SkinGearState& state) noexcept;
     bool animating() const noexcept;
     bool scrolling() const noexcept;

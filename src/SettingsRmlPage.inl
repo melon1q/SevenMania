@@ -24,19 +24,22 @@ void syncLibrarySettings() {
     gRmlSettingsPage.setText("library-status",settingsUtf8(gLibraryIndexStatus));
 }
 #include "SettingsRmlBindings.inl"
-constexpr std::array<const char*,6> rmlPageNames{"gameplay","graphics","sound","other","summary","skin"};
+constexpr std::array<const char*,7> rmlPageNames{"gameplay","graphics","sound","other","summary","skin","keys"};
 std::vector<std::pair<std::string,std::string>> rmlSettingsOptions(int command) {
     const int id = bms::SettingsController::canonicalId(command);
     std::vector<std::pair<std::string,std::string>> options;
     auto add = [&](int value, const std::wstring& label) { options.emplace_back(std::to_string(value), settingsUtf8(label)); };
-    if (id == ID_FPS) for (size_t i=0;i<frameRateValues.size();++i) add(frameRateValues[i],frameRateLabels[i]);
+    if (id == ID_FPS) {for (size_t i=0;i<frameRateValues.size();++i) add(frameRateValues[i],frameRateLabels[i]);if(gTargetFps>0&&std::find(frameRateValues.begin(),frameRateValues.end(),gTargetFps)==frameRateValues.end())add(gTargetFps,L"사용자 설정: "+std::to_wstring(gTargetFps)+L" FPS");}
     else if(id==ID_SKIN_JUDGEMENT_MODE||id==ID_SKIN_COMBO_MODE){add(-1,L"스킨 설정");add(0,L"폰트");add(1,L"이미지");}
     else if (id == ID_SPEED) for(int i=2;i<=40;++i) add(i,number(i/4.0,2)+L"x");
     else if (id == ID_BGA_DARKNESS) for(int i=0;i<=100;i+=10) add(i,std::to_wstring(i)+L"%");
     else if (id == ID_NOTE_HEIGHT) for(int i=4;i<=32;i+=2) add(i,std::to_wstring(i)+L" px");
     else if (id == ID_JUDGEMENT_PROFILE) { int i=0; for(auto s:{L"BASIC",L"EASY",L"NORMAL",L"HARD"}) add(i++,s); }
     else if (id == ID_GROOVE_GAUGE) { int i=0; for(auto s:{L"NORMAL",L"EASY",L"HARD"}) add(i++,s); }
-    else if(id==ID_TIMING_HINT){add(0,L"PGREAT 미만");add(1,L"GREAT 미만");add(2,L"GOOD 미만");}
+    else if(id==ID_INTRO_ENABLE){add(0,L"Off");add(1,L"On");}
+    else if(id==ID_INTRO_DURATION){for(int ms=800;ms<=1500;ms+=100)add(ms,std::to_wstring(ms)+L" ms");}
+    else if(id==ID_PREVIEW_START){add(0,L"즉시 자동 시작");add(1,L"프리뷰 자동 시작");add(2,L"수동 시작");}
+    else if(id==ID_TIMING_HINT){add(0,L"PGREAT 미만");add(1,L"GREAT 미만");add(2,L"GOOD 미만");add(3,L"없음");}
     else if (id == ID_ACCURACY_LIMIT) { for(int i=0;i<int(accuracyLimitLabels.size());++i)add(i,accuracyLimitLabels[i]); }
     else if (id == ID_BROWSE_BACKGROUND) { int i=0; for(auto s:{L"단색",L"BGA",L"타이틀 이미지",L"사용자 이미지"}) add(i++,s); }
     else if (id == ID_SCREEN_MODE) { add(0,L"창화면");add(1,L"보더리스 창화면");add(2,L"전체화면"); }
@@ -46,6 +49,7 @@ std::vector<std::pair<std::string,std::string>> rmlSettingsOptions(int command) 
     }
     else if (id == ID_GEAR_POSITION) { add(0,L"왼쪽");add(1,L"가운데");add(2,L"오른쪽"); }
     else if (id == ID_SOUND_BUFFER) for(int frames:SOUND_BUFFER_OPTIONS) add(frames,std::to_wstring(frames)+L" frames");
+    else if (id == ID_AUDIO_OUTPUT_MODE) { add(0,L"WASAPI 공유 모드");add(1,L"WASAPI 독점 모드"); }
     else if (id == ID_LOW_LATENCY) { add(0,L"끔");add(1,L"NVIDIA Reflex"); }
     else if (id>=ID_COLOR_BASE && id<ID_COLOR_BASE+8) for(int i=0;i<int(gPalette.size());++i) add(i,gPalette[i].name);
     return options;
@@ -74,7 +78,10 @@ void syncRmlSettingsState(const std::wstring& status = L"") {
     const bool reflexAvailable=latency::probeReflex().supported && gCompositionEnabled &&
         gCompositionPresenter.lowLatency().status(latency::Mode::Reflex)!=latency::Status::SessionDisabled;
     gRmlSettingsPage.setEnabled("low-latency",reflexAvailable || gReflexRequested);
-    gRmlSettingsPage.setText("key-summary",settingsUtf8(keySummary()));
+    gRmlSettingsPage.setOptions("key-mode",{{"0","5키"},{"1","7키"},{"2","9키"},{"3","10키"},{"4","14키"}});
+    gRmlSettingsPage.setValue("key-mode",std::to_string(gBindingMode));
+    std::wstring summary;for(int i=0;i<bms::KeyProfiles::counts[gBindingMode];++i)summary+=keyName(gKeyProfiles.keys[gBindingMode][i])+L"  ";
+    gRmlSettingsPage.setText("key-summary",settingsUtf8(summary));
     gRmlSettingsPage.setEnabled("bind-keys",!gCapturingBindings);
     gRmlSettingsPage.setEnabled("cancel-keys",gCapturingBindings);
     gRmlSettingsPage.setText("game-preview",gSettingsPreviewShowing?"플레이 화면 미리보기 끄기":"플레이 화면 미리보기 켜기");
@@ -107,6 +114,7 @@ bool showRmlSettingsPage() {
             std::error_code ec;
             if (!std::filesystem::is_regular_file(root / L"settings.rcss", ec)) throw std::runtime_error("Missing settings.rcss");
             const auto changed = [](const std::string& id, const std::string& value) {
+                if(id=="key-mode"){if(gCapturingBindings)cancelKeyBindingCapture();try{gBindingMode=std::clamp(std::stoi(value),0,4);}catch(...){}syncRmlSettingsState();return;}
                 if(id.starts_with("library-")) {
                     if(id=="library-sources"){try{gLibrarySourceSelection=std::stoull(value);}catch(...){}PostMessageW(gWindow,WM_LIBRARY_ACTION,7,0);return;}
                     if(gPlaying||gShowingResult||gLoading)return;
@@ -115,6 +123,7 @@ bool showRmlSettingsPage() {
                     for(const auto& [name,action]:{std::pair{"library-add",1},{"library-remove",2},{"library-rescan",3},{"library-refresh",4}})
                         if(id==name){PostMessageW(gWindow,WM_LIBRARY_ACTION,action,0);return;}
                 }
+                if((id=="graphics-fps"||id=="summary-fps")&&value=="-2")return;
                 for(const auto& binding:rmlSettingBindings()) if(id==binding.element) {
                     if(gCapturingBindings) cancelKeyBindingCapture();
                     try {
@@ -124,6 +133,7 @@ bool showRmlSettingsPage() {
                     } catch(const std::exception&) { syncRmlSettingsState(L"지원하지 않는 설정 값입니다."); }
                     return;
                 }
+                if(id=="graphics-fps"&&value=="-2"){return;}
                 if (id == "settings-close") { PostMessageW(gSettingsWindow, WM_CLOSE, 0, 0); return; }
                 if (id == "controller-settings") { PostMessageW(gSettingsWindow, WM_RML_SETTINGS_ACTION, ID_CONTROLLER_SETTINGS, 0); return; }
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -137,7 +147,7 @@ bool showRmlSettingsPage() {
                 if (id == "native-fallback") { PostMessageW(gSettingsWindow, WM_RML_SETTINGS_FALLBACK, 1, 0); return; }
                 for(size_t i=0;i<rmlPageNames.size();++i)
                     if(id==std::string("native-")+rmlPageNames[i]) { PostMessageW(gSettingsWindow,WM_RML_SETTINGS_NAVIGATE,i,1); return; }
-                for (const auto& [name, category] : {std::pair{"nav-summary",4}, {"nav-gameplay",0}, {"nav-graphics",1}, {"nav-sound",2}, {"nav-other",3}, {"nav-skin",5}})
+                for (const auto& [name, category] : {std::pair{"nav-summary",4}, {"nav-gameplay",0}, {"nav-graphics",1}, {"nav-sound",2}, {"nav-other",3}, {"nav-skin",5}, {"nav-keys",6}})
                     if (id == name) { PostMessageW(gSettingsWindow, WM_RML_SETTINGS_NAVIGATE, category, 0); return; }
             };
             const auto failed = [] { if (gSettingsWindow) PostMessageW(gSettingsWindow, WM_RML_SETTINGS_FALLBACK, 0, 0); };

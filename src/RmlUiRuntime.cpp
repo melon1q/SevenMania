@@ -1,4 +1,4 @@
-﻿#include "RmlUiRuntime.h"
+#include "RmlUiRuntime.h"
 #ifdef BMS_ENABLE_RMLUI
 #include <objidl.h>
 #include <gdiplus.h>

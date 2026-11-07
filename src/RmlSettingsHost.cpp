@@ -1,4 +1,4 @@
-﻿#include "RmlSettingsHost.h"
+#include "RmlSettingsHost.h"
 #ifdef BMS_ENABLE_RMLUI_SETTINGS
 #include "RmlUiRuntime.h"
 #include <RmlUi/Core/ElementDocument.h>

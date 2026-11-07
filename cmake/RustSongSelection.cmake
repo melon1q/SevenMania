@@ -1,4 +1,4 @@
-﻿option(BMS_ENABLE_RUST_SONG_SELECTION "Use the Rust song-selection model as the default implementation" ON)
+option(BMS_ENABLE_RUST_SONG_SELECTION "Use the Rust song-selection model as the default implementation" ON)
 
 set(BMS_SONG_SELECTION_SOURCE "${PROJECT_SOURCE_DIR}/src/SongSelection.cpp")
 set(BMS_SONG_SELECTION_INCLUDE_DIRS "")

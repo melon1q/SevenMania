@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "EditorDocument.h"
 namespace sevenmania::editor {
 inline const wchar_t* gearLayoutName(int position){return position==0?L"left":position==2?L"right":L"center";}

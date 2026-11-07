@@ -1,4 +1,4 @@
-﻿#include "ResultFade.h"
+#include "ResultFade.h"
 #include <cmath>
 #include <stdexcept>
 #include <iostream>

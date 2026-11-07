@@ -1,4 +1,4 @@
-﻿#include "FramePacer.h"
+#include "FramePacer.h"
 #include "AudioPositionClock.h"
 #include <mmsystem.h>
 #include <iostream>

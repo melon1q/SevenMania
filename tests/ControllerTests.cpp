@@ -1,4 +1,4 @@
-﻿#include "../src/ControllerDialog.h"
+#include "../src/ControllerDialog.h"
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>

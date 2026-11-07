@@ -1,4 +1,4 @@
-﻿#include "BmsSongSelectionAbi.h"
+#include "BmsSongSelectionAbi.h"
 
 #include <array>
 #include <cstdint>

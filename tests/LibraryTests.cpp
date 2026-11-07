@@ -1,4 +1,4 @@
-﻿#include "SongLibrary.h"
+#include "SongLibrary.h"
 #include "SongMetadataCache.h"
 #include "SongIndexWorker.h"
 #include "SelectedBgaMetadata.h"
@@ -23,7 +23,54 @@ std::string read(const fs::path& file) {
     std::ifstream input(file, std::ios::binary);
     return {(std::istreambuf_iterator<char>(input)), {}};
 }
+void phaseNavigationTests(){
+    const auto root=fs::absolute(L"Validation/LogicalTree"),home=root.parent_path()/L"ManagedHome";
+    std::vector<bms::Chart> charts;
+    for(auto name:{L"FREEDOM DiVE/Extra/More/normal.bms",L"Dreadnought/normal.bms",L"BOF/A/a.bms",L"BOF/B/b.bms",L"Mixed/own.bms",L"Mixed/Extra/another.bms",L"root.bms",L"Dreadnought/hyper.bms"}){
+        bms::Chart c;c.path=root/name;c.title=c.path.parent_path().filename().wstring();c.catalogGroupKey=L"shared";charts.push_back(c);
+    }
+    bms::ui::SongFolderNavigation nav;nav.configure({home,root},false);nav.restore(root,charts);nav.build(charts);
+    require(nav.accepts(charts[0].path)&&nav.accepts(charts[1].path),"T02/T03 chain and ordinary song must share library level");
+    require(nav.accepts(charts[6].path)&&nav.accepts(charts[7].path),"T06/T07 direct root and variants inaccessible");
+    require(std::find(nav.folders.begin(),nav.folders.end(),root/L"BOF")!=nav.folders.end(),"T04 package collapsed");
+    nav.preservedFolders.insert(root/L"FREEDOM DiVE");nav.build(charts);
+    require(!nav.accepts(charts[0].path),"preserved folder compressed");
+    nav.preservedFolders.clear();nav.build(charts);
+    std::map<fs::path,int> reachable;std::vector<bms::ui::SongFolderNavigation> queue{nav};
+    while(!queue.empty()){auto node=std::move(queue.back());queue.pop_back();node.build(charts);for(const auto& c:charts)if(node.accepts(c.path))++reachable[c.path];
+        for(size_t i=0;i<node.folders.size();++i){auto next=node;next.enter(-3-int(i));queue.push_back(std::move(next));}}
+    require(reachable.size()==charts.size(),"T01-T08 logical tree lost charts");for(auto [path,count]:reachable)require(count==1,"logical tree duplicated chart");
+    const auto start=std::chrono::steady_clock::now();for(int i=0;i<10000;++i)nav.build(charts);
+    std::cout<<"logical_navigation_10000_queries_ms="<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()<<" charts="<<charts.size()<<"\n";
+    // A same-size publication must invalidate the cached topology.
+    charts[0].path=root/L"NewPackage/NewSong/chart.bms";nav.invalidate();nav.build(charts);
+    require(nav.displayParent(charts[0].path)!=fs::path{},"same-size refresh lost chart");
+}
+void wrapperTests(){
+    const auto root=fs::absolute(L"Validation/Wrappers");
+    for(const auto& paths:std::vector<std::vector<std::wstring>>{
+        {L"Wrapper/Inner/a.bms",L"Wrapper/Inner/b.bms"},
+        {L"Wrapper/Inner/normal.bms",L"Wrapper/Inner/hyper.bms"},
+        {L"Package/Wrapper/Inner/a.bms",L"Package/Wrapper/Inner/b.bms",L"Package/Other/c.bms"},
+        {L"Wrapper/One/Two/Inner/a.bms",L"Wrapper/One/Two/Inner/b.bms"},
+        {L"Wrapper/Inner/a.bms",L"Wrapper/Inner/classic/b.bms"}}){
+        std::vector<bms::Chart> charts;for(const auto& p:paths){bms::Chart c;c.path=root/p;c.title=paths[0].find(L"normal.bms")!=std::wstring::npos?L"Same Song":c.path.stem().wstring();c.catalogGroupKey=L"shared";charts.push_back(c);}
+        bms::ui::SongFolderNavigation nav;nav.configure({root},false);nav.build(charts);
+        size_t entries=0;while(!nav.accepts(charts[0].path)){require(nav.folders.size()==1,"wrapper introduced extra UI folder");nav.enter(-3);nav.build(charts);require(++entries<=2,"wrapper not compressed");}
+        require(entries==1,"unexpected actual folder entry count");
+        require(nav.accepts(charts[1].path),"wrapper discarded second independent group");
+        require(nav.folders.empty(),"redundant nested UI folder remains");
+    }
+}
 int wmain(int argc, wchar_t** argv) {
+    if(argc==3&&std::wstring(argv[1])==L"--navigation-trace"){
+        const auto library=fs::absolute(argv[2]);std::vector<bms::Chart> charts;
+        for(const auto& e:fs::recursive_directory_iterator(library/L"yamajet_is_sugoi"))if(e.is_regular_file()&&(e.path().extension()==L".bms"||e.path().extension()==L".bme"||e.path().extension()==L".bml"))charts.push_back(bms::BmsParser().parse(e.path()).chart);
+        bms::ui::SongFolderNavigation nav;nav.configure({library.parent_path()/L"NavigationHome",library},false);nav.restore(library,charts);nav.build(charts);
+        std::wostringstream out;nav.trace(out,charts);for(size_t i=0;i<nav.folders.size();++i)if(nav.folders[i].filename()==L"yamajet_is_sugoi"){nav.enter(-3-int(i));nav.build(charts);out<<L"AFTER ENTER\n";nav.trace(out,charts);break;}
+        const auto w=out.str();int n=WideCharToMultiByte(CP_UTF8,0,w.data(),int(w.size()),nullptr,0,nullptr,nullptr);std::string u(n,0);WideCharToMultiByte(CP_UTF8,0,w.data(),int(w.size()),u.data(),n,nullptr,nullptr);std::cout<<u;return 0;
+    }
+    wrapperTests();phaseNavigationTests();
     if(argc==3&&std::wstring(argv[1])==L"--collect-variants"){
         auto charts=bms::SongMetadataCache(fs::absolute(argv[2]),0).snapshot();bms::ui::SongSelectionModel model;model.setCollectVariants(true);model.rebuild(charts);
         std::set<size_t> seen;std::map<fs::path,size_t> expected,actual;size_t oekakiGroups=0;
@@ -273,10 +320,10 @@ int wmain(int argc, wchar_t** argv) {
         require(navigation.back()&&navigation.cursor()==2,"parent/cursor restoration failed");
         navigation.enter(-2);require(navigation.accepts(cachedRoot/L"root.bms")&&navigation.accepts(cachedRoot/L"A"/L"B"/L"nested.bms"),"ALL SONGS omitted a chart");
         require(navigation.back()&&navigation.isRoot()&&!navigation.back(),"virtual folder back handling incorrect");
-        navigation.root(cachedRoot);navigation.knownFolders=update->folders;navigation.build(initial);
+        navigation.configure({cachedRoot},true);navigation.knownFolders=update->folders;navigation.build(initial);
         require(std::find(navigation.folders.begin(),navigation.folders.end(),cachedRoot/L"empty-빈폴더")!=navigation.folders.end(),"empty directory was not navigable");
         navigation.restore(cachedRoot/L"empty-빈폴더",initial);navigation.save(cachedRoot/L"A"/L"B"/L"nested.bms");
-        bms::ui::SongFolderNavigation reopened;reopened.root(cachedRoot);reopened.knownFolders=update->folders;
+        bms::ui::SongFolderNavigation reopened;reopened.configure({cachedRoot},true);reopened.knownFolders=update->folders;
         require(reopened.restoreSaved(initial)==cachedRoot/L"A"/L"B"/L"nested.bms"&&reopened.location()==cachedRoot/L"empty-빈폴더","navigation state did not survive reload");
         reopened.restore(root/L"missing",initial);require(reopened.location()==cachedRoot/L"empty-빈폴더","unknown navigation path was accepted");
         std::vector<bms::Chart> layout;

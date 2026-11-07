@@ -1,4 +1,4 @@
-﻿#include <windows.h>
+#include <windows.h>
 #include "CompositionPresenter.h"
 #include <iostream>
 #include <stdexcept>

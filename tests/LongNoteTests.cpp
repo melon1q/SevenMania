@@ -1,4 +1,4 @@
-﻿#include "LongNoteHold.h"
+#include "LongNoteHold.h"
 #include <array>
 #include <iostream>
 #include <stdexcept>

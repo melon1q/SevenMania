@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "LaneLayout.h"
 #include "TurntableImage.h"
 #include <algorithm>

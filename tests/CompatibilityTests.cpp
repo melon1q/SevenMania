@@ -1,4 +1,4 @@
-﻿#include "BmsParser.h"
+#include "BmsParser.h"
 #include "BmsControlFlow.h"
 #include "BmsText.h"
 #include "ChartRules.h"

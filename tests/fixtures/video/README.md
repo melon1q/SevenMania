@@ -1,4 +1,4 @@
-﻿`colors.m1v` is an original 16x16 MPEG-1 elementary stream: red, green, blue,
+`colors.m1v` is an original 16x16 MPEG-1 elementary stream: red, green, blue,
 approximately one second each, 30 fps. It contains no audio or song assets.
 
 Generated from `fixtures::writeVideo`'s `timing.avi` using:

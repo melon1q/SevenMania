@@ -1,4 +1,4 @@
-﻿#include "LowLatency.h"
+#include "LowLatency.h"
 #include <iostream>
 #include <stdexcept>
 #include <vector>

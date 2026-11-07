@@ -1,4 +1,4 @@
-﻿#ifndef BMS_SONG_SELECTION_ABI_H
+#ifndef BMS_SONG_SELECTION_ABI_H
 #define BMS_SONG_SELECTION_ABI_H
 
 #include <stdint.h>

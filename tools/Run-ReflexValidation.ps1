@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Mandatory)][string]$Profiler,
     [Parameter(Mandatory)][string]$Chart,
     [Parameter(Mandatory)][string]$Settings,

@@ -1,4 +1,4 @@
-﻿#include "SharedStartupSettings.h"
+#include "SharedStartupSettings.h"
 #include "SongLibrarySources.h"
 #include <iostream>
 #include <thread>

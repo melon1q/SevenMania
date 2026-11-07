@@ -1,4 +1,4 @@
-﻿#include "ResultScore.h"
+#include "ResultScore.h"
 #include <cstdlib>
 #include <iostream>
 #include <limits>

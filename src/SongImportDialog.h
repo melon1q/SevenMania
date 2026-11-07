@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <windows.h>
 #include <shobjidl.h>
 #include <wrl/client.h>

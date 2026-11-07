@@ -1,4 +1,4 @@
-﻿// Replays real application selection/loading/paint/exit paths; no production hooks.
+// Replays real application selection/loading/paint/exit paths; no production hooks.
 #include "../src/Main.cpp"
 #include <tlhelp32.h>
 #include <psapi.h>

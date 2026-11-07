@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "HudFrameProbe.h"
 // Prepared once per render target. Runtime state is integers and a fixed digit buffer.
 #include <wrl/client.h>

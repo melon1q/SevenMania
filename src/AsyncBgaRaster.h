@@ -52,7 +52,7 @@ public:
         jobs_.clear();ready_.clear();pending_.clear();failed_.clear();readyBytes_=0;chart_.reset();for(auto& events:events_)events.clear();
         BgaRaster::reset();
     }
-    void start(const bms::Chart& chart,int width,int height,double time) {
+    void begin(const bms::Chart& chart,int width,int height,double time) {
         reset();canvas(width,height);chart_=bgaChartSnapshot(chart);stop_=false;
         for(const auto& event:chart.bga)events_[static_cast<int>(event.layer)].push_back(event);
         worker_=std::thread([this]{
@@ -80,6 +80,10 @@ public:
             if(SUCCEEDED(com))CoUninitialize();
         });
         update(time); // Prime the current and near-future assets before audio starts.
+    }
+    bool initialPrepared() {pump();std::lock_guard lock(mutex_);return pending_.empty();}
+    void start(const bms::Chart& chart,int width,int height,double time) {
+        begin(chart,width,height,time);
         for(;;){
             pump();std::unique_lock lock(mutex_);
             if(pending_.empty())break;

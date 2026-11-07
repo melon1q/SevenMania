@@ -1,4 +1,4 @@
-﻿#include "OfficialJudgement.h"
+#include "OfficialJudgement.h"
 #include <iostream>
 #include <limits>
 #include <stdexcept>

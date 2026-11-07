@@ -1,4 +1,4 @@
-﻿#include "../src/Launcher.cpp"
+#include "../src/Launcher.cpp"
 #include <iostream>
 #include <objidl.h>
 #include <gdiplus.h>

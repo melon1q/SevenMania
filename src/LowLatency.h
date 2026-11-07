@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "HudFrameProbe.h"
 #include <array>
 #include <cstdint>

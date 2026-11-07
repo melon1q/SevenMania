@@ -1,4 +1,4 @@
-﻿// Frozen pre-experiment renderer for pixel-for-pixel regression comparisons.
+// Frozen pre-experiment renderer for pixel-for-pixel regression comparisons.
 #pragma once
 #include "../../src/LaneLayout.h"
 #include "../../src/TurntableImage.h"

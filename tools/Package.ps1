@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$DestinationFolder = 'dist-trial',
     [string]$BuildFolder = 'build-rmlui-song-list/Release'
 )

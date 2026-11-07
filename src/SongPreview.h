@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "AudioEngine.h"
 #include <condition_variable>
 #include <optional>
@@ -109,6 +109,7 @@ class SongPreview {
         CoUninitialize();
     }
 public:
+    static constexpr uint32_t fadeDurationMs = 150;
     ~SongPreview() { shutdown(); }
     bool playing() const { return active_ && active_->audio->isRunning(); }
     std::wstring lastError() { std::lock_guard lock(mutex_); return error_; }
@@ -141,7 +142,7 @@ public:
         if (!worker_.joinable()) worker_ = std::thread(&SongPreview::workerLoop, this);
         changed_.notify_one();
     }
-    void tick(int master, int volume, int buffer) {
+    void tick(int master, int volume, int buffer, uint32_t fadeInMs = 600) {
         std::optional<Prepared> ready;
         { std::lock_guard lock(mutex_); if (!active_) {
             auto found = cache_.find(desiredKey_);
@@ -150,6 +151,7 @@ public:
         if (ready) {
             active_ = std::move(ready);
             active_->audio->setVolumes(master, volume, volume, 0);
+            active_->audio->setMusicFadeIn(fadeInMs);
             active_->audio->setBufferFrames(buffer);
             std::wstring error;
             if (active_->length <= 0 || !active_->audio->startAt(active_->start, error)) {

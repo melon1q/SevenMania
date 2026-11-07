@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "LaneLayout.h"
 #include <algorithm>
 #include <array>

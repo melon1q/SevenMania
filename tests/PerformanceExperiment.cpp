@@ -1,4 +1,4 @@
-﻿#include "SongLibrary.h"
+#include "SongLibrary.h"
 #include "ExperimentProfile.h"
 #include <algorithm>
 #include <chrono>

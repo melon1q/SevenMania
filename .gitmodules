@@ -1,4 +1,4 @@
-﻿[submodule "third_party/RmlUi"]
+[submodule "third_party/RmlUi"]
 	path = third_party/RmlUi
 	url = https://github.com/mikke89/RmlUi.git
 [submodule "third_party/freetype"]

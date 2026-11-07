@@ -1,4 +1,4 @@
-﻿# Signalsmith audio libraries
+# Signalsmith audio libraries
 
 Vendored from the official repositories; no changes to upstream headers.
 

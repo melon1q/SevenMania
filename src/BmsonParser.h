@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "BmsParser.h"
 #include "ChartRules.h"
 #include "JsonValue.h"

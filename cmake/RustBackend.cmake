@@ -1,4 +1,4 @@
-﻿option(BMS_USE_RUST_BACKEND "Enable optional Rust line, JSON, title, and chart discovery helpers (Release only)" OFF)
+option(BMS_USE_RUST_BACKEND "Enable optional Rust line, JSON, title, and chart discovery helpers (Release only)" OFF)
 if(BMS_USE_RUST_BACKEND)
     if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR NOT MSVC)
         message(FATAL_ERROR "Rust experiment currently supports Windows x64 MSVC only")

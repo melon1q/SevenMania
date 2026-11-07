@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "SkinInternal.h"
 #include <cmath>
 #include <algorithm>

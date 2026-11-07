@@ -1,4 +1,4 @@
-﻿#include "VideoFrameScaler.h"
+#include "VideoFrameScaler.h"
 #include <cstdlib>
 #include <iostream>
 #include <new>

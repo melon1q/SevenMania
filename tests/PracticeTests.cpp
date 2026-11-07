@@ -1,4 +1,4 @@
-﻿#include "PracticeMode.h"
+#include "PracticeMode.h"
 #include "ResultScore.h"
 #include <iostream>
 #include <stdexcept>

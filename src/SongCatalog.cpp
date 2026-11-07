@@ -1,4 +1,4 @@
-﻿#include "SongCatalog.h"
+#include "SongCatalog.h"
 
 #include <charconv>
 #include <cmath>

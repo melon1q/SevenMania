@@ -1,4 +1,4 @@
-﻿#include "../src/Main.cpp"
+#include "../src/Main.cpp"
 #include <shlobj.h>
 #include <fstream>
 #include <iostream>

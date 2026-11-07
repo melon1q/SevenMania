@@ -1,4 +1,4 @@
-﻿#include "CompositionPresenter.h"
+#include "CompositionPresenter.h"
 #include "FramePacer.h"
 #include <mmsystem.h>
 #include <iostream>

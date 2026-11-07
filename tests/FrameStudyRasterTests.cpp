@@ -1,4 +1,4 @@
-﻿#include "../src/TextRasterCache.h"
+#include "../src/TextRasterCache.h"
 #include "../src/KeyDeck.h"
 #include "../src/HudTextStyle.h"
 #include "reference/FrameStudyTextRaster.h"
