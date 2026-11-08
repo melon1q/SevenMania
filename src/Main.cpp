@@ -64,6 +64,8 @@ bms::ui::SongFolderNavigation gSongFolders;
 #include "BgaSwitchState.h"
 #include "BrowseBackdrop.h"
 #include "SongPreview.h"
+#include "TimingOffsets.h"
+#include "TimingCalibration.h"
 #include "UserBackground.h"
 #include "PlayFeedback.h"
 #include "TextPopAnimation.h"
@@ -72,12 +74,14 @@ bms::ui::SongFolderNavigation gSongFolders;
 #include "TextMask.h"
 #include "GrooveGauge.h"
 #include "ResultScore.h"
+#include "PlayRecordStore.h"
 #include "PracticeMode.h"
 #include "PracticePreview.h"
 #include "KeyBeams.h"
 #include "KeyDeck.h"
 #include "TurntableImage.h"
 #include "CompositionPresenter.h"
+#include "PresentationDiagnostics.h"
 #include "HybridFrame.h"
 #include "SystemResources.h"
 #include <thread>
@@ -126,6 +130,25 @@ bms::ui::SongFolderNavigation gSongFolders;
 #pragma comment(lib, "comctl32.lib")
 
 namespace {
+void beginPresentDiagnostics();void finishPresentDiagnostics();void prewarmPlayText();bool gPrewarmTextPending=false;
+void applyPresentTuning();void updateVblankAlignment();
+// Pacing toggles (env, read at startup):
+//   SEVENMANIA_CAP_VBLANK_PACING=0/1    FPS caps at a refresh multiple (default 1)
+//   SEVENMANIA_VSYNC_VBLANK_PACING=0/1  VSync mode (default 0)
+//   SEVENMANIA_VSYNC_READY_WAKE=0/1     VSync+aligned: on a busy queue, fall back to ready-signal
+//                                       painting for a while instead of waiting a refresh (default 1)
+//   SEVENMANIA_ALIGNED_STALL_CLASSIFIER=0/1  diagnostics: aligned loop-stall threshold (default 1)
+//   SEVENMANIA_VBLANK_PACING=1/0        legacy: both pacing toggles on/off
+bool gCapVblankPacing = true, gVsyncVblankPacing = false, gVsyncReadyWake = true, gAlignedStallClassifier = true;
+std::chrono::nanoseconds gVblankLead{std::chrono::microseconds(2000)};
+bool vblankPacingForMode();
+// No-input benchmark (SEVENMANIA_NO_INPUT_BENCHMARK=1): lane input ignored, every note MISS,
+// keysounds triggered at note time, gauge never ends the play, nothing is saved.
+bool gNoInputBenchmark = false;size_t gBenchmarkSoundIndex = 0;
+// Benchmark repeat: a chart the user starts is played SEVENMANIA_BENCH_REPEAT times in a row
+// (default 2, 0 = off), then the game closes itself (SEVENMANIA_BENCH_EXIT, default 1).
+int gBenchmarkRepeat = 2, gBenchmarkPlays = 0;bool gBenchmarkExit = true, gBenchmarkAutoStarting = false;
+std::filesystem::path gBenchmarkChart;
 
 constexpr int ID_OPEN = 1001;
 constexpr wchar_t BROWSE_SHORTCUT_HINT[] = L"[Enter] 플레이   [Shift + Enter] 연습모드   [Space] 설정   [F2] 곡 폴더 열기   [F5] 다시 검색";
@@ -139,6 +162,7 @@ constexpr int ID_INFO = 1008;
 constexpr int ID_HELP = 1009;
 constexpr int ID_BIND = 1010;
 constexpr int ID_SETTINGS = 1011;
+constexpr int ID_SUMMARY_SETTINGS = 1038;
 constexpr int ID_FPS = 1012;
 constexpr int ID_SPEED = 1013;
 constexpr int ID_CLOSE_SETTINGS = 1014;
@@ -159,6 +183,11 @@ constexpr int ID_HIDDEN_SONGS = 1028;
 constexpr int ID_GROOVE_GAUGE = 1029;
 constexpr int ID_SOUND_BUFFER = 1034;
 constexpr int ID_AUDIO_OUTPUT_MODE = 1053;
+constexpr int ID_SELECT_BGM_VOLUME = 1054;
+constexpr int ID_AUDIO_LATENCY = 1055;
+constexpr int ID_NOTE_DISPLAY_OFFSET = 1056;
+constexpr int ID_JUDGE_TIMING_OFFSET = 1057;
+constexpr int ID_AUTO_JUDGE_MODE = 1058;
 constexpr int ID_BROWSE_BACKGROUND = 1035;
 constexpr int ID_CUSTOM_BACKGROUND = 1036;
 constexpr int ID_BACKGROUND_BLUR = 1037;
@@ -179,6 +208,7 @@ constexpr int ID_PRACTICE_PLAY = 1048;
 constexpr int ID_CATEGORY_BASE = 1060;
 constexpr int ID_VOLUME_BASE = 1030;
 constexpr UINT WM_PLAY_CHART_READY=WM_APP+48;
+constexpr UINT WM_AUTO_JUDGE_SUGGEST=WM_APP+110;
 constexpr UINT WM_LOAD_FINISHED = WM_APP + 20;
 constexpr UINT WM_LOAD_PROGRESS = WM_APP + 21;
 constexpr UINT WM_APPLY_SETTINGS = WM_APP + 42;
@@ -255,7 +285,7 @@ HWND gBrowseBackgroundChoice{}, gCustomBackgroundLabel{}, gBackgroundBlurSlider{
 HWND gBackgroundOpacitySlider{}, gBackgroundOpacityValue{}, gSongPreviewChoice{}, gPreviewVolumeSlider{}, gPreviewVolumeValue{};
 HWND gCpuLimitSlider{}, gCpuLimitValue{}, gMemoryLimitSlider{}, gMemoryLimitValue{}, gGpuLimitSlider{}, gGpuLimitValue{}, gResourceUsageChoice{}, gCpuPerformanceChoice{};
 HWND gComboTextYSlider{}, gComboTextYValue{}, gJudgementTextYSlider{}, gJudgementTextYValue{};
-int gBrowseBackgroundMode{2}, gBackgroundBlur = 20, gBackgroundOpacity = 10, gPreviewVolume = 50;
+int gBrowseBackgroundMode{2}, gBackgroundBlur = 20, gBackgroundOpacity = 10, gPreviewVolume = 50, gSelectBgmVolume = 100;
 int gCpuLimitPercent = 100, gMemoryLimitPercent = 100, gGpuLimitPercent = 100;
 bool gSongPreviewEnabled{true};
 bool gShowResourceUsage{};
@@ -414,6 +444,15 @@ HBITMAP gBgaBackplateBitmap{};
 HGDIOBJ gBgaBackplateOriginalBitmap{};
 void* gBgaBackplatePixels{};
 std::shared_ptr<const uint32_t> gDirectBgaFrame, gDirectBgaOverlay;
+std::shared_ptr<const BgaSourceImage> gDirectBgaSource; // GPU-scaled still (SEVENMANIA_BGA_GPU_SCALE)
+nv12::View gDirectBgaVideo; // NV12 video backdrop (SEVENMANIA_VIDEO_NV12)
+template<class VideoFrame> nv12::View nv12ViewOf(const std::shared_ptr<VideoFrame>& frame) {
+    nv12::View view;
+    if (!frame || frame->nv12.size() != nv12::bytes(frame->sourceWidth, frame->sourceHeight)) return view;
+    view.width = frame->sourceWidth; view.height = frame->sourceHeight; view.matrix = frame->nv12Matrix;
+    view.fullRange = frame->nv12FullRange; view.generation = frame->generation; view.data = frame->nv12.data(); view.owner = frame;
+    return view;
+}
 int gBgaBackplateWidth{}, gBgaBackplateHeight{};
 bool gBgaBackplateDirty{ true };
 bool gBgaBackplateMissState{};
@@ -443,21 +482,16 @@ bms::ui::RmlSettingsHost gRmlSettingsPage;
 bool gRmlSettingsPageEnabled = bms::ui::RmlSettingsHost::available();
 bool gRmlSettingsPageActive{}, gRmlSettingsPageFailed{}, gNativeSettingsFallback{};
 std::filesystem::path gRmlSettingsAssetRoot;
-struct RecordJudgement {std::wstring spec=L"LEGACY";int rank=-1;};
-struct PlayRecord {
-    bool played{};
-    bool cleared{};
-    unsigned maxCombo{};
-    int bestAccuracyScore{};
-    RecordJudgement scoreJudgement,comboJudgement,clearJudgement;
-};
-std::unordered_map<std::wstring, PlayRecord> gPlayRecords;
+PlayRecordStore gPlayRecordStore;
+// Aliases kept so host code and the tests that include Main.cpp see the same names.
+std::unordered_map<std::wstring, PlayRecord>& gPlayRecords = gPlayRecordStore.records;
+std::filesystem::path& gPlayRecordsFile = gPlayRecordStore.file;
 std::vector<std::wstring> gChartRecordKeys;
-std::filesystem::path gPlayRecordsFile;
 std::filesystem::path gCurrentFolder;
 std::filesystem::path gSettingsFile;
 constexpr UINT_PTR ID_SONG_LIST_ANIMATION = 0xB501;
 constexpr UINT_PTR ID_PAUSE_PRESENT_RETRY = 0xB502;
+constexpr UINT_PTR ID_BENCHMARK_NEXT = 0xB50F;
 constexpr auto songListRepeatInitialDelay = std::chrono::milliseconds(220);
 constexpr auto songListRepeatInterval = std::chrono::milliseconds(50);
 constexpr double songListSpringOmega = 75.0;
@@ -573,7 +607,7 @@ bool gAccuracyRestartPending=false;
 std::uint64_t gPlaybackGeneration=0;
 void clearAccuracyRestart(){gAccuracyRestartPending=false;++gPlaybackGeneration;}
 void requestAccuracyRestart(TimingJudgement grade){
-    if(!gPlaying||gPaused||gLoading||gAccuracyRestartPending||!belowAccuracyLimit(gAccuracyLimit,grade))return;
+    if(!gPlaying||gPaused||gLoading||gAccuracyRestartPending||gNoInputBenchmark||!belowAccuracyLimit(gAccuracyLimit,grade))return;
     gAccuracyRestartPending=true;
     if(!PostMessageW(gWindow,WM_ACCURACY_RESTART,static_cast<WPARAM>(gPlaybackGeneration),0))gAccuracyRestartPending=false;
 }
@@ -677,6 +711,15 @@ std::wstring practiceTime(double seconds) {
 }
 
 double playbackTimingScale() {return (gPractice.enabled?gPractice.rate():1.0)*gChartOptions.rate;}
+// gPlayhead is the "heard" time: the device clock minus the user's audio-latency correction.
+bms::TimingOffsets gTimingOffsets;
+double heardPlayhead() {return bms::heardSeconds(gAudio.positionSeconds(),gTimingOffsets,playbackTimingScale());}
+// Judgement time = heard time minus the judge offset (manual or auto). Notes are drawn from gPlayhead, never from this.
+double judgePlayhead() {return bms::judgeSeconds(gPlayhead,gTimingOffsets,playbackTimingScale());}
+bms::AutoJudgeAdjuster gAutoJudge;
+int gAutoJudgeMode{bms::AutoJudgeAdjuster::Suggest};
+bool gAutoJudgeUsedThisPlay{};
+int gAutoJudgeSuggestion{};
 
 void restorePracticeNotes() {
     if (gPracticeNotesChartIndex >= 0 && gPracticeNotesChartIndex < static_cast<int>(gCharts.size())) {
@@ -820,6 +863,12 @@ void loadDisplaySettings() {
     for (size_t i = 0; i < volumeKeys.size(); ++i)
         gVolumes[i] = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Sound", volumeKeys[i], 100, gSettingsFile.c_str())), 0, 100);
     gAudio.setVolumes(gVolumes[0], gVolumes[1], gVolumes[2], gVolumes[3]);
+    // Older configs shared MusicVolume with the select-screen BGM; keep their loudness until the new key is saved.
+    gSelectBgmVolume = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Sound", L"SelectBgmVolume", gVolumes[1], gSettingsFile.c_str())), 0, 100);
+    gTimingOffsets.audioMs = bms::clampOffsetMs(static_cast<int>(GetPrivateProfileIntW(L"Sound", L"AudioLatencyMs", 0, gSettingsFile.c_str())));
+    gTimingOffsets.displayMs = bms::clampOffsetMs(static_cast<int>(GetPrivateProfileIntW(L"Display", L"NoteDisplayOffsetMs", 0, gSettingsFile.c_str())));
+    gTimingOffsets.judgeMs = bms::clampOffsetMs(static_cast<int>(GetPrivateProfileIntW(L"Gameplay", L"JudgeOffsetMs", 0, gSettingsFile.c_str())), bms::TimingOffsets::judgeLimitMs);
+    gAutoJudgeMode = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gameplay", L"AutoJudgeMode", bms::AutoJudgeAdjuster::Suggest, gSettingsFile.c_str())), 0, 2);
     const int fps = startup.fps;
     if (fps==vsyncFps||(fps>=0&&fps<=1500)) gTargetFps = fps;
     gJudgeLineOffset = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Display", L"JudgeLineOffset", 0, gSettingsFile.c_str())), JUDGE_OFFSET_MIN, JUDGE_OFFSET_MAX);
@@ -886,6 +935,11 @@ void saveDisplaySettings() {
     constexpr std::array<const wchar_t*, 4> volumeKeys{L"MasterVolume", L"MusicVolume", L"KeyVolume", L"SfxVolume"};
     for (size_t i = 0; i < volumeKeys.size(); ++i)
         WritePrivateProfileStringW(L"Sound", volumeKeys[i], std::to_wstring(gVolumes[i]).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Sound", L"SelectBgmVolume", std::to_wstring(gSelectBgmVolume).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Sound", L"AudioLatencyMs", std::to_wstring(gTimingOffsets.audioMs).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Display", L"NoteDisplayOffsetMs", std::to_wstring(gTimingOffsets.displayMs).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Gameplay", L"JudgeOffsetMs", std::to_wstring(gTimingOffsets.judgeMs).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Gameplay", L"AutoJudgeMode", std::to_wstring(gAutoJudgeMode).c_str(), gSettingsFile.c_str());
     const std::wstring fps = std::to_wstring(gTargetFps);
     const std::wstring judgeOffset = std::to_wstring(gJudgeLineOffset);
     const std::wstring speed = std::to_wstring(static_cast<int>(std::lround(gNoteSpeed * 4)));
@@ -1017,7 +1071,8 @@ void setJudgement(const std::wstring& text, COLORREF color) {
     const bool poor = text.find(L"POOR") != std::wstring::npos || text.find(L"MISS") != std::wstring::npos;
     const bool bad = text.find(L"BAD") != std::wstring::npos;
     if (poor || bad) gFeedback.miss();
-    if (poor) {gMissBgaUntil=gPlayhead+2.5;gPoorBgaStart=gPlayhead;}
+    // No-input benchmark: every note misses; keep the normal BGA layers (closer to real play).
+    if (poor && !gNoInputBenchmark) {gMissBgaUntil=gPlayhead+2.5;gPoorBgaStart=gPlayhead;}
 }
 
 void finishPlayback();
@@ -1050,7 +1105,7 @@ void showTimingJudgement(TimingJudgement judgement, int scoreUnits = 2) {
     }
     gSkinJudgementGrade=static_cast<int>(judgement);
     requestAccuracyRestart(judgement);
-    if (gPlaying && !gAccuracyRestartPending && !gPractice.enabled && gGrooveGauge.depleted()) finishPlayback();
+    if (gPlaying && !gAccuracyRestartPending && !gPractice.enabled && !gNoInputBenchmark && gGrooveGauge.depleted()) finishPlayback();
 }
 
 void showHoldJudgement(HoldResult result, int scoreUnits=1) {
@@ -1073,7 +1128,7 @@ void resolveHold(size_t lane,HoldResult result) {
         // HoldResult marks an accepted release; its exact grade must still use
         // the authored rank and the player's real release offset.
         const auto grade=bms::judgeChartOffset(gCharts[gActiveChartIndex],gPlayhead,
-            (gPlayhead-note.timeSeconds-note.lengthSeconds)/playbackTimingScale(),gJudgementProfile);
+            (judgePlayhead()-note.timeSeconds-note.lengthSeconds)/playbackTimingScale(),gJudgementProfile);
         if(grade<=TimingJudgement::Good)gFeedback.addCombo(1);
         showTimingJudgement(grade,2);
     } else {if(result==HoldResult::PGreat)gFeedback.addCombo(1);showHoldJudgement(result,2);}
@@ -1141,65 +1196,7 @@ void initializeSettingsPath() {
     try { gSettingsFile=sevenmania::settingsPath(); } catch(...) { gSettingsFile.clear(); }
 }
 
-std::wstring normalizedRecordPath(const std::filesystem::path& path) {
-    if (path.empty()) return {};
-    std::error_code ec;
-    auto normalized = std::filesystem::absolute(path, ec);
-    if (ec) normalized = path;
-    std::wstring value = normalized.lexically_normal().wstring();
-    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
-    return value;
-}
-
-std::wstring recordSectionForPath(const std::wstring& path) {
-    uint64_t hash = 14695981039346656037ull;
-    for (wchar_t ch : path) {
-        const uint32_t value = static_cast<uint32_t>(ch);
-        for (size_t byte = 0; byte < sizeof(wchar_t); ++byte) {
-            hash ^= static_cast<uint8_t>(value >> (byte * 8));
-            hash *= 1099511628211ull;
-        }
-    }
-    return L"Play_" + std::to_wstring(hash);
-}
-
-void loadPlayRecords() {
-    gPlayRecords.clear();
-    if (gPlayRecordsFile.empty()) return;
-    DWORD capacity = 4096;
-    std::vector<wchar_t> sections;
-    DWORD length = 0;
-    for (;;) {
-        sections.assign(capacity, L'\0');
-        length = GetPrivateProfileSectionNamesW(sections.data(), capacity, gPlayRecordsFile.c_str());
-        if (length < capacity - 2 || capacity >= 1u << 20) break;
-        capacity *= 2;
-    }
-    for (DWORD offset = 0; offset < length;) {
-        const std::wstring section(sections.data() + offset);
-        offset += static_cast<DWORD>(section.size()) + 1;
-        if (!section.starts_with(L"Play_")) continue;
-        std::vector<wchar_t> storedPath(32768, L'\0');
-        const DWORD pathLength = GetPrivateProfileStringW(section.c_str(), L"Path", L"", storedPath.data(),
-            static_cast<DWORD>(storedPath.size()), gPlayRecordsFile.c_str());
-        if (pathLength == 0 || pathLength >= storedPath.size()) continue;
-        std::wstring path(storedPath.data(), pathLength);
-        const auto key = normalizedRecordPath(path);
-        if (key.empty() || recordSectionForPath(key) != section) continue;
-        PlayRecord record;
-        record.played = GetPrivateProfileIntW(section.c_str(), L"Played", 0, gPlayRecordsFile.c_str()) != 0;
-        record.cleared = GetPrivateProfileIntW(section.c_str(), L"Cleared", 0, gPlayRecordsFile.c_str()) != 0;
-        record.maxCombo = static_cast<unsigned>(std::max(0, static_cast<int>(GetPrivateProfileIntW(section.c_str(), L"MaxCombo", 0, gPlayRecordsFile.c_str()))));
-        record.bestAccuracyScore = std::clamp(static_cast<int>(GetPrivateProfileIntW(section.c_str(), L"AccuracyScore", 0, gPlayRecordsFile.c_str())), 0, 1'000'000);
-        for(auto pair:{std::pair{L"Score",&record.scoreJudgement},std::pair{L"Combo",&record.comboJudgement},std::pair{L"Clear",&record.clearJudgement}}) {
-            wchar_t value[128]{};const std::wstring prefix=pair.first;
-            GetPrivateProfileStringW(section.c_str(),(prefix+L"JudgeSpec").c_str(),L"LEGACY",value,128,gPlayRecordsFile.c_str());
-            pair.second->spec=value;
-            pair.second->rank=static_cast<int>(GetPrivateProfileIntW(section.c_str(),(prefix+L"JudgeRank").c_str(),-1,gPlayRecordsFile.c_str()));
-        }
-        gPlayRecords[key] = record;
-    }
-}
+void loadPlayRecords() { gPlayRecordStore.load(); }
 
 void rebuildChartRecordKeys() {
     gChartRecordKeys.resize(gCharts.size());
@@ -1208,34 +1205,12 @@ void rebuildChartRecordKeys() {
 
 const PlayRecord* playRecordForChart(size_t chartIndex) {
     if (chartIndex >= gChartRecordKeys.size()) return nullptr;
-    const auto found = gPlayRecords.find(gChartRecordKeys[chartIndex]);
-    return found == gPlayRecords.end() || !found->second.played ? nullptr : &found->second;
+    return gPlayRecordStore.findPlayed(gChartRecordKeys[chartIndex]);
 }
 
 void savePlayRecord(const std::filesystem::path& chartPath, bool cleared, unsigned maxCombo, int accuracyScore, const std::wstring& spec=L"LEGACY", int rank=-1) {
-    const auto key = normalizedRecordPath(chartPath);
-    if (key.empty() || gPlayRecordsFile.empty()) return;
-    auto& record = gPlayRecords[key];
-    const RecordJudgement provenance{spec,rank};
-    if(!record.played || accuracyScore>record.bestAccuracyScore)record.scoreJudgement=provenance;
-    if(!record.played || maxCombo>record.maxCombo)record.comboJudgement=provenance;
-    if(!record.played || (cleared&&!record.cleared))record.clearJudgement=provenance;
-    record.played = true;
-    record.cleared = record.cleared || cleared;
-    record.maxCombo = std::max(record.maxCombo, maxCombo);
-    record.bestAccuracyScore = std::max(record.bestAccuracyScore, std::clamp(accuracyScore, 0, 1'000'000));
-    const auto section = recordSectionForPath(key);
-    WritePrivateProfileStringW(section.c_str(), L"Path", key.c_str(), gPlayRecordsFile.c_str());
-    WritePrivateProfileStringW(section.c_str(), L"Played", L"1", gPlayRecordsFile.c_str());
-    WritePrivateProfileStringW(section.c_str(), L"Cleared", record.cleared ? L"1" : L"0", gPlayRecordsFile.c_str());
-    WritePrivateProfileStringW(section.c_str(), L"MaxCombo", std::to_wstring(record.maxCombo).c_str(), gPlayRecordsFile.c_str());
-    WritePrivateProfileStringW(section.c_str(), L"AccuracyScore", std::to_wstring(record.bestAccuracyScore).c_str(), gPlayRecordsFile.c_str());
-    for(auto pair:{std::pair{L"Score",&record.scoreJudgement},std::pair{L"Combo",&record.comboJudgement},std::pair{L"Clear",&record.clearJudgement}}) {
-        const std::wstring prefix=pair.first;
-        WritePrivateProfileStringW(section.c_str(),(prefix+L"JudgeSpec").c_str(),pair.second->spec.c_str(),gPlayRecordsFile.c_str());
-        WritePrivateProfileStringW(section.c_str(),(prefix+L"JudgeRank").c_str(),std::to_wstring(pair.second->rank).c_str(),gPlayRecordsFile.c_str());
-    }
-    if (gList) InvalidateRect(gList, nullptr, FALSE);
+    if (gNoInputBenchmark) return; // benchmark plays are not records
+    if (gPlayRecordStore.save(chartPath, cleared, maxCombo, accuracyScore, spec, rank) && gList) InvalidateRect(gList, nullptr, FALSE);
 }
 
 std::wstring recordAccuracyText(int score) {
@@ -1310,7 +1285,7 @@ void tickBrowseMedia() {
         gSongPreview.select(gCharts[static_cast<size_t>(index)]); gBrowseAudioKey = gBrowseMediaKey;
     }
     gSongPreview.tick(gVolumes[0], gPreviewVolume, gSoundBufferFrames, SongPreview::fadeDurationMs);
-    if(!gStartupSplash)gSelectionAudio.tickMusic(gVolumes[0],gVolumes[1],gSongPreview.playing(),gSoundBufferFrames);
+    if(!gStartupSplash)gSelectionAudio.tickMusic(gVolumes[0],gSelectBgmVolume,gSongPreview.playing(),gSoundBufferFrames);
     const auto error = gSongPreview.lastError();
     if (!error.empty() && error != gBrowseAudioError) {
         gBrowseAudioError = error; setStatus(L"미리보기: " + error);
@@ -1728,6 +1703,7 @@ void scanFolders(const std::vector<std::filesystem::path>& sources) {
     saveLibraryNavigation();gSongIndexWorker.cancel();
     if (gLoadWorker.joinable()) gLoadWorker.join();
     gAudio.stop();
+    finishPresentDiagnostics();
     gPlaying = false;
     const auto libraryRoot = gLibrarySources.roots.empty()?std::filesystem::path{}:gLibrarySources.roots.front();
     gCurrentFolder = libraryRoot;
@@ -1818,7 +1794,7 @@ void releaseBgaBackplate() {
     if (gBgaBackplateBitmap) DeleteObject(gBgaBackplateBitmap);
     if (gBgaBackplateDc) DeleteDC(gBgaBackplateDc);
     gBgaBackplateDc = nullptr; gBgaBackplateBitmap = nullptr; gBgaBackplateOriginalBitmap = nullptr;
-    gDirectBgaFrame.reset(); gDirectBgaOverlay.reset();
+    gDirectBgaFrame.reset(); gDirectBgaOverlay.reset(); gDirectBgaSource.reset(); gDirectBgaVideo = {};
     gBgaBackplatePixels = nullptr; gBgaBackplateWidth = gBgaBackplateHeight = 0;
     gBgaBackplateDirty = true;
 }
@@ -1837,6 +1813,7 @@ void focusBrowseInput(bool activateWindow = false) {
 void showBrowseView() {
     if (gLoading) { if(gLoadResult.playback)gPlaybackLoad.cancel();gLoadCancelled = true; setStatus(L"불러오기를 취소하고 있습니다..."); return; }
     gSongIntro.reset();
+    finishPresentDiagnostics();
     gPlaying = false;
     gPaused = false;
     gGpuFrame = false;
@@ -1908,6 +1885,7 @@ void beginSelectedChart(bool practice) {
     std::error_code sourceError;
     if(!std::filesystem::is_regular_file(path,sourceError)){setStatus(L"채보가 이동되었거나 라이브러리가 연결되지 않았습니다. F5로 새로고침하세요.");return;}
     if (!gCharts[static_cast<size_t>(index)].playable) { setStatus(gCharts[static_cast<size_t>(index)].blockReason); return; }
+    if (gNoInputBenchmark && !gBenchmarkAutoStarting) { gBenchmarkPlays = 0; gBenchmarkChart = path; }
     gPractice.enabled = practice;
     gSelectionAudio.decide(gVolumes[0],gVolumes[3],gSoundBufferFrames);
     captureBrowseBackdrop();
@@ -1955,12 +1933,20 @@ void finishPlayback() {
     }
     // Cover any synchronous repaint caused by tearing down the GPU child window.
     gResultFade.start();
+    finishPresentDiagnostics();
     gPlaying = false;
     gPlaybackLoad.reset();
     gPaused = false;
     gShowingResult = true;
     gResultGaugeCleared = gGrooveGauge.clearConditionMet();
     gResultGaugeFailed = gGrooveGauge.depleted();
+    if (gAutoJudgeUsedThisPlay) {saveDisplaySettings(); gAutoJudgeUsedThisPlay = false;} // realtime mode moved the offset
+    if (gAutoJudgeMode == bms::AutoJudgeAdjuster::Suggest && !gPractice.enabled && !gNoInputBenchmark) {
+        if (const auto suggestion = gAutoJudge.suggestion(gTimingOffsets.judgeMs)) {
+            gAutoJudgeSuggestion = *suggestion;
+            PostMessageW(gWindow, WM_AUTO_JUDGE_SUGGEST, 0, 0); // asked outside this update frame
+        }
+    }
     if (!gPractice.enabled && gActiveChartIndex >= 0 && gActiveChartIndex < static_cast<int>(gCharts.size())) {
         savePlayRecord(gCharts[static_cast<size_t>(gActiveChartIndex)].path, gResultGaugeCleared,
             gFeedback.maxCombo(), gResultScore.value(), gCharts[gActiveChartIndex].judgementSpec,gCharts[gActiveChartIndex].rank);
@@ -1982,12 +1968,35 @@ void finishPlayback() {
     SetTimer(gWindow, ID_RESULT_FADE, 4, nullptr);
     SetFocus(gWindow);
     InvalidateRect(gWindow, nullptr, TRUE);
+    if (gNoInputBenchmark && gBenchmarkRepeat > 0 && !gBenchmarkChart.empty() && !gPractice.enabled) {
+        ++gBenchmarkPlays;
+        SetTimer(gWindow, ID_BENCHMARK_NEXT, 3000, nullptr); // let the result fade and CSV writes finish
+    }
+}
+
+// Next benchmark play of the same chart, or close the game after the last one.
+void continueBenchmarkSeries() {
+    if (!gNoInputBenchmark || gPlaying || gLoading) return;
+    if (gBenchmarkPlays >= gBenchmarkRepeat) {
+        gBenchmarkChart.clear();
+        if (gBenchmarkExit && gWindow) DestroyWindow(gWindow);
+        return;
+    }
+    if (gShowingResult) showBrowseView();
+    const int index = selectedIndex();
+    if (index < 0 || index >= static_cast<int>(gCharts.size()) || gCharts[static_cast<size_t>(index)].path != gBenchmarkChart) {
+        setStatus(L"벤치마크 반복: 선택된 곡이 바뀌어 반복을 중단했습니다.");
+        gBenchmarkChart.clear(); return;
+    }
+    gBenchmarkAutoStarting = true;
+    beginSelectedChart();
+    gBenchmarkAutoStarting = false;
 }
 
 void pausePlayback(bool focusMenu = true) {
     HUD_SCOPE(PauseTransition);
     if (!gPlaying || gPaused || !gAudio.pause()) return;
-    gPlayhead = gAudio.positionSeconds();
+    gPlayhead = heardPlayhead();
     gPaused = true;
     gCompositionPresenter.lowLatency().endFrame();
     gCompositionPresenter.lowLatency().request(latency::Mode::Off);
@@ -2039,6 +2048,8 @@ void restartPlayback() {
     gHolds.fill(LongNoteHold{});
     resetMines();
     gMissScanIndex = 0;
+    gAutoJudge.reset();
+    gBenchmarkSoundIndex = 0;
     gBgaEventIndex = 0;
     gBgaActiveImages.fill(L"");gBgaActiveImages[1]=L"00";
     gMissBgaUntil = 0;
@@ -2063,6 +2074,7 @@ void restartPlayback() {
         MessageBoxW(gWindow, error.c_str(), L"곡을 다시 시작하지 못했습니다", MB_ICONERROR | MB_OK);
         return;
     }
+    gPrewarmTextPending = true; // first gameplay frame; never between pause and audio restart
     for (HWND button : gPauseButtons) if (button) ShowWindow(button, SW_HIDE);
     SetFocus(gWindow);
     gFramePacer.reset(gTargetFps);
@@ -2124,9 +2136,9 @@ int keyLane(WPARAM key, LPARAM detail) {
 
 void pressLane(int lane) {
     HUD_SCOPE(InputDown);
-    if (!gPlaying || gAccuracyRestartPending || lane < 0 || lane > 15 || gPressed[static_cast<size_t>(lane)]) return;
+    if (!gPlaying || gAccuracyRestartPending || gNoInputBenchmark || lane < 0 || lane > 15 || gPressed[static_cast<size_t>(lane)]) return;
     BMS_PERF_SCOPE(inputMs);BMS_PERF_COUNT(keyDown);
-    gPlayhead = gAudio.positionSeconds();BMS_PERF_EVENT(1,lane,gPlayhead);
+    gPlayhead = heardPlayhead();BMS_PERF_EVENT(1,lane,gPlayhead);
     const auto& chart = gCharts[static_cast<size_t>(gActiveChartIndex)];
     updateBgaState(chart, gPlayhead);
     gPressed[static_cast<size_t>(lane)] = true;
@@ -2135,19 +2147,23 @@ void pressLane(int lane) {
     gKeyBeams.setPressed(lane, true, gPlayhead);
     if(gHolds[lane].active() && chart.notes[gHolds[lane].noteIndex()].mode==bms::LongNoteMode::HCN) return;
     const auto& notes=chart.notes;
-    const int nearest=bms::nearestLaneNote(chart,gHit,lane,gPlayhead,playbackTimingScale(),gJudgementProfile,gPractice.enabled?gPractice.startSeconds:0);
+    const double judgeT=judgePlayhead();
+    const int nearest=bms::nearestLaneNote(chart,gHit,lane,judgeT,playbackTimingScale(),gJudgementProfile,gPractice.enabled?gPractice.startSeconds:0);
     if (nearest >= 0) {
         gFeedback.hit(lane, gPlayhead);
         gComboPop.start();
         gHit[static_cast<size_t>(nearest)] = true;
         const auto& note = notes[static_cast<size_t>(nearest)];
-        const auto grade=*bms::judgeLaneOffset(chart,gPlayhead,lane,(gPlayhead-note.timeSeconds)/playbackTimingScale(),gJudgementProfile);
+        const auto grade=*bms::judgeLaneOffset(chart,judgeT,lane,(judgeT-note.timeSeconds)/playbackTimingScale(),gJudgementProfile);
         if (!note.sampleId.empty()) gAudio.trigger(note.sampleId);
         if (note.longNote()) {
-            gHolds[static_cast<size_t>(lane)].start(static_cast<size_t>(nearest),note.timeSeconds+note.lengthSeconds,gPlayhead,note.mode,grade);
+            gHolds[static_cast<size_t>(lane)].start(static_cast<size_t>(nearest),note.timeSeconds+note.lengthSeconds,judgeT,note.mode,grade);
         }
         showTimingJudgement(grade,note.longNote() && note.mode==bms::LongNoteMode::LN?0:2);
-        const double signedOffset=gPlayhead-note.timeSeconds;
+        // Auto-adjust learns from the raw offset (before the judge offset) so the correction cannot feed back into itself.
+        if (gAutoJudgeMode!=bms::AutoJudgeAdjuster::Off && !gPractice.enabled && !bms::isScratchLane(chart,lane) && static_cast<int>(grade)<=static_cast<int>(TimingJudgement::Good))
+            gAutoJudge.feed((gPlayhead-note.timeSeconds)/playbackTimingScale()*1000.0);
+        const double signedOffset=judgeT-note.timeSeconds;
         gTimingHint=gTimingHintCondition==3 ? 0 : static_cast<int>(grade)<=gTimingHintCondition ? 0 : signedOffset < -0.000001 ? -1 : signedOffset > 0.000001 ? 1 : 0;
     } else {
         const auto& indices = gLaneNoteIndices[static_cast<size_t>(lane)];
@@ -2168,9 +2184,10 @@ void releaseLaneInput(int lane) {
     if(lane<0||lane>=16||!gPressed[lane])return;
     if(gPlaying&&!gPaused&&gActiveChartIndex>=0){
         BMS_PERF_SCOPE(inputMs);BMS_PERF_COUNT(keyUp);
-        gPlayhead=gAudio.positionSeconds();BMS_PERF_EVENT(2,lane,gPlayhead);
-        showHoldCombo(gHolds[lane].takeComboTicks(gPlayhead));
-        resolveHold(lane,gHolds[lane].release(gPlayhead,currentJudgementWindows().goodMs/1000.0*playbackTimingScale()));
+        gPlayhead=heardPlayhead();BMS_PERF_EVENT(2,lane,gPlayhead);
+        const double judgeT=judgePlayhead();
+        showHoldCombo(gHolds[lane].takeComboTicks(judgeT));
+        resolveHold(lane,gHolds[lane].release(judgeT,currentJudgementWindows().goodMs/1000.0*playbackTimingScale()));
     }
     gPressed[lane]=false;
     if(lane==0)gScratchDisc.update(gPlayhead,false);
@@ -2221,7 +2238,7 @@ void updatePlaybackFrame() {
     BMS_TRACE_FRAME();
     if (!gPlaying||gAccuracyRestartPending) return;
     BMS_PERF_BEGIN();HUD_FRAME_BEGIN();
-    { BMS_PERF_SCOPE(positionMs);HUD_SCOPE(AudioPosition); gPlayhead = gAudio.positionSeconds(); }
+    { BMS_PERF_SCOPE(positionMs);HUD_SCOPE(AudioPosition); gPlayhead = heardPlayhead(); }
     BMS_PERF_SET(rawPositionSeconds, gAudio.lastRawPositionSeconds());
     const int index = gActiveChartIndex;
     const double endSeconds = gPractice.enabled ? gPractice.endSeconds : gAudio.durationSeconds();
@@ -2235,32 +2252,46 @@ void updatePlaybackFrame() {
     { BMS_PERF_SCOPE(videoMs);HUD_SCOPE(VideoUpdate); if (bgaTime >= 0 && (!hybridRendererEnabled || gBgaBrightness > 0)) gVideoBga.update(bgaTime); }
     {HUD_SCOPE(BgaStateUpdate);updateBgaState(chart, gPlayhead);}
     {HUD_SCOPE(GameLogic);
+    // Realtime auto-adjust only moves the judge offset here (never in the input path), a couple of ms at a time.
+    if(gAutoJudgeMode==bms::AutoJudgeAdjuster::Realtime && !gPractice.enabled){
+        const int next=gAutoJudge.step(gTimingOffsets.judgeMs);
+        if(next!=gTimingOffsets.judgeMs){gTimingOffsets.judgeMs=next;gAutoJudgeUsedThisPlay=true;}
+    }
+    const double judgeT=judgePlayhead();
     for (size_t lane = 0; lane < gHolds.size(); ++lane) {
-        const unsigned ticks=gHolds[lane].takeGaugeTicks(gPlayhead);
+        const unsigned ticks=gHolds[lane].takeGaugeTicks(judgeT);
         for(unsigned tick=0;tick<ticks;++tick)gGrooveGauge.holdTick(gPressed[lane]);
-        if(gGrooveGauge.depleted() && !gPractice.enabled){finishPlayback();return;}
-        const HoldResult result=gHolds[lane].update(gPlayhead,gPressed[lane],currentJudgementWindows().goodMs/1000.0*playbackTimingScale());
+        if(gGrooveGauge.depleted() && !gPractice.enabled && !gNoInputBenchmark){finishPlayback();return;}
+        const HoldResult result=gHolds[lane].update(judgeT,gPressed[lane],currentJudgementWindows().goodMs/1000.0*playbackTimingScale());
         resolveHold(lane,result);
         if (!gPlaying||gAccuracyRestartPending) return;
-        if (gPressed[lane]) showHoldCombo(gHolds[lane].takeComboTicks(gPlayhead));
+        if (gPressed[lane]) showHoldCombo(gHolds[lane].takeComboTicks(judgeT));
     }
     if(gMineHit.size()!=chart.mines.size())gMineHit.assign(chart.mines.size(),false);
     for(size_t mine=0;mine<chart.mines.size();++mine) {
-        const auto& n=chart.mines[mine];if(gMineHit[mine] || n.timeSeconds>gPlayhead)continue;
+        const auto& n=chart.mines[mine];if(gMineHit[mine] || n.timeSeconds>judgeT)continue;
         gMineHit[mine]=true;
         if(n.timeSeconds<(gPractice.enabled?gPractice.startSeconds:0))continue;
         if(n.lane>=0 && n.lane<16 && gPressed[n.lane]) {
             gGrooveGauge.damage(n.damage);gAudio.trigger(L"00");setJudgement(L"MINE",RGB(255,64,64));
-            if(gGrooveGauge.depleted() && !gPractice.enabled){finishPlayback();return;}
+            if(gGrooveGauge.depleted() && !gPractice.enabled && !gNoInputBenchmark){finishPlayback();return;}
+        }
+    }
+    if (gNoInputBenchmark) {
+        HUD_SCOPE(BenchmarkKeysounds);
+        for (; gBenchmarkSoundIndex < notes.size() && notes[gBenchmarkSoundIndex].timeSeconds <= gPlayhead; ++gBenchmarkSoundIndex) {
+            const auto& note = notes[gBenchmarkSoundIndex];
+            if (gPractice.enabled && note.timeSeconds < gPractice.startSeconds) continue;
+            if (!note.sampleId.empty()) gAudio.trigger(note.sampleId);
         }
     }
     // A scratch may have a longer legacy deadline than a following key note.
     // Expire each eligible note independently; advance only over resolved heads.
     const double legacySlow=currentJudgementWindows().badMs;
     const double minimumSlow=bms::usesOfficialJudgement(chart)?std::min(legacySlow,double(bms::officialJudgeWindow(chart.rank).badSlow)):legacySlow;
-    for(size_t i=gMissScanIndex;i<notes.size() && notes[i].timeSeconds<gPlayhead-minimumSlow/1000*playbackTimingScale();++i) {
+    for(size_t i=gMissScanIndex;i<notes.size() && notes[i].timeSeconds<judgeT-minimumSlow/1000*playbackTimingScale();++i) {
         if(gPractice.enabled&&notes[i].timeSeconds<gPractice.startSeconds){gHit[i]=true;continue;}
-        if(!gHit[i] && bms::laneNoteExpired(chart,notes[i],gPlayhead,playbackTimingScale(),gJudgementProfile)) {
+        if(!gHit[i] && bms::laneNoteExpired(chart,notes[i],judgeT,playbackTimingScale(),gJudgementProfile)) {
             gHit[i]=true;
             if(notes[i].longNote())gLingeringLongNotes.push_back(i);
             showTimingJudgement(TimingJudgement::Poor);
@@ -2451,6 +2482,23 @@ void drawRightTextBody(HDC dc, const std::wstring& text, RECT rect, HFONT font, 
     if (old) SelectObject(dc, old);
 }
 
+// Always-visible marker for no-input benchmark plays (independent of the FPS/resource line and skins).
+void drawBenchmarkBadge(HDC dc) {
+    if (!gNoInputBenchmark || !gPlaying) return;
+    std::wstring text = L"BENCH  ·  NO INPUT";
+    if (gBenchmarkRepeat > 0 && !gBenchmarkChart.empty())
+        text += L"  ·  " + std::to_wstring(std::min(gBenchmarkPlays + 1, gBenchmarkRepeat)) + L"/" + std::to_wstring(gBenchmarkRepeat);
+    const auto font = gPracticeHudFont ? gPracticeHudFont : gSmallFont;
+    const RECT bounds{18, 14, 18 + 420, 40};
+    if (dc == gBackBufferDc && gBackBufferPixels) {
+        GdiFlush();
+        if (gTextRaster.draw(gGpuFrame ? nullptr : static_cast<uint32_t*>(gBackBufferPixels), gBackBufferWidth, gBackBufferHeight,
+            text, bounds, font, RGB(255, 214, 20), 1.0, drawLeftTextBody, false,
+            gGpuFrame ? TextRasterCache::GpuDraw(queueGpuText) : TextRasterCache::GpuDraw{}, true)) return;
+    }
+    drawLeftTextBody(dc, text, bounds, font, RGB(255, 214, 20));
+}
+
 void drawPracticeHud(HDC dc) {
     if (!gPractice.enabled) return;
     const std::array<std::wstring, 2> lines{L"배속: " + number(gPractice.rate(), 2) + L"x",
@@ -2612,6 +2660,144 @@ bool shouldRenderGpuFrame() {
     return true;
 }
 
+// Per-play presentation diagnostics (%APPDATA%\BmsPlayer\presentation-diagnostics.csv).
+presentdiag::Session gPresentDiag;
+// Per-frame CPU work for hitch attribution. Timestamps are set in WM_PAINT.
+std::chrono::steady_clock::time_point gDiagPaintStart{}, gDiagPresentStart{}, gDiagLastPaintEntry{};
+double gDiagLoopGapMs = 0;
+uint64_t gDiagUploadBase = 0, gDiagTextBase = 0;
+bool gDiagBgaRebuilt = false;
+presentdiag::Config currentPresentConfig() {
+    presentdiag::Config c;
+    c.vsync = gTargetFps == vsyncFps; c.targetFps = gTargetFps < 0 ? 0 : gTargetFps;
+    c.composition = gCompositionEnabled; c.directComposition = gDirectCompositionEnabled; c.hybrid = hybridRendererEnabled;
+    c.width = gWindowWidth; c.height = gWindowHeight;
+    {
+        wchar_t label[128]{};
+        const DWORD n = GetEnvironmentVariableW(L"SEVENMANIA_DIAG_VARIANT", label, 128);
+        std::string variant;
+        if (n && n < 128) for (const wchar_t* p = label; *p; ++p) if (*p < 128 && *p != L'"' && *p != L',') variant += char(*p);
+        c.variant = (variant.empty() ? std::string("default") : variant) +
+            (gCompositionPresenter.skipUnchangedUploads() ? "+skip-hud-upload" : "") +
+            (gCapVblankPacing ? "+cap-vblank" : "") + (gVsyncVblankPacing ? "+vsync-vblank" : "") +
+            (gVsyncVblankPacing && gVsyncReadyWake ? "+ready-wake" : "") +
+            (gVblankLead != std::chrono::microseconds(2000) ? "+lead" + std::to_string(gVblankLead.count() / 1000) + "us" : "") +
+            (gAlignedStallClassifier ? "" : "+raw-stall") +
+            (gCompositionPresenter.frameLatency() != 1 ? "+latency" + std::to_string(gCompositionPresenter.frameLatency()) : "") +
+            (BgaRaster::gpuSourceEnabled ? "+bga-gpu-scale" : "") + (VideoBga::nv12Output ? "+video-nv12" : "") +
+            (gNoInputBenchmark ? "+noinput" : "");
+    }
+    MONITORINFOEXW monitor{}; monitor.cbSize = sizeof(monitor);
+    if (GetMonitorInfoW(MonitorFromWindow(gWindow, MONITOR_DEFAULTTONEAREST), &monitor)) {
+        DEVMODEW mode{}; mode.dmSize = sizeof(mode);
+        if (EnumDisplaySettingsW(monitor.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
+            c.refreshHz = int(mode.dmDisplayFrequency);
+        RECT window{};
+        c.coversMonitor = GetWindowRect(gWindow, &window) && EqualRect(&window, &monitor.rcMonitor);
+    }
+    {   // Mirrors FramePacer: VSync, or a cap within 5% of an integer multiple of the refresh period.
+        bool multiple = false;
+        if (c.refreshHz > 0 && c.targetFps > 0 && c.targetFps * 20 <= c.refreshHz * 21) {
+            const double ratio = double(c.refreshHz) / c.targetFps; const double step = std::max(1.0, std::round(ratio));
+            multiple = std::abs(ratio - step) <= 0.05 * step;
+        }
+        c.vblankAligned = vblankPacingForMode() && c.refreshHz > 0 && (c.vsync || multiple);
+        c.alignedStallClassifier = gAlignedStallClassifier;
+    }
+    return c;
+}
+// Experimental pacing switches, read once at startup (A/B runs via tools/Start-PresentVariant.ps1).
+//   SEVENMANIA_VBLANK_PACING=1      align frame starts to DWM vblanks (VSync, or cap <= refresh)
+//   SEVENMANIA_VBLANK_LEAD_US=2000  start that long before the target vblank
+//   SEVENMANIA_FRAME_LATENCY=2      output queue depth (default 1)
+long long environmentInteger(const wchar_t* name, long long fallback) {
+    wchar_t text[32]{};
+    const DWORD n = GetEnvironmentVariableW(name, text, 32);
+    if (!n || n >= 32) return fallback;
+    wchar_t* end{}; const long long value = std::wcstoll(text, &end, 10);
+    return end != text ? value : fallback;
+}
+bool vblankPacingForMode() { return gTargetFps == vsyncFps ? gVsyncVblankPacing : gCapVblankPacing; }
+void applyPresentTuning() {
+    const long long legacy = environmentInteger(L"SEVENMANIA_VBLANK_PACING", -1);
+    gCapVblankPacing = environmentInteger(L"SEVENMANIA_CAP_VBLANK_PACING", legacy >= 0 ? legacy : 1) == 1;
+    gVsyncVblankPacing = environmentInteger(L"SEVENMANIA_VSYNC_VBLANK_PACING", legacy >= 0 ? legacy : 0) == 1;
+    gVsyncReadyWake = environmentInteger(L"SEVENMANIA_VSYNC_READY_WAKE", 1) == 1;
+    gAlignedStallClassifier = environmentInteger(L"SEVENMANIA_ALIGNED_STALL_CLASSIFIER", 1) == 1;
+    gNoInputBenchmark = environmentInteger(L"SEVENMANIA_NO_INPUT_BENCHMARK", 0) == 1;
+    BgaRaster::gpuSourceEnabled = environmentInteger(L"SEVENMANIA_BGA_GPU_SCALE", 0) == 1;
+    VideoBga::nv12Output = environmentInteger(L"SEVENMANIA_VIDEO_NV12", 1) == 1; // default on (measured: fewer hitches, 3.1 MB vs 8.3 MB per 1080p frame)
+    gBenchmarkRepeat = static_cast<int>(std::clamp<long long>(environmentInteger(L"SEVENMANIA_BENCH_REPEAT", 2), 0, 100));
+    gBenchmarkExit = environmentInteger(L"SEVENMANIA_BENCH_EXIT", 1) == 1;
+    gVblankLead = std::chrono::microseconds(std::clamp<long long>(environmentInteger(L"SEVENMANIA_VBLANK_LEAD_US", 2000), 200, 8000));
+    gCompositionPresenter.setFrameLatency(static_cast<unsigned>(std::clamp<long long>(environmentInteger(L"SEVENMANIA_FRAME_LATENCY", 1), 1, 3)));
+}
+void updateVblankAlignment() {
+    if (!vblankPacingForMode()) { gFramePacer.clearVblank(); return; }
+    DWM_TIMING_INFO info{}; info.cbSize = sizeof(info);
+    LARGE_INTEGER now{}, frequency{};
+    if (FAILED(DwmGetCompositionTimingInfo(nullptr, &info)) || !info.qpcRefreshPeriod || !info.qpcVBlank ||
+        !QueryPerformanceCounter(&now) || !QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) {
+        gFramePacer.clearVblank(); return;
+    }
+    const auto steadyNow = std::chrono::steady_clock::now();
+    const auto toNs = [&](long long ticks) { return std::chrono::nanoseconds(static_cast<long long>(static_cast<double>(ticks) * 1e9 / static_cast<double>(frequency.QuadPart))); };
+    const auto vblank = steadyNow - toNs(static_cast<long long>(now.QuadPart) - static_cast<long long>(info.qpcVBlank));
+    gFramePacer.alignToVblank(vblank, toNs(static_cast<long long>(info.qpcRefreshPeriod)), gVblankLead);
+}
+uint64_t gDiagVideoOfferedBase = 0, gDiagVideoUploadsBase = 0;
+void beginPresentDiagnostics() {
+    gDiagVideoOfferedBase = gCompositionPresenter.videoOffered(); gDiagVideoUploadsBase = gCompositionPresenter.videoUploads();
+    gBenchmarkSoundIndex = 0; // play start: no keysound has been triggered yet
+    if (gActiveChartIndex >= 0 && gActiveChartIndex < int(gCharts.size())) {
+        const auto& notes = gCharts[gActiveChartIndex].notes; // skip notes before the start (practice)
+        while (gBenchmarkSoundIndex < notes.size() && notes[gBenchmarkSoundIndex].timeSeconds < gPlayhead - 0.05) ++gBenchmarkSoundIndex;
+    }
+    // SEVENMANIA_SKIP_UNCHANGED_UPLOADS=1 opts into skipping unchanged HUD/overlay uploads (A/B runs).
+    wchar_t skip[8]{};
+    const DWORD skipLength = GetEnvironmentVariableW(L"SEVENMANIA_SKIP_UNCHANGED_UPLOADS", skip, 8);
+    gCompositionPresenter.setSkipUnchangedUploads(skipLength && skip[0] == L'1');
+    gPresentDiag.begin(currentPresentConfig(), gCompositionPresenter.deferredFrames());
+    gDiagLastPaintEntry = {}; gDiagLoopGapMs = 0; gDiagBgaRebuilt = false;
+    gDiagUploadBase = gCompositionPresenter.uploadedBytes(); gDiagTextBase = gTextRasterCacheMisses;
+}
+void finishPresentDiagnostics() {
+    if (!gPresentDiag.active()) return;
+    auto summary = gPresentDiag.finish(gCompositionPresenter.deferredFrames());
+    summary.videoNv12Offered = gCompositionPresenter.videoOffered() - gDiagVideoOfferedBase;
+    summary.videoNv12Uploads = gCompositionPresenter.videoUploads() - gDiagVideoUploadsBase;
+    summary.videoNv12Fail = gCompositionPresenter.videoFailStage();
+    std::string chart;
+    if (gActiveChartIndex >= 0 && gActiveChartIndex < int(gCharts.size())) {
+        const auto name = gCharts[gActiveChartIndex].path.filename().u8string(); chart.assign(name.begin(), name.end());
+    }
+    try { presentdiag::append(sevenmania::settingsPath().parent_path() / L"presentation-diagnostics.csv", chart, summary); } catch (...) {}
+}
+void notePresentFallback() { gPresentDiag.fallback(gCompositionPresenter.lastFailureStage(), gCompositionPresenter.lastFailureResult()); }
+void notePresentSubmitted(bool gpu) { if (gPaused) gPresentDiag.gap(); else if (gPlaying) gPresentDiag.submitted(gpu); }
+void notePaintEntry() {
+    const auto now = std::chrono::steady_clock::now();
+    if (gPlaying && !gPaused && gDiagLastPaintEntry != std::chrono::steady_clock::time_point{})
+        gDiagLoopGapMs = std::max(gDiagLoopGapMs, std::chrono::duration<double, std::milli>(now - gDiagLastPaintEntry).count());
+    gDiagLastPaintEntry = gPlaying && !gPaused ? now : std::chrono::steady_clock::time_point{};
+    gDiagPaintStart = now;
+}
+void notePresentWork() {
+    const uint64_t upload = gCompositionPresenter.uploadedBytes(), text = gTextRasterCacheMisses;
+    if (gPlaying && !gPaused) {
+        const auto now = std::chrono::steady_clock::now();
+        presentdiag::FrameWork work;
+        work.paintMs = std::chrono::duration<double, std::milli>(gDiagPresentStart - gDiagPaintStart).count();
+        work.presentMs = std::chrono::duration<double, std::milli>(now - gDiagPresentStart).count();
+        work.loopGapMs = gDiagLoopGapMs;
+        work.uploadBytes = upload >= gDiagUploadBase ? upload - gDiagUploadBase : 0;
+        work.textMisses = text >= gDiagTextBase ? text - gDiagTextBase : 0;
+        work.bgaRebuilt = gDiagBgaRebuilt;
+        gPresentDiag.work(work);
+    }
+    gDiagLoopGapMs = 0; gDiagUploadBase = upload; gDiagTextBase = text; gDiagBgaRebuilt = false;
+}
+
 HANDLE pendingGpuOutputHandle() {
     return gPlaying && gCompositionEnabled && !gGpuUnavailable ? gCompositionPresenter.presentationWaitHandle() : nullptr;
 }
@@ -2635,13 +2821,34 @@ void retryPendingGpuOutput() {
     if (gCompositionPresenter.hasPendingFrame()) {
         // Submit the newest already-painted frame. Do not run input, judgement,
         // audio or the CPU render loop again, or bypass its FPS ceiling.
+        const uint64_t submittedBefore = gCompositionPresenter.submittedFrames();
         if (!gCompositionPresenter.present(gWindow, gBackBufferPixels, gBackBufferWidth, gBackBufferHeight)) {
-            gGpuUnavailable = true;
+            gGpuUnavailable = true; notePresentFallback();
             InvalidateRect(gWindow, nullptr, FALSE); UpdateWindow(gWindow);
-        } else if (!gCompositionPresenter.presentationDeferred()) KillTimer(gWindow, ID_PAUSE_PRESENT_RETRY);
+        } else {
+            if (gCompositionPresenter.submittedFrames() != submittedBefore) notePresentSubmitted(true);
+            if (!gCompositionPresenter.presentationDeferred()) KillTimer(gWindow, ID_PAUSE_PRESENT_RETRY);
+        }
     } else if (gPaused || gTargetFps == vsyncFps) {
         // VSync may have skipped painting entirely while the output was busy.
         InvalidateRect(gWindow, nullptr, FALSE); UpdateWindow(gWindow);
+    }
+}
+
+// Load judgement glyphs and grow raster surfaces before the first note, not on it.
+void prewarmPlayText() {
+    gPrewarmTextPending = false;
+    const HFONT font = gJudgementFont ? gJudgementFont : gFont;
+    if (!font) return;
+    for (const wchar_t* word : {L"GREAT", L"GOOD", L"BAD", L"POOR", L"MINE"}) {
+        const std::wstring text = std::wstring(word) + L" 0123456789";
+        const bool rainbowWord = std::wstring_view(word) == L"GREAT"; // PGREAT uses the rainbow phase
+        for (const int phase : {-1, 0}) {
+            if (phase == 0 && !rainbowWord) continue;
+            gHudTextRaster.prewarm(text, font, phase < 0 ? RGB(0,0,0) : RGB(0,0,1),
+                [phase](HDC dc, const std::wstring& body, RECT bounds, HFONT face, COLORREF) { drawHudTextBody(dc, body, bounds, face, RGB(0,0,0), phase); });
+        }
+        gHudMaskRaster.prewarm(text, font, RGB(255,255,255), drawHudGlyphMask);
     }
 }
 
@@ -2777,7 +2984,7 @@ bool ensureBgaBackplate(HDC referenceDc, int width, int height) {
         SelectObject(gBgaBackplateDc, gBgaBackplateOriginalBitmap);
         DeleteObject(gBgaBackplateBitmap);
         gBgaBackplateBitmap = nullptr;
-        gDirectBgaFrame.reset(); gDirectBgaOverlay.reset();
+        gDirectBgaFrame.reset(); gDirectBgaOverlay.reset(); gDirectBgaSource.reset(); gDirectBgaVideo = {};
         gBgaBackplatePixels = nullptr;
     }
     BITMAPINFO info{};
@@ -2886,14 +3093,14 @@ void drawBgaBackplate(HDC dc, const bms::Chart& chart, const RECT& client,
             const RECT lane{fieldX,0,fieldX+layout.totalWidth(),height};
             BgaRaster::tint(pixels,width,height,lane,0xff000000u,(100-gBgaBackplateTransparency)*255/100);
         }
-        gDirectBgaFrame.reset(); gDirectBgaOverlay.reset();
+        gDirectBgaFrame.reset(); gDirectBgaOverlay.reset(); gDirectBgaSource.reset(); gDirectBgaVideo = {};
     }
     // Retain the previous complete backdrop while a cold image is being prepared.
     if (gBgaBackplateDirty && imagesPrepared) {
         BMS_PERF_SCOPE(backplateBuildMs);
-        BMS_PERF_SET(rebuiltBga, true);
+        BMS_PERF_SET(rebuiltBga, true); gDiagBgaRebuilt = true;
         const auto previousFrame = std::move(gDirectBgaFrame);
-        gDirectBgaOverlay.reset();
+        gDirectBgaOverlay.reset(); gDirectBgaSource.reset(); gDirectBgaVideo = {};
         if (hybrid && gGdiPlusToken && gBgaBrightness > 0 && switchFrame.id.empty()) {
             // The topmost visible layer alone can supply the backdrop if it covers
             // every pixel opaquely. Leave transparency and partial layers to the compositor.
@@ -2907,8 +3114,11 @@ void drawBgaBackplate(HDC dc, const bms::Chart& chart, const RECT& client,
                     bms::valueAt(chart.bgaOpacity[layer],gPlayhead,1) >= 1) {
                     const auto& frame = layerFrames[layer];
                     if (frame && (chart.bmson || layer == 0) && frame->width == width && frame->height == height)
-                        gDirectBgaFrame = {frame, frame->pixels.data()};
-                    if (!frame) gDirectBgaFrame = gBgaRaster.canvasFrame(chart,visibleImages[layer],blackKey,true);
+                        { gDirectBgaFrame = {frame, frame->pixels.data()}; gDirectBgaVideo = nv12ViewOf(frame); }
+                    if (!frame) {
+                        gDirectBgaFrame = gBgaRaster.canvasFrame(chart,visibleImages[layer],blackKey,true);
+                        if (gDirectBgaFrame) gDirectBgaSource = gBgaRaster.gpuSourceFrame(chart,visibleImages[layer],blackKey);
+                    }
                 }
                 break;
             }
@@ -2921,10 +3131,10 @@ void drawBgaBackplate(HDC dc, const bms::Chart& chart, const RECT& client,
                 !chart.bitmapColors.contains(bms::assetId(chart,visibleImages[2])) &&
                 bms::valueAt(chart.bgaOpacity[0],gPlayhead,1)>=1 && bms::valueAt(chart.bgaOpacity[2],gPlayhead,1)>=1) {
                 gDirectBgaOverlay=gBgaRaster.canvasFrame(chart,visibleImages[2],!chart.bmson,false);
-                if (gDirectBgaOverlay) gDirectBgaFrame={base,base->pixels.data()};
+                if (gDirectBgaOverlay) { gDirectBgaFrame={base,base->pixels.data()}; gDirectBgaVideo = nv12ViewOf(base); }
             }
             if (!foundLayer && !opaqueMiss && videoFrame && videoFrame->width == width && videoFrame->height == height)
-                gDirectBgaFrame = {videoFrame, videoFrame->pixels.data()};
+                { gDirectBgaFrame = {videoFrame, videoFrame->pixels.data()}; gDirectBgaVideo = nv12ViewOf(videoFrame); }
         }
         if (!gDirectBgaFrame) {
             const RECT cacheRect{ 0, 0, width, height };
@@ -3009,7 +3219,7 @@ void drawBgaBackplate(HDC dc, const bms::Chart& chart, const RECT& client,
         const auto* gpuSource = gDirectBgaFrame ? gDirectBgaFrame.get() :
             static_cast<const uint32_t*>(gBgaBackplatePixels);
         gCompositionPresenter.hybridBackground(gpuSource, backgroundGeneration,
-            darkness, lane, 100 - gLaneTransparency, regions, gDirectBgaFrame, gDirectBgaOverlay);
+            darkness, lane, 100 - gLaneTransparency, regions, gDirectBgaFrame, gDirectBgaOverlay, gDirectBgaSource, gDirectBgaVideo);
         BMS_PERF_SCOPE(bgaCopyMs);
         GdiFlush();
         auto* destination = static_cast<uint32_t*>(gBackBufferPixels);
@@ -3715,7 +3925,7 @@ void drawGameScreen(HDC dc) {
     }
 
     const double pixelsPerSecond = 270.0 * (gChartOptions.hiSpeed>0?gChartOptions.hiSpeed:gNoteSpeed) * bms::speedAt(chart,gPlayhead);
-    const double scrollPosition = bms::scrollPositionSeconds(chart, gPlayhead);
+    const double scrollPosition = bms::scrollPositionSeconds(chart, bms::drawSeconds(gPlayhead, gTimingOffsets, playbackTimingScale()));
     const double visibleBehind = 42.0 / std::max(0.001,std::abs(pixelsPerSecond));
     const double visibleAhead = (std::max(judgeY-top,fieldBottom-judgeY) + gNoteHeight) / std::max(0.001,std::abs(pixelsPerSecond));
     const double firstVisiblePosition = scrollPosition - visibleBehind - 0.01;
@@ -3945,7 +4155,9 @@ void drawGameScreen(HDC dc) {
 #else
     const auto fpsText = hybridRendererEnabled && gGpuFrame ? L"FPS  " + std::to_wstring(gMeasuredFps) + L" / OUTPUT  " + std::to_wstring(gCompositionPresenter.presentationFps()) :
         L"FPS  " + std::to_wstring(gMeasuredFps) + L" / " + (gTargetFps == vsyncFps ? std::wstring(L"VSYNC") :
-            gTargetFps == 0 ? std::wstring(L"UNLIMITED (MAX 1500)") : std::to_wstring(gTargetFps));
+            gTargetFps == 0 ? std::wstring(L"UNLIMITED (MAX 1500)") : std::to_wstring(gTargetFps)) +
+        (gGpuUnavailable || !gCompositionEnabled ? std::wstring(L"  [GDI]") : std::wstring{}) +
+        (gNoInputBenchmark ? std::wstring(L"  [BENCH]") : std::wstring{});
     drawText(dc, fpsText, 26, infoTop, infoColor, gSmallFont);
 #endif
     drawText(dc, L"BPM  " + number(tempo ? tempo->bpm : chart.initialBpm, 1), 26, infoTop + infoLine, infoColor, gSmallFont);
@@ -3957,6 +4169,7 @@ void drawGameScreen(HDC dc) {
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     drawAppliedSkinDc(dc);
 #endif
+    drawBenchmarkBadge(dc);
     if(!gGpuFrame&&!gPaused&&gTimingHint&&std::chrono::steady_clock::now()<gJudgementUntil){const auto& hint=gTimingHint<0?gFastHintImage:gSlowHintImage;if(hint.loaded()&&gBackBufferPixels){GdiFlush();hint.draw(static_cast<uint32_t*>(gBackBufferPixels),gBackBufferWidth,gBackBufferHeight,int(gTimingHintX),int(gTimingHintY),0, int(90*gTimingHintScale));}}
     if (gPaused) drawPauseOverlay(dc);
 }
@@ -5027,7 +5240,7 @@ void openFullSettings() {
     const int width = 780, height = std::min(820, static_cast<int>(work.bottom - work.top) - 30);
     const int x = std::clamp((owner.left + owner.right - width) / 2, work.left, std::max(work.left, work.right - width));
     const int y = std::clamp((owner.top + owner.bottom - height) / 2, work.top, std::max(work.top, work.bottom - height));
-    HWND settings = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, L"BmsPlayerSettingsWindow", L"BMS Player 설정",
+    HWND settings = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, L"BmsPlayerSettingsWindow", L"SETTINGS",
         WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_VSCROLL | WS_CLIPCHILDREN, x, y, width, height, gWindow, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!settings) return;
     if (!gSettingsPreviewOverlay) {
@@ -5046,9 +5259,8 @@ void openFullSettings() {
 
 void openSettings() {
     if(gPlaying||gPracticeWindow||gLoading)return;
-    if(gSummaryVisible){toggleSummary();openFullSettings();}
-    else if(gSettingsWindow)SetForegroundWindow(gSettingsWindow);
-    else toggleSummary();
+    if(gSummaryVisible)toggleSummary();
+    openFullSettings();
 }
 
 COLORREF songDifficultyColor(const bms::Chart& chart) {
@@ -5133,10 +5345,10 @@ COLORREF songDifficultyColor(const bms::Chart& chart) {
 
 bool handleBrowseShortcut(UINT message, WPARAM key, LPARAM flags) {
     if (message != WM_KEYDOWN && message != WM_KEYUP) return false;
-    const int command = key == VK_SPACE ? ID_SETTINGS : key == VK_F2 ? ID_OPEN : key == VK_F5 ? ID_RESCAN : 0;
+    const int command = key == VK_SPACE ? (gSummaryVisible ? ID_SETTINGS : ID_SUMMARY_SETTINGS) : key == VK_F2 ? ID_OPEN : key == VK_F5 ? ID_RESCAN : 0;
     if (!command || gStartupSplash || gPlaying || gShowingResult || gSettingsWindow || gPracticeWindow) return false;
     if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000) || (GetKeyState(VK_SHIFT) & 0x8000)) return false;
-    if (message == WM_KEYDOWN && (flags & (1LL << 30)) == 0 && (!gLoading || command == ID_SETTINGS))
+    if (message == WM_KEYDOWN && (flags & (1LL << 30)) == 0 && (!gLoading || command == ID_SUMMARY_SETTINGS))
         SendMessageW(gWindow, WM_COMMAND, command, 0);
     return true;
 }
@@ -5541,6 +5753,17 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         rebuildSongRows(preferred);gLibraryIndexStatus=gLibrarySources.roots.empty()?L"곡 폴더: (없음) · F2 또는 기타 설정에서 폴더를 등록하세요.":update->warnings.empty()?L"곡 라이브러리 확인 완료":update->warnings.front();setStatus(gLibraryIndexStatus);syncLibrarySettings();return 0;
     }
     case WM_PLAY_CHART_READY: acceptPlaybackChart(static_cast<std::uintptr_t>(wParam));return 0;
+    case WM_AUTO_JUDGE_SUGGEST: {
+        const int current = gTimingOffsets.judgeMs, suggested = gAutoJudgeSuggestion;
+        const std::wstring text = L"이번 플레이의 FAST/SLOW 경향을 분석했습니다.\n\n판정 타이밍 보정을 " + std::to_wstring(current) +
+            L" ms에서 " + std::to_wstring(suggested) + L" ms로 바꾸면 편향이 줄어듭니다.\n적용할까요? (노트 표시 위치는 바뀌지 않습니다)";
+        if (MessageBoxW(gWindow, text.c_str(), L"자동 판정 타이밍 보정", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            gTimingOffsets.judgeMs = bms::clampOffsetMs(suggested, bms::TimingOffsets::judgeLimitMs);
+            saveDisplaySettings();
+        }
+        gAutoJudge.reset();
+        return 0;
+    }
     case WM_LOAD_FINISHED:
         if(wParam){completePlaybackWorker(static_cast<std::uintptr_t>(wParam));return 0;}
         if (gLoadWorker.joinable()) gLoadWorker.join();
@@ -5648,6 +5871,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (gPlaying && gPaused) { showBrowseView(); openPracticeSetup(); }
             return 0;
         case ID_SETTINGS: gAudio.triggerEffect(L"click"); openSettings(); return 0;
+        case ID_SUMMARY_SETTINGS: gAudio.triggerEffect(L"click"); if (!gSummaryVisible) toggleSummary(); return 0;
         case ID_HIDDEN_SONGS:
             gAudio.triggerEffect(L"click");
             if (gLoading || gPlaying || gShowingResult) return 0;
@@ -5781,7 +6005,8 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         break;
     case WM_KILLFOCUS:
         if (gCapturingBindings && !gSettingsWindow) cancelKeyBindingCapture();
-        if (gPlaying && !gPaused) pausePlayback(false);
+        // A no-input benchmark keeps running in the background (nothing to pause for).
+        if (gPlaying && !gPaused && !gNoInputBenchmark) pausePlayback(false);
         gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();
         for(int lane=0;lane<16;++lane)releaseLaneInput(lane);
         if (gShowingResult && GetFocus() != gResultNext) showBrowseView();
@@ -5810,6 +6035,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             return 0;
         }
         if (wParam == ID_SONG_LIST_ANIMATION) { tickSongListAnimations(); return 0; }
+        if (wParam == ID_BENCHMARK_NEXT) { KillTimer(window, ID_BENCHMARK_NEXT); continueBenchmarkSeries(); return 0; }
         if (wParam == ID_PAUSE_PRESENT_RETRY) {
             KillTimer(window, ID_PAUSE_PRESENT_RETRY);
             if (gPlaying && gPaused && gCompositionEnabled && !gGpuUnavailable) {
@@ -5821,6 +6047,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         break;
     case WM_PAINT: {
         HUD_SCOPE(WindowPaint);
+        notePaintEntry();
 #ifdef BMS_HUD_FRAME_PROBE
         if(gLatencyInputPump)HUD_COUNT(InputPaint);if(gPaused)HUD_COUNT(PausedPaint);if(GetForegroundWindow()!=gWindow)HUD_COUNT(UnfocusedPaint);
 #endif
@@ -5845,7 +6072,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             gCompositionPresenter.setDirectComposition(gDirectCompositionEnabled);
             gCompositionPresenter.setVsync(gTargetFps == vsyncFps);
             gCompositionPresenter.setAntialias(gNoteAntialias);
-            if (gGpuFrame && !gCompositionPresenter.prepare(window, width, height)) { gGpuFrame = false; gGpuUnavailable = true; }
+            if (gGpuFrame && !gCompositionPresenter.prepare(window, width, height)) { gGpuFrame = false; gGpuUnavailable = true; notePresentFallback(); }
             if (gGpuFrame) {
                 const int limit = gTargetFps > 0 ? gTargetFps : unlimitedFpsLimit;
                 gCompositionPresenter.lowLatency().request(gReflexRequested && !gPaused ? latency::Mode::Reflex : latency::Mode::Off,
@@ -5857,6 +6084,9 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 return 0;
             }
             if (hybridRendererEnabled && gGpuFrame && gTargetFps == vsyncFps && !gCompositionPresenter.canBeginHybridFrame()) {
+                // Aligned VSync found the queue still busy: paint on the ready signal (the
+                // pre-alignment behaviour) for ~0.25 s rather than waiting for the next slot.
+                if (gVsyncReadyWake && gFramePacer.vblankAligned()) gFramePacer.suspendVblank(60);
                 // Keep audio/input/judgement updates running, but avoid painting
                 // CPU gear/HUD frames the compositor cannot accept yet.
                 BMS_PERF_SET(presentDeferred, true);
@@ -5871,6 +6101,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             prepareAppliedSkinGpu();
 #endif
             if (HUD_LEGACY_REFLEX()&&gPlaying&&!gPaused&&gGpuFrame) gCompositionPresenter.lowLatency().renderStart();
+            if (gPlaying && gPrewarmTextPending) prewarmPlayText();
             if (gPlaying) drawGameScreen(gBackBufferDc);
             else if (gShowingResult) drawResultScreen(gBackBufferDc);
             else if (gLoading && gLoadResult.playback) drawPreparingPlayback(gBackBufferDc);
@@ -5882,16 +6113,21 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             {HUD_SCOPE(FinalGdiFlush);GdiFlush();} // Complete GDI writes before the D3D texture upload reads the DIB.
             bool pauseFrameDeferred = false;
             { BMS_PERF_SCOPE(presentMs);
+                const uint64_t submittedBefore = gCompositionPresenter.submittedFrames();
+                gDiagPresentStart = std::chrono::steady_clock::now();
                 const bool presented = gGpuFrame && gCompositionPresenter.present(window, gBackBufferPixels, width, height);
+                if (presented) notePresentWork();
+                if (presented && gCompositionPresenter.submittedFrames() != submittedBefore) notePresentSubmitted(true);
                 BMS_PERF_SET(presentDeferred, presented && gCompositionPresenter.presentationDeferred());
                 pauseFrameDeferred = presented && gPaused && gCompositionPresenter.presentationDeferred();
                 if (!presented) {
                     if (gGpuFrame) {
-                        gGpuFrame = false; gGpuUnavailable = true;
+                        gGpuFrame = false; gGpuUnavailable = true; notePresentFallback();
                         drawGameScreen(gBackBufferDc); GdiFlush();
                     }
                     gCompositionPresenter.reset();
                     BitBlt(dc, 0, 0, width, height, gBackBufferDc, 0, 0, SRCCOPY);
+                    notePresentSubmitted(false);
                     if (gPlaying && !gPaused && gTargetFps == vsyncFps) {
                         GdiFlush();
                         DwmFlush();
@@ -5912,7 +6148,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         EndPaint(window, &ps); return 0;
     }
     case WM_CLOSE:
-        if (!gPlaying && MessageBoxW(window, L"BMS Player를 종료하시겠습니까?", L"종료 확인", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) != IDYES) return 0;
+        if (!gPlaying && MessageBoxW(window, L"SevenMania를 종료하시겠습니까?", L"종료 확인", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) != IDYES) return 0;
         if (gLoading) gLoadCancelled = true;
         DestroyWindow(window);
         return 0;
@@ -6069,7 +6305,7 @@ void prepareSkinForPlayback(){
     gCompositionPresenter.setDirectComposition(gDirectCompositionEnabled);gCompositionPresenter.setVsync(gTargetFps==vsyncFps);gCompositionPresenter.setAntialias(gNoteAntialias);
     const bool previous=gGpuFrame;
     if(gCompositionPresenter.prepare(gWindow,gWindowWidth,gWindowHeight)){gGpuFrame=true;prepareAppliedSkinGpu();}
-    else gGpuUnavailable=true;
+    else {gGpuUnavailable=true;notePresentFallback();}
     gGpuFrame=previous;
 }
 bool drawPreparingSkin(HDC dc){
@@ -6187,13 +6423,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     HRESULT mf = MFStartup(MF_VERSION, MFSTARTUP_LITE);
     if (FAILED(mf)) {
-        MessageBoxW(nullptr, L"Windows Media Foundation을 초기화하지 못했습니다.", L"BMS Player", MB_ICONERROR | MB_OK);
+        MessageBoxW(nullptr, L"Windows Media Foundation을 초기화하지 못했습니다.", L"SevenMania", MB_ICONERROR | MB_OK);
         if (gTimerResolutionRequested) timeEndPeriod(1);
         CoUninitialize();
         return 1;
     }
     const auto effectAssets = executableFolder() / L"Assets";
+#ifdef BMS_ENABLE_SKIN_BINDINGS
     const auto skinSounds = defaultSkinPath().parent_path() / L"sounds";
+#else
+    const std::filesystem::path skinSounds = effectAssets;
+#endif
     const auto resolveUiSound = [&](const wchar_t* name) {
         const auto skinSound = skinSounds / name;
         std::error_code ec;
@@ -6237,7 +6477,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     gStartupProgress = 0;
     gStartupSplashImage.reset(Gdiplus::Bitmap::FromFile((executableFolder() / L"Assets/startup-splash.png").c_str()));
     if (gStartupSplashImage && gStartupSplashImage->GetLastStatus() != Gdiplus::Ok) gStartupSplashImage.reset();
-    HWND window = CreateWindowExW(0, cls.lpszClassName, L"BMS Player — 7+1 Key", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 860, nullptr, nullptr, instance, nullptr);
+    HWND window = CreateWindowExW(0, cls.lpszClassName, L"SEVENMANIA", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 860, nullptr, nullptr, instance, nullptr);
 #ifdef BMS_FRAME_DIAGNOSTICS
     if(window)SetWindowTextW(window,L"BMS Player — TEST / FPS Diagnostics");
 #endif
@@ -6251,6 +6491,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     UpdateWindow(window);
     scanFolders({}); // Only explicitly registered sources; LastFolder is not a source.
     if (!gLoading) finishStartupSplash();
+    applyPresentTuning();
     MSG message{};
     bool running = true;
     while (running) {
@@ -6328,7 +6569,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
             if (handleBrowseShortcut(message.message, message.wParam, message.lParam)) continue;
             if (!gPlaying && !gShowingResult && !gSettingsWindow && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
                 if (!gLoading && (message.lParam & (1LL << 30)) == 0) {
-                    if (MessageBoxW(gWindow, L"BMS Player를 종료하시겠습니까?", L"종료 확인", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) == IDYES)
+                    if (MessageBoxW(gWindow, L"SevenMania를 종료하시겠습니까?", L"종료 확인", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2) == IDYES)
                         DestroyWindow(gWindow);
                 }
                 continue;
@@ -6371,6 +6612,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
                     MsgWaitForMultipleObjectsEx(0, nullptr, static_cast<DWORD>(cpuWait), QS_ALLINPUT, MWMO_INPUTAVAILABLE);
                 updatePlaybackFrame();
                 latencyControl.endFrame();
+                updateVblankAlignment();
                 gFramePacer.advance();
                 continue;
             }

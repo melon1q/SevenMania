@@ -248,7 +248,7 @@ bool SkinApplication::prepareGpu(ID2D1RenderTarget* target,const SkinDataSnapsho
         HUD_COUNT(PrepareTargetChanges);
         impl_->gpu.unload();impl_->gpuTarget=target;impl_->gpuFailed=false;
         if(auto error=impl_->gpu.prepare(impl_->package,ScreenKind::Play,target)){error_=*error;impl_->gpuFailed=true;}
-        else impl_->gpu.forceEntranceDuration(gameplayEntranceDurationSeconds);
+        else {impl_->gpu.forceEntranceDuration(gameplayEntranceDurationSeconds);impl_->gpu.prewarmText();}
     }
     if(impl_->gpuFailed)return false;
     if(impl_->scene!=ScreenKind::Play){impl_->gpu.emit("screen.enter");impl_->scene=ScreenKind::Play;}

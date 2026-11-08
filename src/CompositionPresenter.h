@@ -3,6 +3,9 @@
 #include "HudFrameProbe.h"
 #include "LowLatency.h"
 #include "ReflexBackend.h"
+#include "DirtyRect.h"
+#include "BgaSourceImage.h"
+#include "VideoNv12.h"
 #include <d3d11.h>
 #include <dxgi1_3.h>
 #include <dcomp.h>
@@ -85,6 +88,101 @@ class CompositionPresenter {
     int overlayWidth_{}, overlayHeight_{};
     int width_{}, height_{};
     Ptr<ID2D1Bitmap> hybridBackdrop_, hybridLayer_;
+    // GPU-scaled BGA still: small source bitmap drawn into the BGA area with linear filtering.
+    Ptr<ID2D1Bitmap> sourceBackdrop_;
+    std::shared_ptr<const BgaSourceImage> hybridSource_, uploadedSource_;
+    // NV12 video BGA: dynamic NV12 texture -> D3D11 video processor -> BGRA texture -> D2D.
+    nv12::View hybridVideo_;
+    std::shared_ptr<const void> uploadedVideoOwner_; uint64_t uploadedVideoGeneration_{};
+    Ptr<ID3D11VideoDevice> videoDevice_; Ptr<ID3D11VideoContext> videoContext_;
+    Ptr<ID3D11VideoProcessorEnumerator> videoEnumerator_; Ptr<ID3D11VideoProcessor> videoProcessor_;
+    Ptr<ID3D11Texture2D> videoNv12Upload_, videoNv12_, videoRgb_;
+    Ptr<ID3D11VideoProcessorInputView> videoInput_; Ptr<ID3D11VideoProcessorOutputView> videoOutput_;
+    Ptr<ID2D1Bitmap> videoBitmap_;
+    int videoWidth_{}, videoHeight_{};
+    bool videoFailed_{}, videoActive_{};
+    uint64_t videoOffered_{}, videoUploads_{};
+    const char* videoFailStage_ = "";
+    HRESULT videoFailHr_ = S_OK; UINT videoFormatSupport_ = 0;
+    void releaseVideo() {
+        videoBitmap_.Reset(); videoOutput_.Reset(); videoInput_.Reset(); videoRgb_.Reset(); videoNv12_.Reset(); videoNv12Upload_.Reset();
+        videoProcessor_.Reset(); videoEnumerator_.Reset(); videoContext_.Reset(); videoDevice_.Reset();
+        videoWidth_ = videoHeight_ = 0; uploadedVideoOwner_.reset(); uploadedVideoGeneration_ = 0; videoActive_ = false;
+    }
+    bool prepareVideo(int width, int height) {
+        if (videoProcessor_ && width == videoWidth_ && height == videoHeight_) return true;
+        releaseVideo();
+        if (FAILED(device_.As(&videoDevice_)) || FAILED(context_.As(&videoContext_))) { videoFailStage_ = "video-interfaces"; return false; }
+        D3D11_VIDEO_PROCESSOR_CONTENT_DESC content{};
+        content.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
+        content.InputWidth = content.OutputWidth = UINT(width); content.InputHeight = content.OutputHeight = UINT(height);
+        content.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
+        if (FAILED(videoDevice_->CreateVideoProcessorEnumerator(&content, &videoEnumerator_)) ||
+            FAILED(videoDevice_->CreateVideoProcessor(videoEnumerator_.Get(), 0, &videoProcessor_))) { videoFailStage_ = "video-processor"; return false; }
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = UINT(width); desc.Height = UINT(height); desc.MipLevels = 1; desc.ArraySize = 1; desc.SampleDesc.Count = 1;
+        // CPU writes go to a dynamic texture (WRITE_DISCARD renames: no GPU wait); the video
+        // processor reads a DEFAULT-usage copy, since drivers reject dynamic input views.
+        desc.Format = DXGI_FORMAT_NV12; desc.Usage = D3D11_USAGE_DYNAMIC; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE; desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(device_->CreateTexture2D(&desc, nullptr, &videoNv12Upload_))) { videoFailStage_ = "nv12-upload-texture"; return false; }
+        UINT support = 0;
+        videoEnumerator_->CheckVideoProcessorFormat(DXGI_FORMAT_NV12, &support);
+        videoFormatSupport_ = support;
+        if (!(support & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT)) { videoFailStage_ = "nv12-input-unsupported"; return false; }
+        desc.Usage = D3D11_USAGE_DEFAULT; desc.CPUAccessFlags = 0;
+        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; desc.Usage = D3D11_USAGE_DEFAULT; desc.CPUAccessFlags = 0;
+        desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(device_->CreateTexture2D(&desc, nullptr, &videoRgb_))) { videoFailStage_ = "rgb-texture"; return false; }
+        D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input{}; input.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
+        D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC output{}; output.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
+        // Drivers differ in which bind flags they accept for video-processor input textures.
+        for (const UINT bind : {UINT(D3D11_BIND_DECODER), UINT(D3D11_BIND_SHADER_RESOURCE),
+                 UINT(D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE), UINT(D3D11_BIND_RENDER_TARGET), 0u}) {
+            D3D11_TEXTURE2D_DESC nv12Desc{};
+            videoNv12Upload_->GetDesc(&nv12Desc);
+            nv12Desc.Usage = D3D11_USAGE_DEFAULT; nv12Desc.CPUAccessFlags = 0; nv12Desc.BindFlags = bind;
+            videoNv12_.Reset(); videoInput_.Reset();
+            if (FAILED(device_->CreateTexture2D(&nv12Desc, nullptr, &videoNv12_))) continue;
+            videoFailHr_ = videoDevice_->CreateVideoProcessorInputView(videoNv12_.Get(), videoEnumerator_.Get(), &input, &videoInput_);
+            if (SUCCEEDED(videoFailHr_)) break;
+        }
+        if (!videoInput_) { videoFailStage_ = "processor-input-view"; return false; }
+        if (FAILED(videoDevice_->CreateVideoProcessorOutputView(videoRgb_.Get(), videoEnumerator_.Get(), &output, &videoOutput_))) { videoFailStage_ = "processor-output-view"; return false; }
+        Ptr<IDXGISurface> surface;
+        if (FAILED(videoRgb_.As(&surface))) { videoFailStage_ = "rgb-surface"; return false; }
+        const auto props = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+        if (FAILED(drawingTarget_->CreateSharedBitmap(__uuidof(IDXGISurface), surface.Get(), &props, &videoBitmap_))) { videoFailStage_ = "shared-bitmap"; return false; }
+        videoContext_->VideoProcessorSetStreamAutoProcessingMode(videoProcessor_.Get(), 0, FALSE);
+        videoContext_->VideoProcessorSetStreamFrameFormat(videoProcessor_.Get(), 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
+        D3D11_VIDEO_PROCESSOR_COLOR_SPACE out{}; out.RGB_Range = 0; // full-range RGB
+        videoContext_->VideoProcessorSetOutputColorSpace(videoProcessor_.Get(), &out);
+        videoWidth_ = width; videoHeight_ = height;
+        return true;
+    }
+    bool uploadVideo() {
+        HUD_SCOPE(UploadVideoNv12);
+        const auto& v = hybridVideo_;
+        if (!prepareVideo(v.width, v.height)) return false;
+        if (v.owner == uploadedVideoOwner_ && v.generation == uploadedVideoGeneration_) return true;
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (FAILED(context_->Map(videoNv12Upload_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) { videoFailStage_ = "nv12-map"; return false; } // renamed: no GPU wait
+        auto* target = static_cast<uint8_t*>(mapped.pData);
+        for (int y = 0; y < v.height; ++y) std::memcpy(target + size_t(y) * mapped.RowPitch, v.data + size_t(y) * v.width, size_t(v.width));
+        const uint8_t* uv = v.data + size_t(v.width) * v.height;
+        auto* uvTarget = target + size_t(mapped.RowPitch) * v.height;
+        for (int y = 0; y < v.height / 2; ++y) std::memcpy(uvTarget + size_t(y) * mapped.RowPitch, uv + size_t(y) * v.width, size_t(v.width));
+        context_->Unmap(videoNv12Upload_.Get(), 0);
+        context_->CopyResource(videoNv12_.Get(), videoNv12Upload_.Get()); // GPU-side copy, both planes
+        D3D11_VIDEO_PROCESSOR_COLOR_SPACE in{};
+        in.YCbCr_Matrix = v.matrix == nv12::Matrix::Bt709 ? 1 : 0;
+        in.Nominal_Range = v.fullRange ? D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255 : D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+        videoContext_->VideoProcessorSetStreamColorSpace(videoProcessor_.Get(), 0, &in);
+        D3D11_VIDEO_PROCESSOR_STREAM stream{}; stream.Enable = TRUE; stream.pInputSurface = videoInput_.Get();
+        if (FAILED(videoContext_->VideoProcessorBlt(videoProcessor_.Get(), videoOutput_.Get(), 0, 1, &stream))) { videoFailStage_ = "processor-blt"; return false; }
+        uploadedBytes_ += nv12::bytes(v.width, v.height); ++videoUploads_;
+        uploadedVideoOwner_ = v.owner; uploadedVideoGeneration_ = v.generation;
+        return true;
+    }
     std::shared_ptr<const uint32_t> hybridLayerPixels_, uploadedLayerPixels_;
     std::shared_ptr<const uint32_t> hybridPixelOwner_, uploadedPixels_;
     const uint32_t* hybridPixels_{};
@@ -92,7 +190,8 @@ class CompositionPresenter {
     bool hybridFrame_{};
     float hybridDarkness_{}, hybridLaneOpacity_{};
     RECT hybridLane_{};
-    struct CpuRegion { RECT rect{}; Ptr<ID2D1Bitmap> bitmap; };
+    // snapshot mirrors the bitmap contents so unchanged HUD pixels are not re-uploaded.
+    struct CpuRegion { RECT rect{}; Ptr<ID2D1Bitmap> bitmap; std::vector<uint32_t> snapshot; };
     std::vector<CpuRegion> hybridRegions_;
     uint64_t submittedFrames_{}, deferredFrames_{}, uploadedBytes_{};
     double totalGpuMilliseconds_{};
@@ -110,6 +209,17 @@ public:
     ~CompositionPresenter() { reset(); }
     void setVsync(bool enabled) { vsync_ = enabled; }
     void setAntialias(bool enabled) { antialias_ = enabled; }
+    // A/B switch (default off): true skips HUD region/overlay uploads whose pixels did not
+    // change. Measured on dive_l7 (cap 600, 240Hz) it raised missed intervals, so it is opt-in.
+    void setSkipUnchangedUploads(bool enabled) { skipUnchangedUploads_ = enabled; }
+    // Output queue depth (1 = lowest latency). 2 absorbs VSync jitter at +1 refresh latency.
+    void setFrameLatency(unsigned frames) {
+        frames = std::clamp(frames, 1u, 3u);
+        if (frames == frameLatency_) return;
+        reset(); frameLatency_ = frames;
+    }
+    unsigned frameLatency() const { return frameLatency_; }
+    bool skipUnchangedUploads() const { return skipUnchangedUploads_; }
     void setDirectComposition(bool enabled) {
         if (directComposition_ == enabled) return;
         reset(); directComposition_ = enabled;
@@ -121,6 +231,8 @@ public:
         frameOverlay_=nullptr;frameForeground_=nullptr;frameIntro_=nullptr;
         lowLatency_.detach();
         hybridLayer_.Reset(); hybridLayerPixels_.reset(); uploadedLayerPixels_.reset();
+        sourceBackdrop_.Reset(); hybridSource_.reset(); uploadedSource_.reset();
+        releaseVideo(); hybridVideo_ = {}; videoFailed_ = false;
         hybridBackdrop_.Reset(); hybridPixelOwner_.reset(); uploadedPixels_.reset(); hybridPixels_ = nullptr; hybridFrame_ = false;
         hybridRegions_.clear(); uploadedHybridGeneration_ = 0;
         hybridReadyPermit_ = false;
@@ -146,11 +258,13 @@ public:
         if (!swap_ || width != width_ || height != height_) {
             reset();
             HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
                 &device_, nullptr, &context_);
+            if (FAILED(hr)) hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, // no video support: NV12 path stays off
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device_, nullptr, &context_);
             Ptr<IDXGIDevice> dxgi; Ptr<IDXGIAdapter> adapter; Ptr<IDXGIFactory2> factory;
             if (FAILED(hr) || FAILED(device_.As(&dxgi)) || FAILED(dxgi->GetAdapter(&adapter)) ||
-                FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) { reset(); return false; }
+                FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) { fail("device", FAILED(hr) ? hr : E_FAIL); reset(); return false; }
             DXGI_SWAP_CHAIN_DESC1 desc{};
             desc.Width = width; desc.Height = height; desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
             desc.SampleDesc.Count = 1; desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -162,11 +276,11 @@ public:
                     FAILED(DCompositionCreateDevice(dxgi.Get(), IID_PPV_ARGS(&composition_))) ||
                     FAILED(composition_->CreateTargetForHwnd(window, TRUE, &target_)) ||
                     FAILED(composition_->CreateVisual(&visual_)) || FAILED(visual_->SetContent(swap_.Get())) ||
-                    FAILED(target_->SetRoot(visual_.Get())) || FAILED(composition_->Commit())) { reset(); return false; }
+                    FAILED(target_->SetRoot(visual_.Get())) || FAILED(composition_->Commit())) { fail("swapchain-dcomp", E_FAIL); reset(); return false; }
             } else {
                 if (!createOutputWindow(window, width, height) ||
                     FAILED(factory->CreateSwapChainForHwnd(device_.Get(), outputWindow_, &desc, nullptr, nullptr, &swap_))) {
-                    reset(); return false;
+                    fail("swapchain-hwnd", E_FAIL); reset(); return false;
                 }
             }
             factory->MakeWindowAssociation(window, DXGI_MWA_NO_ALT_ENTER);
@@ -175,8 +289,8 @@ public:
             adapter->GetDesc(&adapterInfo);
             lowLatency_.attach({device_.Get(), adapterInfo.VendorId});
             Ptr<IDXGISwapChain2> latencySwap;
-            if (FAILED(swap_.As(&latencySwap)) || FAILED(latencySwap->SetMaximumFrameLatency(1)) ||
-                !(presentationReady_ = latencySwap->GetFrameLatencyWaitableObject())) { reset(); return false; }
+            if (FAILED(swap_.As(&latencySwap)) || FAILED(latencySwap->SetMaximumFrameLatency(frameLatency_)) ||
+                !(presentationReady_ = latencySwap->GetFrameLatencyWaitableObject())) { fail("latency", E_FAIL); reset(); return false; }
             // Draw into our own texture, which the compositor never holds. Updating a
             // displayed backbuffer can otherwise stall even when Present uses interval 0.
             D3D11_TEXTURE2D_DESC texture{};
@@ -189,7 +303,7 @@ public:
                 FAILED(drawingFactory_->CreateDxgiSurfaceRenderTarget(surface.Get(),
                     D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
                         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96, 96), &drawingTarget_)) ||
-                FAILED(drawingTarget_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0), &brush_))) { reset(); return false; }
+                FAILED(drawingTarget_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0), &brush_))) { fail("d2d", E_FAIL); reset(); return false; }
             HUD_COUNT(TargetChanges);
             D3D11_QUERY_DESC queryDesc{};
             queryDesc.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
@@ -216,7 +330,10 @@ public:
     void setBgaViewport(RECT area){bgaViewport_=area;}
     void hybridBackground(const uint32_t* pixels, uint64_t generation, int darkness,
         RECT lane, int laneOpacity, const std::vector<RECT>& regions, std::shared_ptr<const uint32_t> owner = {},
-        std::shared_ptr<const uint32_t> layer = {}) {
+        std::shared_ptr<const uint32_t> layer = {}, std::shared_ptr<const BgaSourceImage> source = {}, nv12::View video = {}) {
+        hybridVideo_ = video && !(video.width & 1) && !(video.height & 1) ? std::move(video) : nv12::View{};
+        hybridSource_ = source && source->width > 0 && source->height > 0 &&
+            source->pixels.size() == static_cast<size_t>(source->width) * source->height ? std::move(source) : nullptr;
         hybridLayerPixels_ = std::move(layer);
         hybridPixelOwner_ = std::move(owner);
         hybridFrame_ = true; hybridPixels_ = pixels; hybridGeneration_ = generation;
@@ -224,11 +341,16 @@ public:
         hybridLane_ = lane; hybridLaneOpacity_ = std::clamp(laneOpacity, 0, 100) / 100.0f;
         if (hybridRegions_.size() != regions.size()) hybridRegions_.resize(regions.size());
         for (size_t i = 0; i < regions.size(); ++i) {
-            if (!EqualRect(&hybridRegions_[i].rect, &regions[i])) hybridRegions_[i].bitmap.Reset();
+            if (!EqualRect(&hybridRegions_[i].rect, &regions[i])) { hybridRegions_[i].bitmap.Reset(); hybridRegions_[i].snapshot.clear(); }
             hybridRegions_[i].rect = regions[i];
         }
     }
     uint64_t submittedFrames() const { return submittedFrames_; }
+    uint64_t videoOffered() const { return videoOffered_; }
+    uint64_t videoUploads() const { return videoUploads_; }
+    const char* videoFailStage() const { return videoFailStage_; }
+    HRESULT videoFailResult() const { return videoFailHr_; }
+    UINT videoFormatSupport() const { return videoFormatSupport_; }
     uint64_t deferredFrames() const { return deferredFrames_; }
     uint64_t uploadedBytes() const { return uploadedBytes_; }
     double gpuMilliseconds() const { return totalGpuMilliseconds_; }
@@ -327,7 +449,7 @@ public:
         HUD_SCOPE(PresenterTotal);
         if (!pixels || width <= 0 || height <= 0) return false;
         if ((!swap_ || width != width_ || height != height_) && !prepare(window, width, height)) return false;
-        if (frameFailed_) { reset(); return false; }
+        if (frameFailed_) { fail("frame-resource", deviceStatus()); reset(); return false; }
         presentationDeferred_ = false;
         pendingFrame_ = true;
         collectGpuTiming();
@@ -335,17 +457,17 @@ public:
         // the latest CPU frame while the output queue is occupied.
         const DWORD ready = hybridReadyPermit_ ? WAIT_OBJECT_0 : WaitForSingleObject(presentationReady_, 0);
         if (ready == WAIT_TIMEOUT) { HUD_COUNT(QueueDeferred);presentationDeferred_ = true; ++deferredFrames_; return true; }
-        if (ready != WAIT_OBJECT_0) { reset(); return false; }
+        if (ready != WAIT_OBJECT_0) { fail("wait", HRESULT_FROM_WIN32(GetLastError())); reset(); return false; }
         hybridReadyPermit_ = true;
         GpuTimingSlot* timing = beginGpuTiming();
         const bool drawn = drawFrame(pixels, width, foreground, fw, fh, foregroundX);
         finishGpuTiming(timing);
-        if (!drawn) { reset(); return false; }
+        if (!drawn) { fail("draw", deviceStatus()); reset(); return false; }
         // A full presentation queue is normal, not a lost device. Keep drawing the
         // newest frame and submit only when there is room; never wait for a refresh.
         BMS_PERF_SCOPE(gpuQueueMs);
         Ptr<ID3D11Texture2D> buffer;
-        {HUD_SCOPE(SwapBufferGet);if (FAILED(swap_->GetBuffer(0, IID_PPV_ARGS(&buffer)))) { reset(); return false; }}
+        {HUD_SCOPE(SwapBufferGet);if (const HRESULT got = swap_->GetBuffer(0, IID_PPV_ARGS(&buffer)); FAILED(got)) { fail("getbuffer", got); reset(); return false; }}
         {HUD_SCOPE(Copy);context_->CopyResource(buffer.Get(), frame_.Get());}
         lowLatency_.renderEnd();
         lowLatency_.presentStart();
@@ -358,7 +480,16 @@ public:
     }
     int gpuUtilizationPercent() const { return gpuTimingReady_ ? gpuUsagePercent_ : -1; }
     bool presentationDeferred() const { return presentationDeferred_; }
+    // Why the last GPU frame/prepare failed (kept across reset() for diagnostics).
+    const char* lastFailureStage() const { return failStage_; }
+    HRESULT lastFailureResult() const { return failHr_; }
 private:
+    unsigned frameLatency_ = 1;
+    bool skipUnchangedUploads_ = false; // off by default: skipping measured 340-467 vs 128 hitches
+    const char* failStage_ = "none";
+    HRESULT failHr_ = S_OK;
+    void fail(const char* stage, HRESULT hr) { failStage_ = stage; failHr_ = hr; }
+    HRESULT deviceStatus() const { return device_ ? device_->GetDeviceRemovedReason() : E_FAIL; }
     bool finishPresentation(HRESULT shown) {
         presentationDeferred_ = false;
         if (shown == DXGI_ERROR_WAS_STILL_DRAWING) { HUD_COUNT(QueueDeferred);presentationDeferred_ = true; ++deferredFrames_; }
@@ -377,7 +508,10 @@ private:
             const double elapsed = std::chrono::duration<double>(now - presentationWindow_).count();
             if (elapsed >= 1) { presentationFps_ = static_cast<unsigned>(presentationWindowFrames_ / elapsed + 0.5); presentationWindowFrames_ = 0; presentationWindow_ = now; }
         }
-        if (shown != DXGI_ERROR_WAS_STILL_DRAWING && FAILED(shown)) { reset(); return false; }
+        if (shown != DXGI_ERROR_WAS_STILL_DRAWING && FAILED(shown)) {
+            fail(shown == DXGI_ERROR_DEVICE_REMOVED ? "present-device-removed" : "present", shown == DXGI_ERROR_DEVICE_REMOVED ? deviceStatus() : shown);
+            reset(); return false;
+        }
         return true;
     }
     bool uploadHybrid(const uint32_t* pixels, int width) {
@@ -385,35 +519,59 @@ private:
         BMS_PERF_SCOPE(uploadMs);
         if (!hybridPixels_) return false;
         {HUD_SCOPE(UploadBackdrop);
-        if (!hybridBackdrop_) {
+        videoActive_ = false;
+        if (hybridVideo_) ++videoOffered_;
+        if (hybridVideo_ && !videoFailed_) {
+            // Any failure (no video processor, driver quirk) falls back to the RGB upload for good.
+            if (uploadVideo()) videoActive_ = true; else { videoFailed_ = true; releaseVideo(); }
+        }
+        if (videoActive_) {
+            uploadedPixels_.reset(); uploadedHybridGeneration_ = ~uint64_t{}; // full RGB refresh when leaving video
+        } else if (hybridSource_) {
+            HUD_SCOPE(UploadSourceBackdrop);
+            if (hybridSource_ != uploadedSource_) {
+                const auto& source = *hybridSource_;
+                const auto size = sourceBackdrop_ ? sourceBackdrop_->GetPixelSize() : D2D1::SizeU(0, 0);
+                HRESULT uploaded;
+                if (size.width == UINT(source.width) && size.height == UINT(source.height))
+                    uploaded = sourceBackdrop_->CopyFromMemory(nullptr, source.pixels.data(), source.width * 4);
+                else {
+                    sourceBackdrop_.Reset();
+                    uploaded = drawingTarget_->CreateBitmap(D2D1::SizeU(source.width, source.height), source.pixels.data(), source.width * 4,
+                        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)), &sourceBackdrop_);
+                }
+                if (FAILED(uploaded)) return false;
+                uploadedBytes_ += uint64_t(source.width) * source.height * 4;
+                uploadedSource_ = hybridSource_;
+            }
+            // The full-size backdrop bitmap no longer matches uploadedPixels_: the next
+            // CPU-scaled frame must be uploaded whole.
+            uploadedPixels_.reset(); uploadedHybridGeneration_ = ~uint64_t{};
+        } else if (!hybridBackdrop_) {
             HUD_SCOPE(BackdropCreate);
             if (FAILED(drawingTarget_->CreateBitmap(D2D1::SizeU(width_, height_), hybridPixels_, width_ * 4,
                 D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)), &hybridBackdrop_))) return false;
             {HUD_SCOPE(BackdropRetain);uploadedPixels_ = hybridPixelOwner_;}
             uploadedHybridGeneration_ = hybridGeneration_; uploadedBytes_ += uint64_t(width_) * height_ * 4;
         } else if (uploadedHybridGeneration_ != hybridGeneration_) {
-            int top = 0, bottom = height_;
+            RECT dirty{0, 0, width_, height_};
             // Compare with the last successful upload, even when presentation skipped generations.
+            // Full-width row band only: narrow partial updates of a bitmap the GPU may still
+            // read cost more in GPU synchronization than the bytes they save (measured).
             if (uploadedPixels_ && hybridPixelOwner_) {
                 HUD_SCOPE(BackdropCompare);
-                const auto sameRow = [&](int y) {
-                    HUD_COUNT(BackdropComparedRows);
-                    const size_t offset = static_cast<size_t>(y) * width_;
-                    return std::memcmp(uploadedPixels_.get() + offset, hybridPixels_ + offset, width_ * 4) == 0;
-                };
-                while (top < bottom && sameRow(top)) ++top;
-                while (bottom > top && sameRow(bottom - 1)) --bottom;
+                dirty = dirtyrect::rows(uploadedPixels_.get(), size_t(width_), hybridPixels_, size_t(width_), width_, height_);
             }
-            if (top < bottom) {
-                const auto rect = D2D1::RectU(0, top, width_, bottom);
+            if (!dirtyrect::empty(dirty)) {
+                const auto rect = D2D1::RectU(dirty.left, dirty.top, dirty.right, dirty.bottom);
                 HUD_SCOPE(BackdropCopy);HUD_COUNT(BackdropCopyCalls);
-                if (FAILED(hybridBackdrop_->CopyFromMemory(&rect, hybridPixels_ + static_cast<size_t>(top) * width_, width_ * 4))) return false;
-                uploadedBytes_ += uint64_t(width_) * (bottom - top) * 4;
+                if (FAILED(hybridBackdrop_->CopyFromMemory(&rect, hybridPixels_ + static_cast<size_t>(dirty.top) * width_ + dirty.left, width_ * 4))) return false;
+                uploadedBytes_ += dirtyrect::bytes(dirty);
 #ifdef BMS_HUD_FRAME_PROBE
-                hudprobe::recorder.count(hudprobe::BackdropUploadBytes,unsigned(width_*(bottom-top)*4));
+                hudprobe::recorder.count(hudprobe::BackdropUploadBytes,unsigned(dirtyrect::bytes(dirty)));
 #endif
             }
-            BMS_PERF_SET(backdropSavedBytes, uint64_t(width_) * (height_ - bottom + top) * 4);
+            BMS_PERF_SET(backdropSavedBytes, uint64_t(width_) * height_ * 4 - dirtyrect::bytes(dirty));
             {HUD_SCOPE(BackdropRetain);uploadedPixels_ = hybridPixelOwner_;}
             uploadedHybridGeneration_ = hybridGeneration_;
         }
@@ -424,8 +582,17 @@ private:
             else if (!hybridLayer_) {
                 if (FAILED(drawingTarget_->CreateBitmap(D2D1::SizeU(width_,height_),hybridLayerPixels_.get(),width_*4,
                     D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)), &hybridLayer_))) return false;
-            } else if (FAILED(hybridLayer_->CopyFromMemory(nullptr,hybridLayerPixels_.get(),width_*4))) return false;
-            if (hybridLayerPixels_) uploadedBytes_ += uint64_t(width_)*height_*4;
+                uploadedBytes_ += uint64_t(width_)*height_*4;
+            } else {
+                // Layer buffers are immutable once published. Skip an identical one; otherwise
+                // overwrite the whole bitmap so the driver need not wait for the GPU.
+                const bool same = skipUnchangedUploads_ && uploadedLayerPixels_ && dirtyrect::same(uploadedLayerPixels_.get(), size_t(width_),
+                    hybridLayerPixels_.get(), size_t(width_), width_, height_);
+                if (!same) {
+                    if (FAILED(hybridLayer_->CopyFromMemory(nullptr, hybridLayerPixels_.get(), width_ * 4))) return false;
+                    uploadedBytes_ += uint64_t(width_) * height_ * 4;
+                }
+            }
             uploadedLayerPixels_=hybridLayerPixels_;
         }
         }
@@ -437,11 +604,21 @@ private:
             const int rw = r.right - r.left, rh = r.bottom - r.top;
             const auto* source = pixels + static_cast<size_t>(r.top) * width + r.left;
             HUD_REGION(probeRegion,unsigned(rw*rh*4));
-            HRESULT result;
+            if (rw <= 0 || rh <= 0) continue;
+            HRESULT result = S_OK;
+            const size_t area = static_cast<size_t>(rw) * rh;
+            // Skip an unchanged region; otherwise overwrite it whole (no partial-update GPU sync).
+            const bool same = skipUnchangedUploads_ && region.bitmap && region.snapshot.size() == area &&
+                dirtyrect::same(region.snapshot.data(), size_t(rw), source, size_t(width), rw, rh);
+            if (same) continue;
             if (!region.bitmap) result = drawingTarget_->CreateBitmap(D2D1::SizeU(rw, rh), source, width * 4,
                 D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)), &region.bitmap);
             else result = region.bitmap->CopyFromMemory(nullptr, source, width * 4);
-            if (FAILED(result)) return false;
+            if (FAILED(result)) { region.snapshot.clear(); return false; }
+            if (!skipUnchangedUploads_) { region.snapshot.clear(); uploadedBytes_ += uint64_t(rw) * rh * 4; continue; }
+            region.snapshot.resize(area);
+            for (int y = 0; y < rh; ++y)
+                std::memcpy(region.snapshot.data() + static_cast<size_t>(y) * rw, source + static_cast<size_t>(y) * width, static_cast<size_t>(rw) * 4);
             uploadedBytes_ += uint64_t(rw) * rh * 4;
         }
         return true;
@@ -515,7 +692,9 @@ private:
         if (hybridFrame_) {
             drawingTarget_->Clear(D2D1::ColorF(0,0,0));
             const auto area=bgaViewport_.right>bgaViewport_.left&&bgaViewport_.bottom>bgaViewport_.top?D2D1::RectF(float(bgaViewport_.left),float(bgaViewport_.top),float(bgaViewport_.right),float(bgaViewport_.bottom)):D2D1::RectF(0,0,float(width_),float(height_));
-            drawingTarget_->DrawBitmap(hybridBackdrop_.Get(),area);
+            if (videoActive_ && videoBitmap_) drawingTarget_->DrawBitmap(videoBitmap_.Get(), area, 1, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            else if (hybridSource_ && sourceBackdrop_) drawingTarget_->DrawBitmap(sourceBackdrop_.Get(), area, 1, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            else drawingTarget_->DrawBitmap(hybridBackdrop_.Get(),area);
             if (hybridLayer_) drawingTarget_->DrawBitmap(hybridLayer_.Get(),area);
             brush_->SetColor(D2D1::ColorF(0, 0, 0)); brush_->SetOpacity(hybridDarkness_);
             drawingTarget_->FillRectangle(D2D1::RectF(0, 0, static_cast<float>(width_), static_cast<float>(height_)), brush_.Get());

@@ -1,4 +1,4 @@
-﻿"""Exercise acceptance failures, incomplete runs and stable paired traces without a GPU."""
+"""Exercise acceptance failures, incomplete runs and stable paired traces without a GPU."""
 import importlib.util
 import json
 from pathlib import Path

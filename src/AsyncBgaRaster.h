@@ -144,6 +144,15 @@ public:
         image->lastUsed = ++clock_;
         return {image, image->pixels.data()};
     }
+    // Same eligibility as canvasFrame(), plus an unscaled copy for GPU scaling.
+    std::shared_ptr<const BgaSourceImage> gpuSourceFrame(const bms::Chart& chart, const std::wstring& id, bool blackKey) {
+        if (id.empty() || blackKey) return {};
+        const auto entry = scaled_.find(keyFor(chart,id,blackKey,nullptr));
+        if (entry == scaled_.end()) return {};
+        const auto& image = entry->second;
+        if (!image->opaque || image->x || image->y || image->width != width_ || image->height != height_) return {};
+        return image->gpuSource;
+    }
     bool coversCanvas(const bms::Chart& chart,const std::wstring& id){
         if(chart_&&!synchronousOverflow_&&!scaled_.contains(keyFor(chart,id,false,nullptr))){request(id,false,nullptr);return false;}
         return BgaRaster::coversCanvas(chart,id);

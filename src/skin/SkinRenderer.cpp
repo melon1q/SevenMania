@@ -93,6 +93,30 @@ struct SkinRenderer::Impl {
     std::string scratch;
     HDC measure{};
     ~Impl(){if(measure)DeleteDC(measure);}
+    void prewarmText() {
+        static constexpr const wchar_t* words[]{L"GREAT",L"GOOD",L"BAD",L"POOR",L"MINE"};
+        for(auto& layer:layers) {
+            if(!layer.text||!layer.font||!layer.font->handle)continue;
+            const auto& e=layer.element;const HFONT font=layer.font->handle;
+            if(e.binding=="play.judgementCombo") {
+                for(const auto* word:words) {
+                    const std::wstring text=std::wstring(word)+L" 0123456789";
+                    for(const int phase:{-1,0}) {
+                        const auto raster=[phase](HDC dc,const std::wstring& body,RECT bounds,HFONT face,COLORREF){drawHudTextBody(dc,body,bounds,face,RGB(0,0,0),phase);};
+                        textCache.prewarm(text,font,phase<0?RGB(0,0,0):RGB(0,0,1),raster,false,true);
+                    }
+                    maskCache.prewarm(text,font,RGB(255,255,255),drawHudGlyphMask,false,true);
+                }
+                continue;
+            }
+            const auto raster=[](HDC dc,const std::wstring& text,RECT bounds,HFONT face,COLORREF color) {
+                const auto oldFont=SelectObject(dc,face);const int mode=SetBkMode(dc,TRANSPARENT);const auto oldColor=SetTextColor(dc,color);
+                DrawTextW(dc,text.c_str(),static_cast<int>(text.size()),&bounds,DT_LEFT|DT_TOP|DT_SINGLELINE|DT_NOPREFIX);
+                SetTextColor(dc,oldColor);SetBkMode(dc,mode);if(oldFont)SelectObject(dc,oldFont);
+            };
+            textCache.prewarm(L"0123456789.,:%x+-/ ",font,RGB(e.tint.r,e.tint.g,e.tint.b),raster,false,true);
+        }
+    }
     void update(const SkinDataSnapshot* snapshot,const Limits& limits) {
         if(snapshot&&(!snapshot->active()||snapshot->screen()!=screen))snapshot=nullptr;
         for(auto& layer:layers) {
@@ -430,6 +454,7 @@ void SkinRenderer::emit(std::string_view event) noexcept {if(!impl_)return;doubl
 void SkinRenderer::setJudgementRainbow(bool enabled) noexcept {if(impl_)impl_->judgementRainbow=enabled;}
 void SkinRenderer::setJudgementAnchor(double x,double y,double w,double h) noexcept {if(impl_){impl_->anchorX=x;impl_->anchorY=y;impl_->anchorWidth=w;impl_->anchorHeight=h;}}
 void SkinRenderer::setJudgementOffset(double offset) noexcept {if(impl_)impl_->judgementOffset=offset;}
+void SkinRenderer::prewarmText() noexcept {if(impl_)try{impl_->prewarmText();}catch(...){}}
 bool SkinRenderer::scrolling() const noexcept {if(impl_)for(const auto& layer:impl_->layers)if(layer.overflow>0)return true;return false;}
 bool SkinRenderer::hasBox(std::string_view mode) const noexcept {if(impl_)for(const auto& layer:impl_->layers)if(layer.element.kind==ElementKind::Box&&layer.element.boxMode==mode)return true;return false;}
 bool SkinRenderer::updateBox(std::string_view mode,const std::uint32_t* pixels,unsigned width,unsigned height) noexcept {

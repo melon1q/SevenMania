@@ -9,6 +9,7 @@
 
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 struct GpuTestAccess {
+    static bool videoFailed(const CompositionPresenter& renderer) { return renderer.videoFailed_; }
     static HWND outputHwnd(CompositionPresenter& renderer) {
         HWND result{}; if (renderer.swap_) renderer.swap_->GetHwnd(&result); return result;
     }
@@ -30,7 +31,9 @@ struct GpuTestAccess {
             readyFramesUploaded &= renderer.canBeginHybridFrame() && renderer.canBeginHybridFrame();
             readyFramesUploaded &= WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
             const auto previousBytes = renderer.uploadedBytes();
-            readyFramesUploaded &= renderer.present(nullptr, base.data(), size, size) && renderer.uploadedBytes() > previousBytes;
+            // Change a CPU-region pixel: unchanged pixels are no longer re-uploaded.
+            auto frame = base; frame[0] ^= 0x00010101u * static_cast<uint32_t>(i + 1);
+            readyFramesUploaded &= renderer.present(nullptr, frame.data(), size, size) && renderer.uploadedBytes() > previousBytes;
             ResetEvent(renderer.presentationReady_);
         }
         CloseHandle(renderer.presentationReady_); renderer.presentationReady_ = real;
@@ -122,6 +125,8 @@ int main() {
         {
             constexpr int size = 64;
             std::vector<uint32_t> background(size * size, 0xff804020u), cpu(size * size, 0xff204080u), empty(size * size, 0);
+            require(!CompositionPresenter{}.skipUnchangedUploads(), "unchanged-upload skipping must be off by default");
+            renderer.setSkipUnchangedUploads(true); // opt-in path
             require(renderer.prepare(window, size, size), "hybrid setup failed");
             renderer.hybridBackground(background.data(), 1, 50, {8, 0, 16, size}, 100, {{0, 0, 8, size}});
             auto pixels = GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
@@ -135,7 +140,29 @@ int main() {
             renderer.hybridBackground(background.data(), 1, 50, {8, 0, 16, size}, 100, {{0, 0, 8, size}});
             pixels = GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
             require(((pixels[2 * size + 20] >> 16) & 255) >= 63, "unchanged generation reuploaded the background");
-            require(renderer.uploadedBytes() - bytes == 8 * size * 4, "hybrid frame uploaded more than its CPU region");
+            require(renderer.uploadedBytes() == bytes, "unchanged hybrid CPU region was uploaded again");
+            {   // A/B switch off: the unchanged region is uploaded whole again (previous behaviour).
+                renderer.setSkipUnchangedUploads(false);
+                const auto before = renderer.uploadedBytes();
+                require(renderer.prepare(window, size, size), "hybrid A/B reuse failed");
+                renderer.hybridBackground(background.data(), 1, 50, {8, 0, 16, size}, 100, {{0, 0, 8, size}});
+                GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+                require(renderer.uploadedBytes() - before == 8 * size * 4, "disabled skip did not re-upload the CPU region");
+                renderer.setSkipUnchangedUploads(true);
+                // Snapshot was dropped while disabled: the first frame back uploads once.
+                require(renderer.prepare(window, size, size), "hybrid A/B restore failed");
+                renderer.hybridBackground(background.data(), 1, 50, {8, 0, 16, size}, 100, {{0, 0, 8, size}});
+                GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+            }
+            // A changed CPU pixel uploads its region once (whole, no partial-update sync).
+            const auto unchanged = renderer.uploadedBytes();
+            cpu[5 * size + 3] = 0xff00ff00u;
+            require(renderer.prepare(window, size, size), "hybrid dirty reuse failed");
+            renderer.hybridBackground(background.data(), 1, 50, {8, 0, 16, size}, 100, {{0, 0, 8, size}});
+            pixels = GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+            require((pixels[5 * size + 3] & 0xffffffu) == 0x00ff00u, "dirty hybrid CPU pixel was not uploaded");
+            require((pixels[2 * size + 2] & 0xffffffu) == 0x204080u, "dirty upload damaged the rest of the CPU region");
+            require(renderer.uploadedBytes() - unchanged == 8 * size * 4, "changed hybrid CPU region was not uploaded whole");
             GpuTestAccess::verifyHybridDeferral(renderer, cpu, size);
             GpuTestAccess::verifyPendingRetry(renderer);
             require(renderer.prepare(window, size, size), "hybrid invalidation failed");
@@ -156,6 +183,57 @@ int main() {
                 [](uint32_t a,uint32_t b){return ((a^b)&0xffffffu)==0;}),
                 "partial upload changed an unchanged pixel or missed the new pixel");
             require(renderer.uploadedBytes() - priorBytes == size * 4,"partial upload did not isolate one changed row");
+            {   // GPU-scaled BGA still: only the small source is uploaded, and it covers the area.
+                auto source = std::make_shared<BgaSourceImage>();
+                source->width = 4; source->height = 4; source->pixels.assign(16, 0xff00c000u);
+                auto full = std::make_shared<std::vector<uint32_t>>(size * size, 0xff00c000u);
+                const auto before = renderer.uploadedBytes();
+                renderer.hybridBackground(full->data(), 7, 0, {}, 0, {}, {full, full->data()}, {}, source);
+                pixels = GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+                require(renderer.uploadedBytes() - before == 4 * 4 * 4, "GPU-scaled BGA uploaded more than its source");
+                require(((pixels[40 * size + 40] >> 8) & 255) >= 0xbe && (pixels[40 * size + 40] & 0xff0000u) == 0, "GPU-scaled BGA not drawn");
+                const auto again = renderer.uploadedBytes();
+                renderer.hybridBackground(full->data(), 7, 0, {}, 0, {}, {full, full->data()}, {}, source);
+                GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+                require(renderer.uploadedBytes() == again, "unchanged GPU-scaled BGA was uploaded again");
+                // Back to a CPU-scaled frame: the full backdrop must be refreshed whole.
+                renderer.hybridBackground(full->data(), 8, 0, {}, 0, {}, {full, full->data()});
+                GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+                require(renderer.uploadedBytes() - again == uint64_t(size) * size * 4, "CPU backdrop not refreshed after GPU-scaled frames");
+            }
+            {   // NV12 video backdrop: 1.5 bytes/pixel upload, converted by the D3D11 video processor.
+                auto frame = std::make_shared<std::vector<uint8_t>>(nv12::bytes(size, size), uint8_t(128));
+                std::fill_n(frame->begin(), size * size, uint8_t(180)); // light gray (limited range)
+                auto full = std::make_shared<std::vector<uint32_t>>(size * size, 0xff000000u);
+                nv12::View view; view.width = size; view.height = size; view.matrix = nv12::Matrix::Bt709;
+                view.generation = 1; view.data = frame->data(); view.owner = frame;
+                const auto before = renderer.uploadedBytes();
+                renderer.hybridBackground(full->data(), 9, 0, {}, 0, {}, {full, full->data()}, {}, {}, view);
+                pixels = GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+                if (GpuTestAccess::videoFailed(renderer)) { char hr[64]; std::snprintf(hr, sizeof hr, " hr=0x%08lX support=0x%X", (unsigned long)renderer.videoFailResult(), renderer.videoFormatSupport()); throw std::runtime_error(std::string("NV12 video path failed at ") + renderer.videoFailStage() + hr); }
+                {
+                    require(renderer.uploadedBytes() - before == nv12::bytes(size, size), "NV12 upload size wrong");
+                    const auto p = pixels[40 * size + 40];
+                    std::vector<uint32_t> converted(size_t(size) * size);
+                    nv12::toBgra(frame->data(), size, size, nv12::Matrix::Bt709, false, converted.data());
+                    const uint32_t expected = converted[40 * size + 40];
+                    for (int shift : {0, 8, 16}) require(std::abs(int((p >> shift) & 255) - int((expected >> shift) & 255)) <= 4, "NV12 GPU color differs from CPU conversion");
+                    const auto again = renderer.uploadedBytes();
+                    renderer.hybridBackground(full->data(), 9, 0, {}, 0, {}, {full, full->data()}, {}, {}, view);
+                    GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+                    require(renderer.uploadedBytes() == again, "unchanged NV12 frame uploaded again");
+                    // A real 1080p frame (the size BGA videos actually use).
+                    auto hd = std::make_shared<std::vector<uint8_t>>(nv12::bytes(1920, 1080), uint8_t(128));
+                    std::fill_n(hd->begin(), 1920 * 1080, uint8_t(180));
+                    nv12::View big = view; big.width = 1920; big.height = 1080; big.generation = 2; big.data = hd->data(); big.owner = hd;
+                    const auto beforeHd = renderer.uploadedBytes();
+                    renderer.hybridBackground(full->data(), 9, 0, {}, 0, {}, {full, full->data()}, {}, {}, big);
+                    pixels = GpuTestAccess::renderAndRead(renderer, cpu, empty, size);
+                    if (GpuTestAccess::videoFailed(renderer)) throw std::runtime_error(std::string("1080p NV12 failed at ") + renderer.videoFailStage());
+                    require(renderer.uploadedBytes() - beforeHd == nv12::bytes(1920, 1080), "1080p NV12 upload size wrong");
+                    for (int shift : {0, 8, 16}) require(std::abs(int((pixels[40 * size + 40] >> shift) & 255) - int((expected >> shift) & 255)) <= 4, "1080p NV12 GPU color wrong");
+                }
+            }
             auto overlay = std::make_shared<std::vector<uint32_t>>(size * size,0x80800000u);
             renderer.hybridBackground(last->data(),5,0,{},0,{}, {last,last->data()},{overlay,overlay->data()});
             pixels=GpuTestAccess::renderAndRead(renderer,cpu,empty,size);

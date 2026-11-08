@@ -78,7 +78,7 @@ int wmain(int argc,wchar_t** argv) {
         ShowWindow(gSettingsWindow,SW_HIDE);selectSettingsCategory(6);paintPage(output/L"keys.png");selectSettingsCategory(4);paintPage();
         for(const auto& [id,value]:settingsController().snapshot()) {
             (void)value;
-            if(id==ID_BROWSE_BACKGROUND||id==ID_JUDGEMENT_PROFILE||id==ID_COMBO_TEXT_Y||id==ID_SKIN_JUDGEMENT_MODE||id==ID_SKIN_COMBO_MODE)continue; // removed user controls; legacy keys retained
+            if(id==ID_BROWSE_BACKGROUND||id==ID_PREVIEW_START||id==ID_JUDGEMENT_PROFILE||id==ID_COMBO_TEXT_Y||id==ID_SKIN_JUDGEMENT_MODE||id==ID_SKIN_COMBO_MODE)continue; // removed user controls; legacy keys retained
             require(std::any_of(rmlSettingBindings().begin(),rmlSettingBindings().end(),[&](const auto& binding){return bms::SettingsController::canonicalId(binding.command)==id;}),"snapshot contains an unmapped setting");
         }
         require(postSetting(ID_SPEED,13),"close queue fixture failed");
@@ -130,7 +130,7 @@ int wmain(int argc,wchar_t** argv) {
             <<", GDI delta="<<int(last.gdi)-int(baseline.gdi)<<", USER delta="<<int(last.user)-int(baseline.user)
             <<", GPU available="<<last.gpuValid<<", GPU delta="<<static_cast<long long>(last.gpu)-static_cast<long long>(baseline.gpu)
             <<", mean open+5page paint ms="<<totalOpen/24<<", mean render ms="<<(frames?totalRender/frames:0)<<'\n';
-        openSettings();ShowWindow(gSettingsWindow,SW_HIDE);paintPage(output/L"settings-default-summary.png");click("native-fallback");
+        openSettings();ShowWindow(gSettingsWindow,SW_HIDE);paintPage(output/L"settings-default-summary.png");SendMessageW(gSettingsWindow,WM_RML_SETTINGS_FALLBACK,1,0);
         require(!gRmlSettingsPageActive&&(GetWindowLongPtrW(gSettingsBody,GWL_STYLE)&WS_VISIBLE),"native compatibility switch failed");
         SendMessageW(gSettingsWindow,WM_CLOSE,0,0);openSettings();ShowWindow(gSettingsWindow,SW_HIDE);require(gRmlSettingsPageActive,"next session did not restore default RML UI");
         SendMessageW(gSettingsWindow,WM_CLOSE,0,0);

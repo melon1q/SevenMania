@@ -73,7 +73,7 @@ int wmain(int argc,wchar_t** argv) {
         require(gWindow,"owner creation failed");
         bms::Chart chart;chart.path=L"synthetic.bms";chart.title=L"Phase5";chart.playable=true;chart.initialBpm=120;chart.playLevel=L"9";chart.difficulty=3;
         gCharts={chart};gActiveChartIndex=0;
-        HWND settings=createSettings();selectSettingsCategory(0);paintPage();require(gRmlSettingsPageActive,"gameplay page failed");
+        HWND settings=createSettings();selectSettingsCategory(6);paintPage();require(gRmlSettingsPageActive,"keys page failed");
         bool controllerOpened=false;
         const auto controllerTimer=SetTimer(nullptr,0,100,[](HWND,UINT,UINT_PTR,DWORD){
             if(const auto dialog=FindWindowW(L"SevenManiaControllerSettings",nullptr))
@@ -101,12 +101,12 @@ int wmain(int argc,wchar_t** argv) {
         click("bind-keys");SendMessageW(settings,WM_ACTIVATE,WA_INACTIVE,0);
         require(!gCapturingBindings&&gLaneKeys==originalKeys,"focus loss failed to cancel");
         click("bind-keys");selectSettingsCategory(1);require(!gCapturingBindings,"navigation left binding capture active");
-        selectSettingsCategory(0);paintPage();click("bind-keys");
+        selectSettingsCategory(6);paintPage();click("bind-keys");
         const std::array<UINT,8> keys{'Q','W','E','R','T','Y','U','I'};
         for(UINT key:keys){handleSettingsCaptureMessage(WM_KEYDOWN,key,0);handleSettingsCaptureMessage(WM_KEYUP,key,0);}
         require(!gCapturingBindings&&gLaneKeys==keys,"complete binding capture did not apply");loadKeyBindings();require(gLaneKeys==keys,"binding INI save failed");
         click("reset-keys");require(gLaneKeys==DEFAULT_KEYS,"RML default keys failed");
-        click("game-preview");require(gSettingsPreviewShowing,"RML preview did not show existing renderer");
+        selectSettingsCategory(0);paintPage();click("game-preview");require(gSettingsPreviewShowing,"RML preview did not show existing renderer");
         require(postSetting(ID_JUDGE_POSITION,-30)&&postSetting(ID_COMBO_TEXT_Y,24)&&postSetting(ID_JUDGEMENT_TEXT_Y,-24)&&postSetting(ID_GEAR_POSITION,2),"preview values rejected");
         pump();paintPage(output/L"phase5-gameplay.png");
         require(gJudgeLineOffset==-30&&gComboTextYOffset==24&&gJudgementTextYOffset==-24&&gGearPosition==2,"preview values not applied");

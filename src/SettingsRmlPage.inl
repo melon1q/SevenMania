@@ -68,9 +68,14 @@ void syncRmlSettingsState(const std::wstring& status = L"") {
         const int value=snapshot.at(bms::SettingsController::canonicalId(binding.command));
         if(binding.kind==RmlSettingBinding::Check) gRmlSettingsPage.setChecked(binding.element,value!=0);
         else gRmlSettingsPage.setValue(binding.element,std::to_string(value));
+        if(binding.kind==RmlSettingBinding::Select)
+            for(const char* segment:{"screen-mode","summary-screen","game-gauge","summary-gauge","intro-enabled","low-latency","audio-output","gear-position","auto-judge-mode"})
+                if(std::string(segment)==binding.element)
+                    for(int option=0;option<3;++option)gRmlSettingsPage.setClass(std::string(segment)+":"+std::to_string(option),"on",option==value);
         if(binding.kind==RmlSettingBinding::Range) {
             const bool pixels=binding.command==ID_JUDGE_POSITION || binding.command==ID_COMBO_TEXT_Y || binding.command==ID_JUDGEMENT_TEXT_Y;
-            gRmlSettingsPage.setText(std::string(binding.element)+"-value",std::to_string(value)+(pixels?" px":"%"));
+            const bool millis=binding.command==ID_AUDIO_LATENCY || binding.command==ID_NOTE_DISPLAY_OFFSET || binding.command==ID_JUDGE_TIMING_OFFSET;
+            gRmlSettingsPage.setText(std::string(binding.element)+"-value",std::to_string(value)+(millis?" ms":pixels?" px":binding.command==ID_FPS?" FPS":"%"));
         }
     }
     gRmlSettingsPage.setEnabled("gpu-limit",snapshot.at(ID_COMPOSITION)!=0);
@@ -78,6 +83,7 @@ void syncRmlSettingsState(const std::wstring& status = L"") {
     const bool reflexAvailable=latency::probeReflex().supported && gCompositionEnabled &&
         gCompositionPresenter.lowLatency().status(latency::Mode::Reflex)!=latency::Status::SessionDisabled;
     gRmlSettingsPage.setEnabled("low-latency",reflexAvailable || gReflexRequested);
+    for(int option=0;option<2;++option)gRmlSettingsPage.setClass("low-latency:"+std::to_string(option),"disabled",!(reflexAvailable || gReflexRequested));
     gRmlSettingsPage.setOptions("key-mode",{{"0","5키"},{"1","7키"},{"2","9키"},{"3","10키"},{"4","14키"}});
     gRmlSettingsPage.setValue("key-mode",std::to_string(gBindingMode));
     std::wstring summary;for(int i=0;i<bms::KeyProfiles::counts[gBindingMode];++i)summary+=keyName(gKeyProfiles.keys[gBindingMode][i])+L"  ";
@@ -113,7 +119,19 @@ bool showRmlSettingsPage() {
             const auto root = gRmlSettingsAssetRoot.empty() ? executableFolder() / L"Assets/UI" : gRmlSettingsAssetRoot;
             std::error_code ec;
             if (!std::filesystem::is_regular_file(root / L"settings.rcss", ec)) throw std::runtime_error("Missing settings.rcss");
-            const auto changed = [](const std::string& id, const std::string& value) {
+            const auto changed = [](const std::string& rawId, const std::string& rawValue) {
+                std::string id=rawId, value=rawValue;
+                // Segment buttons are named "<select-id>:<value>" and drive the hidden select's binding.
+                if(const auto colon=id.find(':');colon!=std::string::npos){value=id.substr(colon+1);id.resize(colon);}
+                // Speed stepper buttons nudge the canonical speed setting by one step.
+                for(const char* name:{"game-speed","summary-speed"}) {
+                    const bool dec=id==std::string(name)+"-dec",inc=id==std::string(name)+"-inc";
+                    if(dec||inc){
+                        if(gCapturingBindings)cancelKeyBindingCapture();
+                        if(!postSetting(ID_SPEED,settingsController().snapshot().at(ID_SPEED)+(inc?1:-1)))syncRmlSettingsState();
+                        return;
+                    }
+                }
                 if(id=="key-mode"){if(gCapturingBindings)cancelKeyBindingCapture();try{gBindingMode=std::clamp(std::stoi(value),0,4);}catch(...){}syncRmlSettingsState();return;}
                 if(id.starts_with("library-")) {
                     if(id=="library-sources"){try{gLibrarySourceSelection=std::stoull(value);}catch(...){}PostMessageW(gWindow,WM_LIBRARY_ACTION,7,0);return;}

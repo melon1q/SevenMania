@@ -4,6 +4,7 @@
 #include "ChartRules.h"
 #include "ChartOptions.h"
 #include "PerformanceTrace.h"
+#include "BgaSourceImage.h"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -26,7 +27,9 @@ class BgaRaster {
         std::vector<uint32_t> pixels;
         unsigned long long lastUsed{};
     };
-    struct Scaled : Image { int x{}, y{}; };
+    // gpuSource: unscaled copy for GPU scaling, only for a plain full-canvas still
+    // (no crop, no forced size mode, no black key) that is much smaller than the canvas.
+    struct Scaled : Image { int x{}, y{}; std::shared_ptr<const BgaSourceImage> gpuSource; };
     std::unordered_map<std::wstring, Image> sources_;
     std::unordered_map<std::wstring, std::shared_ptr<Scaled>> scaled_;
     size_t sourceBytes_{}, scaledBytes_{};
@@ -169,12 +172,22 @@ class BgaRaster {
             result.opaque = std::all_of(result.pixels.begin(),result.pixels.end(),
                 [](uint32_t pixel) { return (pixel >> 24) == 255; });
         } else resize(*image,sx,sy,sw,sh,result);
+        if (gpuSourceEnabled && !blackKey && image->opaque && clip == chart.bgaClips.end() && sx == 0 && sy == 0 &&
+            sw == image->width && sh == image->height && result.x == 0 && result.y == 0 &&
+            result.width == width_ && result.height == height_ &&
+            static_cast<uint64_t>(image->width) * image->height * 4 * 4 <= bytes) {
+            auto source = std::make_shared<BgaSourceImage>();
+            source->width = image->width; source->height = image->height; source->pixels = image->pixels;
+            result.gpuSource = std::move(source);
+        }
         result.lastUsed = ++clock_;
         makeRoom(scaled_, scaledBytes_, static_cast<size_t>(bytes), scaledLimit);
         scaledBytes_ += static_cast<size_t>(bytes);
         return scaled_.emplace(key, std::make_shared<Scaled>(std::move(result))).first->second.get();
     }
 public:
+    // Set once at startup (SEVENMANIA_BGA_GPU_SCALE); read by the decode worker.
+    inline static bool gpuSourceEnabled = false;
     void reset() { sources_.clear(); scaled_.clear(); sourceBytes_ = scaledBytes_ = 0; width_ = height_ = 0; }
     void canvas(int width, int height) {
         if (width_ != width || height_ != height) { scaled_.clear(); scaledBytes_ = 0; width_ = width; height_ = height; }

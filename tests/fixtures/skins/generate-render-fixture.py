@@ -1,4 +1,4 @@
-﻿"""Regenerate the tiny deterministic renderer fixture; Python stdlib only, not a game dependency."""
+"""Regenerate the tiny deterministic renderer fixture; Python stdlib only, not a game dependency."""
 from pathlib import Path
 import struct,zlib,json,zipfile
 

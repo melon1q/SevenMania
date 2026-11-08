@@ -7,7 +7,7 @@ void require(bool value, const char* message) { if (!value) throw std::runtime_e
 
 LRESULT CALLBACK shortcutProbe(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR data) {
     const int command = LOWORD(wParam);
-    if (message == WM_COMMAND && (command == ID_SETTINGS || command == ID_OPEN || command == ID_RESCAN)) {
+    if (message == WM_COMMAND && (command == ID_SETTINGS || command == ID_SUMMARY_SETTINGS || command == ID_OPEN || command == ID_RESCAN)) {
         reinterpret_cast<std::vector<int>*>(data)->push_back(command);
         return 0; // Verify routing without opening a modal picker or scanning files.
     }
@@ -20,7 +20,7 @@ void verifyBrowseShortcuts(HWND window) {
     std::vector<int> commands;
     require(SetWindowSubclass(window, shortcutProbe, 42, reinterpret_cast<DWORD_PTR>(&commands)) != FALSE,
         "unable to observe browse shortcut commands");
-    for (const auto& [key, command] : std::array<std::pair<UINT, int>, 3>{{{VK_SPACE, ID_SETTINGS}, {VK_F2, ID_OPEN}, {VK_F5, ID_RESCAN}}}) {
+    for (const auto& [key, command] : std::array<std::pair<UINT, int>, 3>{{{VK_SPACE, ID_SUMMARY_SETTINGS}, {VK_F2, ID_OPEN}, {VK_F5, ID_RESCAN}}}) {
         const size_t previous = commands.size();
         SendMessageW(gList, WM_KEYDOWN, key, 0);
         SendMessageW(gList, WM_KEYDOWN, key, 1LL << 30);

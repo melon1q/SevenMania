@@ -116,6 +116,7 @@ int wmain(int argc, wchar_t** argv) {
         bms::Chart chart; chart.bitmaps[L"01"] = path;
         gBgaActiveImages[0] = L"01";
         const RECT client{0, 0, 900, 500};
+        gWindowWidth = 900; gWindowHeight = 500; // Keep the default BGA viewport equal to the test canvas.
         const int fieldX = 100, laneWidth = 76;
         gBgaDarkness = 0; gLaneTransparency = 0; gBgaBackplateDirty = true;
         drawBgaBackplate(dc, chart, client, fieldX, laneWidth, 92, 360); GdiFlush();
@@ -182,16 +183,17 @@ int wmain(int argc, wchar_t** argv) {
             std::fill_n(canvas, count, 0xff404040u);
             const BrowsePanelLayout panel(gWindowWidth,gWindowHeight);
             drawBrowsePlayRecord(gBackBufferDc,nullptr,panel); GdiFlush();
-            require(std::all_of(canvas,canvas+count,[](uint32_t p){ return p==0xff404040u; }),
-                "unplayed chart still painted record labels");
+            require(!std::all_of(canvas,canvas+count,[](uint32_t p){ return p==0xff404040u; }),
+                "unplayed chart did not paint the NO RECORD label");
+            std::fill_n(canvas, count, 0xff404040u);
             PlayRecord record; record.played=true; record.maxCombo=1234; record.bestAccuracyScore=950000;
             drawBrowsePlayRecord(gBackBufferDc,&record,panel); GdiFlush();
             int rankTop=gWindowHeight, rankBottom=0;
-            for(int y=0;y<gWindowHeight;++y) for(int x=24+panel.width*2/3;x<24+panel.width;++x) {
+            for(int y=0;y<gWindowHeight;++y) for(int x=24;x<24+panel.width;++x) {
                 const auto pixel=canvas[y*gWindowWidth+x];
                 if ((pixel&0xffffffu)!=0x404040u) { rankTop=std::min(rankTop,y); rankBottom=std::max(rankBottom,y); }
             }
-            require(rankBottom-rankTop>40, "rank grade was not enlarged");
+            require(rankBottom>rankTop, "play record summary was not painted"); // The enlarged rank glyph moved to skin rendering.
             DeleteObject(gBrowseMetadataFont); DeleteObject(gBrowseRankFont);
             gBrowseMetadataFont=oldMetadata; gBrowseRankFont=oldRank;
         }

@@ -98,6 +98,7 @@ int wmain(int argc,wchar_t** argv) {
         for(int category=0;category<5;++category) {
             selectSettingsCategory(category); paintPage(output/(L"settings-category-"+std::to_wstring(category)+L".png"));
             require(gRmlSettingsPageActive,"migrated category failed");
+            {RECT c{};GetClientRect(gRmlSettingsPage.window(),&c);const auto shell=gRmlSettingsPage.bounds("settings-shell");require(shell.top==0&&shell.bottom<=c.bottom,"settings shell is offset or taller than the viewport (stray text before the root?)");}
             const auto snapshot=settingsController().snapshot();
             for(const auto& binding:rmlSettingBindings()) {
                 const auto expected=std::to_string(snapshot.at(bms::SettingsController::canonicalId(binding.command)));
@@ -135,17 +136,21 @@ int wmain(int argc,wchar_t** argv) {
         SendMessageW(gRmlSettingsPage.window(),WM_KEYUP,VK_ESCAPE,0);pump();paintPage();
         selectSettingsCategory(4);paintPage();
         require(gRmlSettingsPage.value("summary-speed")==changedSpeed,"summary speed diverged");
+        selectSettingsCategory(0);paintPage();
+        const int speedBefore=std::stoi(gRmlSettingsPage.value("game-speed"));
+        click("game-speed-inc");require(std::stoi(gRmlSettingsPage.value("game-speed"))==speedBefore+1,"speed stepper + failed");
+        click("game-speed-dec");require(std::stoi(gRmlSettingsPage.value("game-speed"))==speedBefore,"speed stepper - failed");
+        click("game-gauge:2");require(gRmlSettingsPage.value("game-gauge")=="2","gauge segment did not apply");
+        selectSettingsCategory(4);paintPage();require(gRmlSettingsPage.value("summary-gauge")=="2","summary gauge segment diverged");
         selectSettingsCategory(3);paintPage();
-        runSettingsImagePicker([](HWND){});paintPage();
-        require(gRmlSettingsPage.focused()=="browse-image","cancelled picker did not restore focus");
         const auto fixedNav=gRmlSettingsPage.bounds("nav-other"),fixedClose=gRmlSettingsPage.bounds("settings-close");
-        gRmlSettingsPage.focus("native-other");paintPage();
+        gRmlSettingsPage.focus("library-refresh");paintPage();
         require(gRmlSettingsPage.bounds("nav-other").top==fixedNav.top && gRmlSettingsPage.bounds("settings-close").top==fixedClose.top,"body scroll moved fixed navigation/footer");
         click("nav-sound"); require(gSettingsWindow==settings && gSettingsCategory==2 && gRmlSettingsPageActive,"category switch did not preserve embedded window");
-        click("native-sound");
+        SendMessageW(settings,WM_RML_SETTINGS_NAVIGATE,2,1);
         require(GetWindowLongPtrW(gSettingsBody,GWL_STYLE)&WS_VISIBLE,"native sound page did not return");
         SendMessageW(settings,WM_COMMAND,MAKEWPARAM(ID_CATEGORY_BASE+3,BN_CLICKED),0); paintPage();
-        click("native-other"); require(gSettingsCategory==3&&!gRmlSettingsPageActive,"advanced Other settings unavailable");
+        SendMessageW(settings,WM_RML_SETTINGS_NAVIGATE,3,1); require(gSettingsCategory==3&&!gRmlSettingsPageActive,"advanced Other settings unavailable");
         SendMessageW(gResourceUsageChoice,BM_SETCHECK,BST_UNCHECKED,0);
         SendMessageW(settings,WM_COMMAND,MAKEWPARAM(ID_RESOURCE_USAGE,BN_CLICKED),reinterpret_cast<LPARAM>(gResourceUsageChoice));
         SendMessageW(settings,WM_COMMAND,MAKEWPARAM(ID_CATEGORY_BASE+3,BN_CLICKED),0); paintPage();
@@ -177,7 +182,7 @@ int wmain(int argc,wchar_t** argv) {
         require(!gShowResourceUsage,"restart did not retain migrated setting");
         settings=createSettings(); selectSettingsCategory(3); paintPage();
         require(gRmlSettingsPage.value("resource-usage")=="0","reopened migrated page lost saved value");
-        click("native-fallback"); require(!gRmlSettingsPageActive&&gRmlSettingsPageFailed,"explicit native fallback failed");
+        SendMessageW(settings,WM_RML_SETTINGS_FALLBACK,1,0); require(!gRmlSettingsPageActive&&gRmlSettingsPageFailed,"explicit native fallback failed");
         SendMessageW(settings,WM_CLOSE,0,0);
         const auto broken=output/L"broken-assets"; std::filesystem::create_directories(broken);
         std::filesystem::copy_file(executableFolder()/L"Assets/UI/settings.rml",broken/L"settings.rml",std::filesystem::copy_options::overwrite_existing);

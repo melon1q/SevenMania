@@ -33,6 +33,8 @@ public:
     bool animating() const noexcept;
     bool scrolling() const noexcept;
     void setJudgementOffset(double offset) noexcept;
+    // Rasterize judgement/number glyphs for every text layer before gameplay starts.
+    void prewarmText() noexcept;
     void setJudgementRainbow(bool enabled) noexcept;
     void setJudgementAnchor(double centerX,double lineY,double width,double height) noexcept;
     bool hasBox(std::string_view mode) const noexcept;

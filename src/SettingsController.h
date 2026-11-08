@@ -23,7 +23,10 @@ public:
         return id >= 1260 && id <= 1266 ? originals[id - 1260] : id;
     }
     static bool normalize(int id, int& value) {
-        if(id==1096){value=std::clamp(value,0,100);return true;}
+        if(id==1096||id==1054){value=std::clamp(value,0,100);return true;}
+        if(id==1055||id==1056){value=std::clamp(value,-200,200);return true;}
+        if(id==1057){value=std::clamp(value,-100,100);return true;}
+        if(id==1058)return value>=0&&value<=2;
         if(id==1097)return value==0||value==1;
         if(id==1098)return value>=800&&value<=1500;
         if(id==1099)return value>=0&&value<=2;
@@ -70,7 +73,7 @@ public:
     void clearPending() { pending_.clear(); }
     std::map<int, int> snapshot() const {
         std::map<int, int> values;
-        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1096,1097,1098,1099,1270,1271,1272,1273}) values[id] = read_(id);
+        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1054,1055,1056,1057,1058,1096,1097,1098,1099,1270,1271,1272,1273}) values[id] = read_(id);
         for (const auto& range : {std::pair{1030,1033}, std::pair{1100,1107}, std::pair{1200,1206}})
             for (int id = range.first; id <= range.second; ++id) values[id] = read_(id);
         return values;

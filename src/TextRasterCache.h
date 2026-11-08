@@ -9,6 +9,9 @@
 #include <functional>
 #include <memory>
 
+// Process-wide miss counter for presentation hitch diagnostics (UI thread only).
+inline std::uint64_t gTextRasterCacheMisses = 0;
+
 // Cache GDI glyphs with the same 24-offset thick outline; compose premultiplied
 // sprites on subsequent frames, including the existing size animation.
 class TextRasterCache {
@@ -67,12 +70,25 @@ public:
     ~TextRasterCache() { if(measure_) DeleteDC(measure_); }
     using GpuDraw = std::function<bool(const uint32_t*, int, int, int, int, int, int, uint64_t)>;
     void clear() { std::vector<Sprite>().swap(sprites_); std::vector<Axis>().swap(xAxis_); std::vector<Axis>().swap(yAxis_); clock_ = 0; }
+    // Rasterize ahead of play so the first use costs no GDI glyph load or surface
+    // allocation. Prewarming is not counted as a gameplay miss.
+    template<class Renderer> bool prewarm(const std::wstring& text, HFONT font, COLORREF color, Renderer render,
+        bool outlined = false, bool leftAligned = false) {
+        const auto misses = gTextRasterCacheMisses;
+        const bool ok = draw(nullptr, 1, 1, text, RECT{0, 0, 1, 1}, font, color, 1.0, render, outlined,
+            [](const uint32_t*, int, int, int, int, int, int, uint64_t) { return true; }, leftAligned);
+        gTextRasterCacheMisses = misses;
+        return ok;
+    }
+    bool contains(const std::wstring& text, HFONT font, COLORREF color, bool outlined = false, bool leftAligned = false) const {
+        return std::any_of(sprites_.begin(), sprites_.end(), [&](const Sprite& item) { return item.text == text && item.font == font && item.color == color && item.outlined == outlined && item.leftAligned == leftAligned; });
+    }
     template<class Renderer> bool draw(uint32_t* target, int width, int height, const std::wstring& text, RECT rect,
         HFONT font, COLORREF color, double scale, Renderer render, bool outlined = true, const GpuDraw& gpu = {}, bool leftAligned = false, bool fitWidth = false) {
         if ((!target && !gpu) || text.empty() || width <= 0 || height <= 0 || scale <= 0) return false;
         auto found = std::find_if(sprites_.begin(), sprites_.end(), [&](const Sprite& item) { return item.text == text && item.font == font && item.color == color && item.outlined == outlined && item.leftAligned == leftAligned; });
         if (found == sprites_.end()) {
-            BMS_PERF_COUNT(textMisses);
+            BMS_PERF_COUNT(textMisses); ++gTextRasterCacheMisses;
             if(!measure_) measure_=CreateCompatibleDC(nullptr);
             HDC measure=measure_; if(!measure) return false;
             const auto oldFont=font?SelectObject(measure,font):nullptr;
@@ -82,23 +98,35 @@ public:
             Sprite sprite; sprite.text = text; sprite.font = font; sprite.color = color; sprite.outlined = outlined; sprite.leftAligned = leftAligned; sprite.id = ++nextSpriteId_;
             sprite.width = std::max(1L, size.cx) + 16; sprite.height = std::max(1L, metrics.tmHeight) + 16;
             if (sprite.width > 4096 || sprite.height > 512) return false;
-            if(!black_ || !white_ || surfaceWidth_!=sprite.width || surfaceHeight_!=sprite.height) {
-                auto black = std::make_unique<Surface>(sprite.width, sprite.height);
-                auto white = std::make_unique<Surface>(sprite.width, sprite.height);
+            // Grow-only scratch surfaces: a combo digit changing the text width must not
+            // recreate two DIB sections mid-play. Sprites use the top-left sprite area.
+            if(!black_ || !white_ || surfaceWidth_<sprite.width || surfaceHeight_<sprite.height) {
+                const int surfaceWidth = std::min(4096, std::max({surfaceWidth_, sprite.width, (sprite.width + 63) / 64 * 64}));
+                const int surfaceHeight = std::min(512, std::max({surfaceHeight_, sprite.height, (sprite.height + 15) / 16 * 16}));
+                auto black = std::make_unique<Surface>(surfaceWidth, surfaceHeight);
+                auto white = std::make_unique<Surface>(surfaceWidth, surfaceHeight);
                 if (!black->dc || !white->dc || !black->pixels || !white->pixels) return false;
                 black_ = std::move(black);
                 white_ = std::move(white);
-                surfaceWidth_=sprite.width;surfaceHeight_=sprite.height;
+                surfaceWidth_=surfaceWidth;surfaceHeight_=surfaceHeight;
             }
             auto& black=*black_;auto& white=*white_;
             if (!black.dc || !white.dc || !black.pixels || !white.pixels) return false;
             const size_t count = static_cast<size_t>(sprite.width) * sprite.height;
-            std::fill_n(black.pixels, count, 0xff000000u); std::fill_n(white.pixels, count, 0xffffffffu);
+            const size_t stride = static_cast<size_t>(surfaceWidth_);
+            for (int y = 0; y < sprite.height; ++y) {
+                std::fill_n(black.pixels + y * stride, sprite.width, 0xff000000u);
+                std::fill_n(white.pixels + y * stride, sprite.width, 0xffffffffu);
+            }
             const RECT bounds{0, 0, sprite.width, sprite.height};
+            const int savedBlack = SaveDC(black.dc), savedWhite = SaveDC(white.dc);
+            IntersectClipRect(black.dc, 0, 0, sprite.width, sprite.height); IntersectClipRect(white.dc, 0, 0, sprite.width, sprite.height);
             render(black.dc, text, bounds, font, color); render(white.dc, text, bounds, font, color); GdiFlush();
+            RestoreDC(black.dc, savedBlack); RestoreDC(white.dc, savedWhite);
             sprite.pixels.resize(count);
             for (size_t i = 0; i < count; ++i) {
-                const uint32_t a = black.pixels[i], b = white.pixels[i];
+                const size_t surface = (i / sprite.width) * stride + i % sprite.width;
+                const uint32_t a = black.pixels[surface], b = white.pixels[surface];
                 const int difference = std::min({std::clamp(int((b >> 16) & 255) - int((a >> 16) & 255), 0, 255),
                     std::clamp(int((b >> 8) & 255) - int((a >> 8) & 255), 0, 255), std::clamp(int(b & 255) - int(a & 255), 0, 255)});
                 sprite.pixels[i] = (static_cast<uint32_t>(255 - difference) << 24) | (a & 0xffffffu);

@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import json,zipfile
 manifest=dict(format='SevenMania.Skin',formatVersion=1,id='test.binding',name='Binding validation',author='SevenMania',skinVersion='1.0.0',description='Minimal data binding test, no design skin.',resolution=dict(width=640,height=360),supportedScreens=['select','play','result'],resourcePaths={})
 def text(id,y,binding='',kind='text',literal='',**kw):

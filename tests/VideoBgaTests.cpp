@@ -74,6 +74,50 @@ int wmain(int argc, wchar_t** argv) {
             require(video.update(1.1) && video.pixels().front() == 0xff00ff00u, "video clock advanced incorrectly");
             require(video.update(0) && video.pixels().front() == 0xffff0000u, "video rewind did not restore first frame");
         }
+        {   // SEVENMANIA_VIDEO_NV12: decoder outputs NV12; the CPU copy is converted back to BGRA.
+            VideoBga::nv12Output = true;
+            VideoBga video;
+            const auto h264 = root / L"nv12.mp4";
+            const bool encoded = fixtures::writeH264(h264);
+            if (!encoded) std::cout << "No H.264 encoder: NV12 decode check skipped\n";
+            const auto closeTo = [](uint32_t pixel, uint32_t expected) {
+                for (int shift : {0, 8, 16}) if (std::abs(int((pixel >> shift) & 255) - int((expected >> shift) & 255)) > 6) return false;
+                return (pixel >> 24) == 255;
+            };
+            // Uncompressed RGB sources cannot be decoded to NV12: the RGB path must take over.
+            require(video.open(clip) && video.update(0) && video.nv12Pixels().empty() && video.pixels().front() == 0xffff0000u, "NV12 fallback to RGB failed");
+            if (encoded) {
+            require(video.open(h264) && video.update(0) && video.ready(), "NV12 video did not open");
+            require(video.nv12Pixels().size() == nv12::bytes(64, 48), "NV12 frame not kept");
+            require(closeTo(video.pixels().front(), 0xffff0000u), "NV12 first frame color wrong");
+            require(video.update(1.1) && closeTo(video.pixels().front(), 0xff00ff00u), "NV12 video clock advanced incorrectly");
+            require(video.update(2.1) && closeTo(video.pixels().front(), 0xff0000ffu), "NV12 third frame color wrong");
+            }
+            VideoBga::nv12Output = false;
+            VideoBga rgb;
+            require(rgb.open(clip) && rgb.update(0) && rgb.nv12Pixels().empty() && rgb.pixels().front() == 0xffff0000u, "RGB path changed");
+        }
+        if (wchar_t path[1024]{}; GetEnvironmentVariableW(L"SEVENMANIA_TEST_VIDEO", path, 1024)) {
+            // Optional real-file check: the NV12 decode (padded 1080p planes, CPU conversion)
+            // must match Media Foundation's own RGB32 decode of the same frame.
+            for (double at : {1.0, 10.0, 30.0}) {
+                const auto play = [&](VideoBga& video) {
+                    if (!video.open(path)) return false;
+                    for (double t = 0; t < at; t += 1.0 / 30) video.update(t, false);
+                    return video.update(at, false) || video.ready();
+                };
+                VideoBga::nv12Output = true; VideoBga yuv; const bool a = play(yuv);
+                VideoBga::nv12Output = false; VideoBga rgb; const bool b = play(rgb);
+                require(a && b && yuv.width() == rgb.width() && yuv.height() == rgb.height(), "real video NV12/RGB open or size mismatch");
+                double total = 0; int worst = 0; const auto& x = yuv.pixels(); const auto& y = rgb.pixels();
+                for (size_t i = 0; i < x.size(); i += 7) for (int shift : {0, 8, 16}) {
+                    const int d = std::abs(int((x[i] >> shift) & 255) - int((y[i] >> shift) & 255)); total += d; worst = std::max(worst, d);
+                }
+                const double mean = total / (double(x.size() / 7 + 1) * 3);
+                std::cout << "real video t=" << at << "s " << yuv.width() << "x" << yuv.height() << " mean|diff|=" << mean << " max=" << worst << "\n";
+                require(!yuv.nv12Pixels().empty() && mean < 1.0 && worst <= 8, "real video NV12 colors differ from RGB decode");
+            }
+        }
         {
             AsyncVideoBga video;
             video.open(root / L"missing.mp4", 32, 32);

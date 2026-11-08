@@ -16,7 +16,7 @@ int main() {
         require(controller.set(1266,3).value==3&&actual[1049]==3,"summary accuracy limit not synchronized");
         require(!controller.set(1049,-1).applied&&!controller.set(1049,5).applied,"invalid accuracy limit accepted");
         const auto before = saves;
-        require(!controller.set(1012, 123).applied && !controller.set(9999, 1).applied && saves == before, "invalid commands were saved");
+        require(!controller.set(1012, 1501).applied && !controller.set(9999, 1).applied && saves == before, "invalid commands were saved");
         const auto rejected = controller.set(1042, 10);
         require(!rejected.applied && rejected.value == 100 && !rejected.error.empty() && saves == before, "device failure changed or persisted actual state");
         const auto oldApplications = applications;

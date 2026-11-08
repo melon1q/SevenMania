@@ -24,6 +24,28 @@ struct FramePacerTestAccess {
         require(!pacer.due(), "cheap unlimited frame bypassed the 1500 FPS ceiling");
         require(pacer.pollBeforeDeadline(), "unlimited sub-millisecond wait fell back to timer sleep");
     }
+    static void verifyVblankAlignment() {
+        using namespace std::chrono;
+        const auto refresh = nanoseconds(4'166'667); const auto lead = microseconds(2000);
+        const auto now = steady_clock::now(); const auto vblank = now - microseconds(1000);
+        // VSync: start lead before the next vblank, one frame per refresh.
+        FramePacer v; v.reset(-1); v.alignToVblank(vblank, refresh, lead); v.advanceToVblank(now);
+        auto first = v.deadline_; require(first > now && first + lead - vblank == refresh, "VSync start not lead before next vblank");
+        v.advanceToVblank(now); require(v.deadline_ == first + refresh, "early VSync frame ran twice for one vblank");
+        // Cap 240 at 240 Hz aligns; cap 120 takes every second vblank; cap 144 keeps the grid.
+        FramePacer c; c.reset(240); c.alignToVblank(vblank, refresh, lead); c.advance(); require(c.vblankAligned(), "cap at refresh did not align");
+        FramePacer h; h.reset(120); h.alignToVblank(vblank, refresh, lead); h.advance(); require(h.vblankAligned(), "cap at half refresh did not align");
+        const auto half = h.deadline_; h.advanceToVblank(steady_clock::now()); require(h.deadline_ - half == refresh * 2, "half-refresh cap did not skip a vblank");
+        FramePacer o; o.reset(144); o.alignToVblank(vblank, refresh, lead); o.advance(); require(!o.vblankAligned(), "non-multiple cap was aligned");
+        FramePacer f; f.reset(600); f.alignToVblank(vblank, refresh, lead); f.advance(); require(!f.vblankAligned(), "cap above refresh was aligned");
+        f.clearVblank(); FramePacer n; n.reset(-1); n.advance(); require(!n.vblankAligned(), "alignment active without vblank data");
+        require(c.pollBeforeDeadline() == (c.deadline_ - steady_clock::now() < microseconds(500)), "aligned poll window wrong");
+        // Ready-wake fallback: suspended alignment resumes after the requested frames.
+        FramePacer s; s.reset(-1); s.alignToVblank(vblank, refresh, lead); s.advance(); require(s.vblankAligned(), "VSync did not align");
+        s.suspendVblank(2); s.advance(); require(!s.vblankAligned(), "suspended pacer stayed aligned");
+        s.advance(); require(s.vblankAligned(), "pacer did not resume alignment after suspension");
+        s.reset(-1); require(s.suspendedFrames() == 0, "reset kept a suspension");
+    }
 };
 
 int main() {
@@ -31,6 +53,7 @@ int main() {
     int result = 0;
     try {
         FramePacerTestAccess::verifyExpensiveUnlimitedFrame();
+        FramePacerTestAccess::verifyVblankAlignment();
         for(int fps:{600,1000})FramePacerTestAccess::verifyExpensiveCappedFrame(fps);
         AudioPositionClock clock;
         require(clock.update(0.0, 10.0) == 0.0, "clock started before audio output");

@@ -83,7 +83,7 @@ int wmain(int argc, wchar_t** argv) {
         require(settingsController().set(ID_PREVIEW_VOLUME, -9).value == 0 &&
             readValue(config, L"Sound", L"PreviewVolume") == L"0", "headless value validation/save failed");
         settingsController().set(ID_PREVIEW_VOLUME, 39);
-        require(!settingsController().set(ID_FPS, 123).applied && gTargetFps == 144, "invalid frame target changed state");
+        require(!settingsController().set(ID_FPS, 1501).applied && gTargetFps == 144, "invalid frame target changed state");
         require(settingsController().set(ID_SUMMARY_SPEED, 11).applied && gNoteSpeed == 2.75, "headless summary application failed");
         auto duplicateKeys = gLaneKeys; duplicateKeys[1] = duplicateKeys[0];
         const auto keysBefore = gLaneKeys;

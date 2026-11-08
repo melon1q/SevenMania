@@ -30,6 +30,8 @@ class AsyncVideoBga {
 public:
     struct Frame {
         int width{}, height{},sourceWidth{},sourceHeight{}; uint64_t generation{}; double timeSeconds{},requestedSeconds{}; std::vector<uint32_t> pixels;
+        // Source-resolution NV12 copy (SEVENMANIA_VIDEO_NV12) for GPU conversion/scaling; empty otherwise.
+        std::vector<uint8_t> nv12; nv12::Matrix nv12Matrix{nv12::Matrix::Bt709}; bool nv12FullRange{};
 #ifdef BMS_HUD_FRAME_PROBE
         Frame(){++VideoFrameMetrics::created;}
         ~Frame(){
@@ -132,6 +134,10 @@ public:
                             // implementation reserves more than the requested size.
                             if(frame->pixels.capacity()*4>slotBytes)for(auto& slot:frames)if(slot==frame)slot.reset();
                             if (scaled) {
+                                if (!video.nv12Pixels().empty()) {
+                                    frame->nv12.assign(video.nv12Pixels().begin(), video.nv12Pixels().end());
+                                    frame->nv12Matrix = video.nv12Matrix(); frame->nv12FullRange = video.nv12FullRange();
+                                } else frame->nv12.clear();
                                 frame->generation = ++generation;
                                 scaledWidth = width; scaledHeight = height;
                             } else frame.reset();

@@ -42,6 +42,7 @@ bool prepareSelectedChartData(bool deferred=false) {
             gLaneNoteIndices[static_cast<size_t>(chartNotes[i].lane)].push_back(i);
     }
     gMissScanIndex = 0;
+    gAutoJudge.reset();gAutoJudgeUsedThisPlay=false;
     gPressed.fill(false);gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();clearAccuracyRestart();
     gHolds.fill(LongNoteHold{});
     resetMines();
@@ -80,6 +81,7 @@ bool startPreparedChart(bool notifyFailure=true) {
     const int index=gActiveChartIndex;
     std::wstring error;
     gSelectionAudio.stopDecision();
+    prewarmPlayText(); // loading is over; rasterize judgement glyphs before the clock starts
     gAudio.setWasapiExclusiveEnabled(gAudioOutputMode == 1);
     if (!(gPractice.enabled ? gAudio.startAt(gPractice.startSeconds,error,gPractice.rate()*gChartOptions.rate) : gAudio.startAt(0,error,gChartOptions.rate))) {
         setStatus(error);
@@ -87,7 +89,7 @@ bool startPreparedChart(bool notifyFailure=true) {
         gPlaybackLoad.fail();gLoading=false;showBrowseView();
         return false;
     }
-    gPlaybackLoad.started();gPlaying=true;gLoading=false;
+    gPlaybackLoad.started();gPlaying=true;gLoading=false;beginPresentDiagnostics();
     gFpsEpoch = std::chrono::steady_clock::now();
     gFpsFrameCount = 0;
     gMeasuredFps = 0;

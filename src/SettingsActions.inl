@@ -33,6 +33,11 @@ int readSettingValue(int id) {
     case ID_BACKGROUND_OPACITY: return gBackgroundOpacity;
     case ID_SONG_PREVIEW: return gSongPreviewEnabled;
     case ID_PREVIEW_VOLUME: return gPreviewVolume;
+    case ID_SELECT_BGM_VOLUME: return gSelectBgmVolume;
+    case ID_AUDIO_LATENCY: return gTimingOffsets.audioMs;
+    case ID_NOTE_DISPLAY_OFFSET: return gTimingOffsets.displayMs;
+    case ID_JUDGE_TIMING_OFFSET: return gTimingOffsets.judgeMs;
+    case ID_AUTO_JUDGE_MODE: return gAutoJudgeMode;
     case ID_CPU_LIMIT: return gCpuLimitPercent;
     case ID_MEMORY_LIMIT: return gMemoryLimitPercent;
     case ID_GPU_LIMIT: return gGpuLimitPercent;
@@ -95,6 +100,11 @@ bool applySettingValue(int id, int value, std::wstring& error) {
     case ID_BACKGROUND_BLUR: gBackgroundBlur = value; gSongPreview.tick(gVolumes[0], gPreviewVolume, gSoundBufferFrames); break;
     case ID_BACKGROUND_OPACITY: gBackgroundOpacity = value; gSongPreview.tick(gVolumes[0], gPreviewVolume, gSoundBufferFrames); break;
     case ID_PREVIEW_VOLUME: gPreviewVolume = value; gSongPreview.tick(gVolumes[0], gPreviewVolume, gSoundBufferFrames); break;
+    case ID_SELECT_BGM_VOLUME: gSelectBgmVolume = std::clamp(value, 0, 100); break;
+    case ID_AUDIO_LATENCY: gTimingOffsets.audioMs = bms::clampOffsetMs(value); gAutoJudge.reset(); break; // history depends on A
+    case ID_JUDGE_TIMING_OFFSET: gTimingOffsets.judgeMs = bms::clampOffsetMs(value, bms::TimingOffsets::judgeLimitMs); break;
+    case ID_AUTO_JUDGE_MODE: gAutoJudgeMode = std::clamp(value, 0, 2); gAutoJudge.reset(); break;
+    case ID_NOTE_DISPLAY_OFFSET: gTimingOffsets.displayMs = bms::clampOffsetMs(value); break;
     case ID_BROWSE_BACKGROUND: gBrowseBackgroundMode = value; updateBrowseMedia(); break;
     case ID_SONG_PREVIEW: gSongPreviewEnabled = value != 0; updateBrowseMedia(); break;
     case ID_CPU_LIMIT: gCpuLimitPercent = value; break;
