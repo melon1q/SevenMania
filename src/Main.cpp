@@ -7,6 +7,7 @@
 #include "skin/SevenManiaSkinData.h"
 #include "skin/SkinApplication.h"
 void emitSevenManiaSkinEvent(std::string_view event);
+void setSevenManiaSkinAnimationPaused(bool paused);
 bool skinOwnsHud();
 bool skinOwnsJudgement();
 int selectSkinShortcutAt(int x,int y);
@@ -15,10 +16,14 @@ void prepareSkinForPlayback();
 bool preparingSkinAnimated();
 bool drawPreparingSkin(HDC);
 bool skinCoversLegacySlots(int left,int top,int right,int bottom);
+bool skinDrawsKeyGuides(int gearMode);
+bool skinGearForMode(int gearMode);
 #endif
 #include "BmsParser.h"
 #include "GameplayModePolicy.h"
+#include "KeyModeFilter.h"
 #include "KeyProfiles.h"
+#include "KeyLaneMap.h"
 #include "SongCatalog.h"
 #include "ChartRules.h"
 #include "ChartOptions.h"
@@ -259,6 +264,7 @@ HWND gList{}, gFolder{}, gStatus{}, gInfo{};
 HWND gHiddenSongs{};
 HIMAGELIST gSongRowImages{};
 bool gShowHiddenCharts{};
+bms::KeyModeFilter gKeyModeFilter{ bms::KeyModeFilter::Key7 };
 bool gHasPartialLoadCharts{};
 std::wstring gPartialLoadSummary;
 std::array<int, 2> gBrowseSelections{ -1, -1 };
@@ -625,7 +631,7 @@ std::array<std::vector<size_t>, 16> gLaneNoteIndices;
 std::vector<bool> gMineHit;
 std::array<bool, 16> gPressed{};
 std::array<bool,16> gKeyboardPressed{};
-std::array<bool,8> gControllerPressed{};
+std::array<bool,16> gControllerPressed{};
 bms::controller::Device gController;
 bool gControllerConfiguring=false;
 constexpr int ID_CONTROLLER_SETTINGS=1294;
@@ -720,6 +726,7 @@ bms::AutoJudgeAdjuster gAutoJudge;
 int gAutoJudgeMode{bms::AutoJudgeAdjuster::Suggest};
 bool gAutoJudgeUsedThisPlay{};
 int gAutoJudgeSuggestion{};
+bool gAutoJudgePending{};
 
 void restorePracticeNotes() {
     if (gPracticeNotesChartIndex >= 0 && gPracticeNotesChartIndex < static_cast<int>(gCharts.size())) {
@@ -836,6 +843,7 @@ void loadDisplaySettings() {
     if (gSettingsFile.empty()) return;
     const auto startup=sevenmania::readStartupSettings(gSettingsFile);
     gBrowseBackgroundMode = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Background", 2, gSettingsFile.c_str())), 0, 3);
+    gKeyModeFilter = bms::keyModeFilterFromInt(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"KeyMode", 0, gSettingsFile.c_str())));
     gBackgroundBlur = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Blur", 20, gSettingsFile.c_str())), 0, 100);
     gBackgroundOpacity = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Opacity", 10, gSettingsFile.c_str())), 0, 100);
     gSongPreviewEnabled = GetPrivateProfileIntW(L"Sound", L"SongPreview", 1, gSettingsFile.c_str()) != 0;
@@ -917,6 +925,7 @@ void loadDisplaySettings() {
 void saveDisplaySettings() {
     if (gSettingsFile.empty()) return;
     WritePrivateProfileStringW(L"Browse", L"Background", std::to_wstring(gBrowseBackgroundMode).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Browse", L"KeyMode", std::to_wstring(static_cast<int>(gKeyModeFilter)).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Browse", L"Blur", std::to_wstring(gBackgroundBlur).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Browse", L"Opacity", std::to_wstring(gBackgroundOpacity).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Browse", L"CustomBackground", gCustomBackgroundName.c_str(), gSettingsFile.c_str());
@@ -998,7 +1007,7 @@ bool applyCpuPerformanceMode() {
 
 void updateBindingCaptureStatus() {
     constexpr std::array<const wchar_t*, 8> laneNames{ L"스크래치", L"1번 건반", L"2번 건반", L"3번 건반", L"4번 건반", L"5번 건반", L"6번 건반", L"7번 건반" };
-    setBindingStatus(L"키 배치 설정: " + std::to_wstring(gCaptureLane+1)+L"번 입력" + L" 키를 누르세요 (Esc 취소)");
+    setBindingStatus(L"키 배치 설정: " + bms::keyProfileSlotName(gBindingMode,bms::keyProfileCaptureSlot(gBindingMode,gCaptureLane)) + L" (" + std::to_wstring(gCaptureLane+1) + L"/" + std::to_wstring(bms::KeyProfiles::counts[gBindingMode]) + L") 키를 누르세요 (Esc 취소)");
 }
 
 void beginKeyBindingCapture() {
@@ -1021,11 +1030,13 @@ void acceptBindingKey(UINT key) {
         setBindingStatus(L"Enter, Esc, F1/F2/F5, PageUp/PageDown, Tab, Windows 키는 지정할 수 없습니다. 다른 키를 누르세요.");
         return;
     }
-    if (std::find(gPendingLaneKeys.begin(), gPendingLaneKeys.begin() + gCaptureLane, key) != gPendingLaneKeys.begin() + gCaptureLane) {
-        setBindingStatus(L"이미 다른 레인에 지정한 키입니다. 각 레인은 서로 다른 키를 사용해야 합니다.");
-        return;
+    for (int captured = 0; captured < gCaptureLane; ++captured) {
+        if (gPendingLaneKeys[static_cast<size_t>(bms::keyProfileCaptureSlot(gBindingMode, captured))] == key) {
+            setBindingStatus(L"이미 다른 레인에 지정한 키입니다. 각 레인은 서로 다른 키를 사용해야 합니다.");
+            return;
+        }
     }
-    gPendingLaneKeys[static_cast<size_t>(gCaptureLane)] = key;
+    gPendingLaneKeys[static_cast<size_t>(bms::keyProfileCaptureSlot(gBindingMode, gCaptureLane))] = key;
     gCaptureAwaitRelease = true;
     ++gCaptureLane;
     if (gCaptureLane < bms::KeyProfiles::counts[gBindingMode]) {
@@ -1069,6 +1080,9 @@ void setJudgement(const std::wstring& text, COLORREF color) {
     emitSevenManiaSkinEvent("judgement");
 #endif
     const bool poor = text.find(L"POOR") != std::wstring::npos || text.find(L"MISS") != std::wstring::npos;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    if (poor) emitSevenManiaSkinEvent("combo.break");
+#endif
     const bool bad = text.find(L"BAD") != std::wstring::npos;
     if (poor || bad) gFeedback.miss();
     // No-input benchmark: every note misses; keep the normal BGA layers (closer to real play).
@@ -1441,6 +1455,23 @@ void refreshSongRow(size_t index) {
 }
 
 bms::ui::SongEntryKind navigationKind(int id);
+bool chartMatchesKeyMode(size_t chartIndex) {
+    return chartIndex < gCharts.size() && bms::keyModeFilterMatches(gKeyModeFilter, gCharts[chartIndex].mode);
+}
+bool groupMatchesKeyMode(const bms::ui::SongGroup& group) {
+    for (const size_t c : group.chartIndices) if (chartMatchesKeyMode(c)) return true;
+    return false;
+}
+// Moves the group's displayed variant onto a chart that matches the key mode filter.
+void normalizeGroupVariantForKeyMode(size_t index) {
+    const auto& groups = gSongSelection.groups();
+    if (index >= groups.size() || !groupMatchesKeyMode(groups[index])) return;
+    const auto current = [&] { const auto& g = gSongSelection.groups()[index]; return g.chartIndices[std::min(g.selectedVariant, g.chartIndices.size() - 1)]; };
+    if (chartMatchesKeyMode(current())) return;
+    if (!gSongSelection.selectGroup(static_cast<int>(index))) return;
+    for (size_t i = 0, n = groups[index].chartIndices.size(); i < n && !chartMatchesKeyMode(current()); ++i)
+        if (!gSongSelection.cycleSelectedVariant(1)) break;
+}
 void rebuildSongRows(int preferred = -1) {
     clearSongListHeldKey();
     if (gWindow) KillTimer(gWindow, ID_SONG_LIST_ANIMATION);
@@ -1461,6 +1492,8 @@ void rebuildSongRows(int preferred = -1) {
     for (size_t i = 0; i < groups.size(); ++i) {
         const auto& group = groups[i];
         if (group.chartIndices.empty() || !gSongFolders.accepts(gCharts[group.chartIndices.front()].path) || gCharts[group.chartIndices.front()].playable == gShowHiddenCharts) continue;
+        if (!groupMatchesKeyMode(group)) continue;
+        normalizeGroupVariantForKeyMode(i);
         if (static_cast<int>(i) == preferred) selectedRow = ListView_GetItemCount(gList);
         insertSongRow(i);
     }
@@ -1623,7 +1656,18 @@ void tickSongListAnimations() {
 
 bool cycleSelectedVariant(int delta) {
     const int groupIndex = selectedGroupIndex();
-    if (!gSongSelection.cycleSelectedVariant(delta)) return false;
+    if (groupIndex < 0) return false;
+    {
+        // Skip variants that the key mode filter hides.
+        const auto currentChart = [&] { const auto& g = gSongSelection.groups()[static_cast<size_t>(groupIndex)]; return g.chartIndices[std::min(g.selectedVariant, g.chartIndices.size() - 1)]; };
+        const size_t startChart = currentChart();
+        bool moved = false;
+        for (size_t i = 0, n = gSongSelection.groups()[static_cast<size_t>(groupIndex)].chartIndices.size(); i < n; ++i) {
+            if (!gSongSelection.cycleSelectedVariant(delta)) break;
+            if (chartMatchesKeyMode(currentChart())) { moved = currentChart() != startChart; break; }
+        }
+        if (!moved) return false;
+    }
     gAudio.triggerEffect(L"levelchange");
     refreshSongRow(static_cast<size_t>(groupIndex));
     updateSelection();
@@ -1647,6 +1691,17 @@ void toggleSongSort() {
     gBrowseSelections[gShowHiddenCharts ? 1 : 0] = preferred;
     rebuildSongRows(preferred);
     setStatus(gSongSelection.sortDescending() ? L"곡 정렬: Z-A" : L"곡 정렬: A-Z");
+}
+
+void cycleKeyModeFilter() {
+    if (gPlaying || gShowingResult || gLoading) return;
+    const int previous = gSongSelection.selectedGroupIndex();
+    gKeyModeFilter = bms::nextKeyModeFilter(gKeyModeFilter);
+    gBrowseSelections.fill(-1);
+    gBrowseSelections[gShowHiddenCharts ? 1 : 0] = previous;
+    rebuildSongRows(previous);
+    saveDisplaySettings();
+    setStatus(std::wstring(L"키 모드: ") + bms::keyModeFilterLabel(gKeyModeFilter));
 }
 
 void buildSongGroups() {
@@ -1813,9 +1868,15 @@ void focusBrowseInput(bool activateWindow = false) {
 void showBrowseView() {
     if (gLoading) { if(gLoadResult.playback)gPlaybackLoad.cancel();gLoadCancelled = true; setStatus(L"불러오기를 취소하고 있습니다..."); return; }
     gSongIntro.reset();
+    // Ask about the auto-adjust suggestion only after the player has seen the result and left it.
+    if (gAutoJudgePending) { gAutoJudgePending = false; PostMessageW(gWindow, WM_AUTO_JUDGE_SUGGEST, 0, 0); }
     finishPresentDiagnostics();
     gPlaying = false;
     gPaused = false;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    // Quitting from the pause menu must not leave the skin animations frozen on the select screen.
+    setSevenManiaSkinAnimationPaused(false);
+#endif
     gGpuFrame = false;
     gCompositionPresenter.reset();
     gFeedback.reset();
@@ -1944,7 +2005,7 @@ void finishPlayback() {
     if (gAutoJudgeMode == bms::AutoJudgeAdjuster::Suggest && !gPractice.enabled && !gNoInputBenchmark) {
         if (const auto suggestion = gAutoJudge.suggestion(gTimingOffsets.judgeMs)) {
             gAutoJudgeSuggestion = *suggestion;
-            PostMessageW(gWindow, WM_AUTO_JUDGE_SUGGEST, 0, 0); // asked outside this update frame
+            gAutoJudgePending = true; // asked when the player leaves the result screen
         }
     }
     if (!gPractice.enabled && gActiveChartIndex >= 0 && gActiveChartIndex < static_cast<int>(gCharts.size())) {
@@ -1998,6 +2059,9 @@ void pausePlayback(bool focusMenu = true) {
     if (!gPlaying || gPaused || !gAudio.pause()) return;
     gPlayhead = heardPlayhead();
     gPaused = true;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    setSevenManiaSkinAnimationPaused(true);
+#endif
     gCompositionPresenter.lowLatency().endFrame();
     gCompositionPresenter.lowLatency().request(latency::Mode::Off);
     gPauseSelection = 0;
@@ -2019,6 +2083,9 @@ void resumePlayback() {
         return;
     }
     gPaused = false;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    setSevenManiaSkinAnimationPaused(false);
+#endif
     for (HWND button : gPauseButtons) if (button) ShowWindow(button, SW_HIDE);
     SetFocus(gWindow);
     gFramePacer.reset(gTargetFps);
@@ -2031,6 +2098,9 @@ void restartPlayback() {
     if(gAudio.isRunning()&&!gAudio.isPaused()&&!gAudio.pause())gAudio.stop();
     const auto& chart = gCharts[static_cast<size_t>(gActiveChartIndex)];
     gPaused = false;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    setSevenManiaSkinAnimationPaused(false);
+#endif
     gPlayhead = gPractice.enabled ? gPractice.startSeconds : 0;
     gHit.assign(chart.notes.size(), false);
     gLingeringLongNotes.clear();
@@ -2121,11 +2191,9 @@ void handlePausedKey(WPARAM key, bool repeated) {
 }
 
 UINT laneKey(int lane) {
-    if(gActiveChartIndex>=0 && gActiveChartIndex<static_cast<int>(gCharts.size()) && gCharts[gActiveChartIndex].mode==bms::ChartMode::PopnNine) {
-        constexpr UINT popn[]{'Z','S','X','D','C','F','V','G','B'};return lane<9?popn[lane]:0;
-    }
-    constexpr UINT second[]{VK_RSHIFT,'Q','W','E','R','T','Y','U'};
-    return lane<8?gLaneKeys[lane]:second[lane-8];
+    auto mode=bms::ChartMode::SevenKey;
+    if(gActiveChartIndex>=0 && gActiveChartIndex<static_cast<int>(gCharts.size()))mode=gCharts[gActiveChartIndex].mode;
+    return bms::laneKeyFor(gKeyProfiles,mode,lane);
 }
 int keyLane(WPARAM key, LPARAM detail) {
     if(key==VK_SHIFT)key=MapVirtualKeyW((static_cast<UINT>(detail)>>16)&0xff,MAPVK_VSC_TO_VK_EX);
@@ -2206,8 +2274,12 @@ void pollControllerInput() {
             if(state.menuPressed)previewKey(VK_RETURN);return;
         }
         const bool playing=active&&gPlaying&&!gPaused;
-        for(int lane=0;lane<8;++lane){
-            const bool previous=gControllerPressed[lane],next=playing&&state.lanes[lane];
+        auto mode=bms::ChartMode::SevenKey;
+        if(gActiveChartIndex>=0&&gActiveChartIndex<static_cast<int>(gCharts.size()))mode=gCharts[gActiveChartIndex].mode;
+        for(int slot=0;slot<16;++slot){
+            const int lane=bms::controllerSlotLane(mode,slot);
+            if(lane<0)continue;
+            const bool previous=gControllerPressed[lane],next=playing&&state.lanes[slot];
             gControllerPressed[lane]=next;
             if(next&&!previous)pressLane(lane);
             else if(previous&&!next&&!gKeyboardPressed[lane])releaseLaneInput(lane);
@@ -2225,7 +2297,7 @@ void pollControllerInput() {
 void openControllerSettings() {
     if(gCapturingBindings)cancelKeyBindingCapture();
     gControllerConfiguring=true;
-    for(int lane=0;lane<8;++lane){gControllerPressed[lane]=false;if(!gKeyboardPressed[lane])releaseLaneInput(lane);}
+    for(int lane=0;lane<16;++lane){gControllerPressed[lane]=false;if(!gKeyboardPressed[lane])releaseLaneInput(lane);}
     bms::controller::SettingsDialog dialog(gController,gSettingsWindow?gSettingsWindow:gWindow,gSettingsFile.wstring());
     dialog.show(gWindow);
     SetTimer(gWindow,ID_CONTROLLER_POLL,gController.config.enabled?4:1000,nullptr);
@@ -3889,9 +3961,8 @@ void drawGameScreen(HDC dc) {
         return;
     }
     const auto& chart = gCharts[static_cast<size_t>(selected)];
-    const bool doublePlay=chart.mode==bms::ChartMode::TenKey || chart.mode==bms::ChartMode::FourteenKey;
-    const int laneWidth=doublePlay?std::max(28,LaneLayout::defaultKeyWidth*2/3):LaneLayout::defaultKeyWidth;
-    const int scratchWidth=doublePlay?68:LaneLayout::defaultScratchWidth;
+    const int laneWidth=bms::chartDeckWidths(chart).key;
+    const int scratchWidth=bms::chartDeckWidths(chart).scratch;
     const auto gearLayout=bms::chartLayout(chart,0,laneWidth,scratchWidth);
     const int gearWidth = gearLayout.totalWidth();
     const int edgeInset = std::min(64, std::max(0, (gWindowWidth - gearWidth) / 2));
@@ -3914,9 +3985,10 @@ void drawGameScreen(HDC dc) {
     for (const auto& item : chart.tempos) { if (item.timeSeconds <= gPlayhead) tempo = &item; else break; }
     {
     BMS_PERF_SCOPE(hudMs);
-    for (size_t i = 0; !gChartOptions.crazy.contains(L"dark") && !gChartOptions.crazy.contains(L"dark2") && i < gLaneSeparators.size(); ++i) {
-        if (!gLaneSeparators[i]) continue;
-        const int x = layout.left(static_cast<int>(i + 1));
+    for (int lane = 0; !gChartOptions.crazy.contains(L"dark") && !gChartOptions.crazy.contains(L"dark2") && lane < layout.laneCount(); ++lane) {
+        const int index = layout.separatorIndex(lane);
+        if (index < 0 || !gLaneSeparators[static_cast<size_t>(index)]) continue;
+        const int x = layout.left(lane);
         const RECT separator{ x, 0, x + 1, gWindowHeight };
         drawLaneSeparator(dc,separator,judgeY);
     }
@@ -3963,7 +4035,7 @@ void drawGameScreen(HDC dc) {
         const double drawBottom=note.longNote()?std::max(headY+noteHeight,tailY):headY+noteHeight;
         if(drawBottom<top || drawTop>fieldBottom)return false;
         if(visibility<=0)return true;
-        COLORREF color = gPalette[gLaneColors[static_cast<size_t>(note.lane)%8]].color;
+        COLORREF color = gPalette[gLaneColors[static_cast<size_t>(layout.colorSlot(note.lane))]].color;
         if(gChartOptions.crazy.contains(L"star"))color=RGB(static_cast<int>((std::sin(gPlayhead*12)+1)*127),static_cast<int>((std::sin(gPlayhead*12+2)+1)*127),static_cast<int>((std::sin(gPlayhead*12+4)+1)*127));
         if(gChartOptions.crazy.contains(L"clone") || gChartOptions.crazy.contains(L"clone2") || gChartOptions.crazy.contains(L"s-clone")) {
             const auto shadow=RGB(GetRValue(color)/3,GetGValue(color)/3,GetBValue(color)/3);
@@ -4011,7 +4083,7 @@ void drawGameScreen(HDC dc) {
         const int x = layout.left(note.lane);
         const int right = layout.right(note.lane);
         const double tailY=std::clamp(noteY((bms::scrollPositionSeconds(chart,note.timeSeconds+note.lengthSeconds)-scrollPosition)*pixelsPerSecond),static_cast<double>(reverse?judgeY:top),static_cast<double>(reverse?fieldBottom:judgeY));
-        const COLORREF color = gPalette[gLaneColors[lane%8]].color;
+        const COLORREF color = gPalette[gLaneColors[static_cast<size_t>(layout.colorSlot(note.lane))]].color;
         fillGameRectSubpixel(dc, x, std::min(tailY,double(judgeY)), right, std::max(tailY,double(judgeY)), RGB(GetRValue(color) / 2, GetGValue(color) / 2, GetBValue(color) / 2), noteBounds);
         RECT head{ x, judgeY, right, judgeY + gNoteHeight };
         fillGameRect(dc, head, color, noteBounds);
@@ -4031,14 +4103,26 @@ void drawGameScreen(HDC dc) {
             static_cast<float>(coverRect.right), static_cast<float>(coverRect.bottom), RGB(12, 12, 12));
     }
     gScratchDisc.update(gPlayhead, gPressed[0]);
+    // Non-7K modes: when the skin provides the gear, its 7K button textures are the deck; the plain engine deck would cover them.
+    bool skinGearDeck=false;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    skinGearDeck=skinGearForMode(bms::gearModeIndex(chart.mode));
+#endif
+    const bool plainDeck=(chart.mode!=bms::ChartMode::SevenKey && chart.mode!=bms::ChartMode::Unknown)&&!skinGearDeck;
     if (directRaster && !gChartOptions.crazy.contains(L"dark2")) {
         BMS_PERF_SCOPE(deckMs);HUD_SCOPE(LegacyDeck);
-        if((chart.mode!=bms::ChartMode::SevenKey && chart.mode!=bms::ChartMode::Unknown)) {
+        if(plainDeck) {
             for(int lane=0;lane<layout.laneCount();++lane) {
                 if(layout.width(lane)<=0)continue;
                 RECT key{layout.left(lane)+2,judgeY+8,layout.right(lane)-2,std::min(gWindowHeight,judgeY+75)};
-                fillRect(dc,key,gPressed[lane]?RGB(56,189,248):(lane%2?RGB(220,220,220):RGB(70,70,70)));
+                // Buttons take the lane's note color (dim when idle, bright when pressed) so scratch,
+                // white/black keys and PMS buttons stay distinguishable without the 7K skin deck.
+                const COLORREF base=gPalette[gLaneColors[static_cast<size_t>(layout.colorSlot(lane))]].color;
+                const auto scale=[&](int percent){return RGB(std::min(255,GetRValue(base)*percent/100),std::min(255,GetGValue(base)*percent/100),std::min(255,GetBValue(base)*percent/100));};
+                fillRect(dc,key,gPressed[static_cast<size_t>(lane)]?scale(135):scale(45));
             }
+        } else if (chart.mode!=bms::ChartMode::SevenKey && chart.mode!=bms::ChartMode::Unknown) {
+            // skin gear draws the buttons
         } else if (hybridRendererEnabled && gGpuFrame)
             KeyDeck::drawCached(static_cast<uint32_t*>(gBackBufferPixels), gBackBufferWidth, gBackBufferHeight, fieldX, laneWidth, judgeY, primaryPressed(), gScratchDisc.angle(), scratchWidth, &gTurntableImage, &gBlackKeyImage, &gWhiteKeyImage);
         else KeyDeck::draw(static_cast<uint32_t*>(gBackBufferPixels), gBackBufferWidth, gBackBufferHeight, fieldX, laneWidth, judgeY, primaryPressed(), gScratchDisc.angle(), scratchWidth, &gTurntableImage, &gBlackKeyImage, &gWhiteKeyImage);
@@ -4048,7 +4132,7 @@ void drawGameScreen(HDC dc) {
     if (gGpuFrame) {
         const int left = std::max(0, fieldX), deckTop = std::clamp(judgeY + 4, 0, gWindowHeight);
         GdiFlush();
-        if (!hybridRendererEnabled || (chart.mode!=bms::ChartMode::SevenKey && chart.mode!=bms::ChartMode::Unknown)) gCompositionPresenter.deck(static_cast<const uint32_t*>(gBackBufferPixels) + static_cast<size_t>(deckTop) * gBackBufferWidth + left,
+        if (!hybridRendererEnabled || plainDeck) gCompositionPresenter.deck(static_cast<const uint32_t*>(gBackBufferPixels) + static_cast<size_t>(deckTop) * gBackBufferWidth + left,
             std::max(0, std::min(gWindowWidth, fieldX + gearWidth) - left), std::min(108, gWindowHeight - deckTop), gBackBufferWidth, left, deckTop);
         gFeedback.drawSprites(fieldX, laneWidth, judgeY, gPlayhead, scratchWidth,
             [](const uint32_t* pixels, int width, int height, int left, int top, int dw, int dh, uint64_t id, float opacity) {
@@ -4056,7 +4140,11 @@ void drawGameScreen(HDC dc) {
             });
     } else if (directRaster) gFeedback.draw(static_cast<uint32_t*>(gBackBufferPixels), gBackBufferWidth, gBackBufferHeight, fieldX, laneWidth, judgeY, gPlayhead, scratchWidth);
     }
-    if (keyGuideVisible((gPlayhead - (gPractice.enabled ? gPractice.startSeconds : 0)) / playbackTimingScale())) {
+    bool skinGuides=false;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    skinGuides=skinDrawsKeyGuides(bms::gearModeIndex(chart.mode));
+#endif
+    if (!skinGuides && keyGuideVisible((gPlayhead - (gPractice.enabled ? gPractice.startSeconds : 0)) / playbackTimingScale())) {
         for (int lane = 0; lane < layout.laneCount(); ++lane) {
             if(layout.width(lane)==0)continue;
             const std::wstring label = keyName(laneKey(lane));
@@ -5501,6 +5589,10 @@ LRESULT CALLBACK songListSubclass(HWND window, UINT message, WPARAM wParam, LPAR
         }
     }
     // Give the list the full client width without a scrollbar gutter.
+    if (message == WM_KEYDOWN && !gLoading && wParam == VK_TAB) {
+        if ((lParam & (1LL << 30)) == 0) cycleKeyModeFilter();
+        return 0;
+    }
     if (message == WM_KEYDOWN && !gLoading && wParam == 'S') {
         if ((lParam & (1LL << 30)) == 0) toggleSongSort();
         return 0;
@@ -5961,6 +6053,10 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (wParam == VK_RETURN || wParam == VK_ESCAPE) { showBrowseView(); return 0; }
             return 0;
         } else {
+            if (wParam == VK_TAB) {
+                if ((lParam & (1LL << 30)) == 0) cycleKeyModeFilter();
+                return 0;
+            }
             if (wParam == 'S') {
                 if ((lParam & (1LL << 30)) == 0) toggleSongSort();
                 return 0;
@@ -5987,7 +6083,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             int lane = keyLane(wParam, lParam);
             if (lane >= 0) {
                 gKeyboardPressed[lane]=false;
-                if(lane>=8||!gControllerPressed[lane])releaseLaneInput(lane);
+                if(!gControllerPressed[lane])releaseLaneInput(lane);
                 return 0;
             }
         }
@@ -6300,6 +6396,10 @@ bool skinOwnsHud(){return gSkinApplication.active()&&!gSkinRetryPending;}
 int selectSkinShortcutAt(int x,int y){return gSkinApplication.selectShortcutAt(x,y,gWindowWidth,gWindowHeight);}
 bool skinNeedsJudgementText(){return gSkinApplication.needsJudgementText();}
 bool skinCoversLegacySlots(int left,int top,int right,int bottom){return gSkinApplication.coversLegacySlots(left,top,right,bottom);}
+// The skin shows the (live) key names itself when its gear has guide elements for this key mode.
+// The skin has a native gear for this key mode, so it (not the engine deck) draws the buttons.
+bool skinGearForMode(int gearMode){return gSkinApplication.active()&&gSkinApplication.supports(sevenmania::skin::ScreenKind::Play)&&(gearMode==0||gSkinApplication.supportsGearMode(gearMode));}
+bool skinDrawsKeyGuides(int gearMode){return gSkinApplication.hasKeyGuides()&&(gearMode==0||gSkinApplication.supportsGearMode(gearMode));}
 void prepareSkinForPlayback(){
     if((!gPlaying&&!gPlaybackLoad.preparing())||(!gPlaybackLoad.preparing()&&!gSkinApplication.hasImageHud())||!gCompositionEnabled||gGpuUnavailable)return;
     gCompositionPresenter.setDirectComposition(gDirectCompositionEnabled);gCompositionPresenter.setVsync(gTargetFps==vsyncFps);gCompositionPresenter.setAntialias(gNoteAntialias);
@@ -6317,6 +6417,7 @@ bool drawPreparingSkin(HDC dc){
 bool preparingSkinAnimated(){return gSkinApplication.animating()||gSkinApplication.scrolling();}
 bool skinOwnsJudgement(){return skinOwnsHud()&&gSkinApplication.ownsJudgement();}
 void emitSevenManiaSkinEvent(std::string_view event) {gSkinApplication.emit(event);}
+void setSevenManiaSkinAnimationPaused(bool paused) {gSkinApplication.setAnimationPaused(paused);}
 bool captureSevenManiaSkinData(sevenmania::skin::SkinDataProvider& provider) {
     HUD_SCOPE(Snapshot);
     if(GetCurrentThreadId()!=gSkinDataOwnerThread)return false;
@@ -6328,6 +6429,7 @@ bool captureSevenManiaSkinData(sevenmania::skin::SkinDataProvider& provider) {
         provider.setWide(BindingId::SelectSpeedText,number(gNoteSpeed,2)+L"x");
         provider.setWide(BindingId::SelectJudgementText,judgementNames[static_cast<size_t>(gJudgementProfile)]);
         provider.setWide(BindingId::SelectGaugeMode,activeGaugeModeText());
+        provider.setWide(BindingId::SelectKeyMode,bms::keyModeFilterLabel(gKeyModeFilter));
         const int selected=selectedIndex();
         const PlayRecord* record=selected>=0&&selected<static_cast<int>(gCharts.size())?playRecordForChart(static_cast<size_t>(selected)):nullptr;
         provider.setWide(BindingId::SelectRecordBestScore,record?L"BEST "+groupedRecordScore(record->bestAccuracyScore):L"NO RECORD");

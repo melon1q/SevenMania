@@ -86,6 +86,8 @@ public:
         const auto get=[&](const wchar_t* key,int value){return int(GetPrivateProfileIntW(L"Controller",key,value,ini.c_str()));};
         config.enabled=get(L"Enabled",0)!=0;wchar_t id[128]{};GetPrivateProfileStringW(L"Controller",L"Device",L"",id,128,ini.c_str());deviceId=id;
         for(int i=0;i<7;++i)config.keys[i]=std::clamp(get((L"Key"+std::to_wstring(i+1)).c_str(),i+1),0,128)-1;
+        for(int i=0;i<7;++i)config.keys2p[i]=std::clamp(get((L"Key2P"+std::to_wstring(i+1)).c_str(),0),0,128)-1;
+        config.scratch2pCw=std::clamp(get(L"Scratch2PCW",0),0,128)-1;config.scratch2pCcw=std::clamp(get(L"Scratch2PCCW",0),0,128)-1;
         config.scratchCw=std::clamp(get(L"ScratchCW",8),0,128)-1;config.scratchCcw=std::clamp(get(L"ScratchCCW",9),0,128)-1;
         config.menu=std::clamp(get(L"Menu",0),0,128)-1;config.axis=std::clamp(get(L"Axis",1),0,8)-1;config.mode=std::clamp(get(L"AxisMode",1),0,2);
         config.threshold=std::clamp(get(L"Threshold",256),1,8192);config.holdMs=std::clamp(get(L"ScratchHoldMs",80),20,250);mapper.reset();
@@ -94,6 +96,8 @@ public:
         bool okay=true;const auto put=[&](const wchar_t* key,int value){okay=(WritePrivateProfileStringW(L"Controller",key,std::to_wstring(value).c_str(),ini.c_str())!=0)&&okay;};
         okay=WritePrivateProfileStringW(L"Controller",L"Device",deviceId.c_str(),ini.c_str())!=0;
         put(L"Enabled",config.enabled);for(int i=0;i<7;++i)put((L"Key"+std::to_wstring(i+1)).c_str(),config.keys[i]+1);
+        for(int i=0;i<7;++i)put((L"Key2P"+std::to_wstring(i+1)).c_str(),config.keys2p[i]+1);
+        put(L"Scratch2PCW",config.scratch2pCw+1);put(L"Scratch2PCCW",config.scratch2pCcw+1);
         put(L"ScratchCW",config.scratchCw+1);put(L"ScratchCCW",config.scratchCcw+1);put(L"Menu",config.menu+1);put(L"Axis",config.axis+1);put(L"AxisMode",config.mode);put(L"Threshold",config.threshold);put(L"ScratchHoldMs",config.holdMs);return okay;
     }
 };

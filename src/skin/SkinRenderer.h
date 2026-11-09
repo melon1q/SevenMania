@@ -1,11 +1,18 @@
 #pragma once
 #include "SkinPackage.h"
 #include "SkinData.h"
+#include "GearMode.h"
 #include <d2d1.h>
 #include <array>
+#include <memory>
+#include <string>
 
 namespace sevenmania::skin {
-struct SkinGearState { bool active{}; int position=1; bool mirrorUi{}; std::uint32_t judgementColor=RGB(74,222,128); double judgementScale=1; double centerX{},lineY{},gauge=20,speed=1,rotation{}; std::array<bool,8> pressed{}; };
+// suppressNativeGear: the skin has no gear for this key mode; hide its (7K) native gear parts instead of
+// drawing them unattached, so the engine deck is shown alone.
+struct SkinGearState { bool active{}; bool suppressNativeGear{}; int mode{}; int position=1; bool mirrorUi{}; std::uint32_t judgementColor=RGB(74,222,128); double judgementScale=1; double centerX{},lineY{},gauge=20,speed=1,rotation{}; std::array<bool,16> pressed{};
+    // UTF-8 key names per lane (parser numbering) shown by gear-key-guide elements; null keeps the skin text.
+    std::shared_ptr<const std::array<std::string,16>> keyLabels; };
 struct SkinRenderStats {
     std::size_t decodedImages{}, uploadedBitmaps{}, imageLayers{}, skippedLayers{};
     std::uint64_t bitmapBytes{};
@@ -28,7 +35,8 @@ public:
     // Uses contain scaling, preserves target transform, performs no I/O/decoding/allocation.
     bool draw(float width, float height, bool foregroundOnly=false, bool skipForeground=false) const noexcept;
     void emit(std::string_view event) noexcept;
-    void forceEntranceDuration(double seconds) noexcept;
+    // Freezes/resumes the animation clock (game pause). Keyframe tracks keep their progress.
+    void setAnimationPaused(bool paused) noexcept;
     void setGearState(const SkinGearState& state) noexcept;
     bool animating() const noexcept;
     bool scrolling() const noexcept;
@@ -38,6 +46,9 @@ public:
     void setJudgementRainbow(bool enabled) noexcept;
     void setJudgementAnchor(double centerX,double lineY,double width,double height) noexcept;
     bool hasBox(std::string_view mode) const noexcept;
+    // True if any native gear part carries geometry for this key mode (0 = 7K is always supported).
+    bool supportsGearMode(int mode) const noexcept;
+    bool hasKeyGuides() const noexcept;
     bool coversLegacySlots(int gearPosition,double left,double top,double right,double bottom) const noexcept;
     bool updateBox(std::string_view mode,const std::uint32_t* pixels,unsigned width,unsigned height) noexcept;
     bool editGeometry(std::string_view id,double x,double y,double width,double height) noexcept;

@@ -261,6 +261,14 @@ foreach(song_ui_target BmsPlayer BmsPlayerTest BmsPlayerProfile BmsDiagnosticsTe
     bms_attach_song_list_ui(${song_ui_target})
 endforeach()
 
+add_executable(BmsKeyModeFilterTests tests/KeyModeFilterTests.cpp)
+target_link_libraries(BmsKeyModeFilterTests PRIVATE bms_core)
+add_test(NAME BmsKeyModeFilterTests COMMAND BmsKeyModeFilterTests)
+
+add_executable(BmsKeyModeLaneTests tests/KeyModeLaneTests.cpp)
+target_link_libraries(BmsKeyModeLaneTests PRIVATE bms_core)
+add_test(NAME BmsKeyModeLaneTests COMMAND BmsKeyModeLaneTests)
+
 add_executable(SevenManiaSkinBindingTests tests/SkinBindingTests.cpp src/AudioEngine.cpp src/SystemResources.cpp)
 target_compile_definitions(SevenManiaSkinBindingTests PRIVATE BMS_ENABLE_SKIN_BINDINGS)
 target_link_libraries(SevenManiaSkinBindingTests PRIVATE sevenmania_skin_render bms_core bms_song_selection
@@ -346,6 +354,12 @@ set_tests_properties(SevenManiaSkinEditorSmoke PROPERTIES WORKING_DIRECTORY "${C
 add_executable(SevenManiaSkinAnimationTests tests/SkinAnimationTests.cpp)
 target_link_libraries(SevenManiaSkinAnimationTests PRIVATE sevenmania_skin)
 add_test(NAME SevenManiaSkinAnimationTests COMMAND SevenManiaSkinAnimationTests)
+add_executable(SevenManiaAnimationEditModelTests tests/AnimationEditModelTests.cpp)
+target_link_libraries(SevenManiaAnimationEditModelTests PRIVATE sevenmania_skin windowscodecs ole32)
+add_test(NAME SevenManiaAnimationEditModelTests COMMAND SevenManiaAnimationEditModelTests)
+add_executable(SevenManiaAnimationEditorDialogTests tests/AnimationEditorDialogTests.cpp)
+target_link_libraries(SevenManiaAnimationEditorDialogTests PRIVATE sevenmania_skin windowscodecs ole32 comdlg32)
+add_test(NAME SevenManiaAnimationEditorDialogTests COMMAND SevenManiaAnimationEditorDialogTests)
 foreach(default_skin_target BmsPlayer SevenManiaSkinApplicationTests SevenManiaSkinEditor)
  # Run even when the executable is already up to date: skin-only edits must ship.
  add_custom_target(${default_skin_target}DefaultSkinAssets
@@ -366,7 +380,7 @@ add_custom_command(TARGET BmsPlayer POST_BUILD
  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/Assets/UI/song-list.rml" "${CMAKE_SOURCE_DIR}/Assets/UI/song-list.rcss" "$<TARGET_FILE_DIR:BmsPlayer>/Assets/UI")
 
 # Every standalone skin renderer uses the same built-in font faces as the game.
-foreach(font_target SevenManiaSkinRenderTests SevenManiaSkinBindingTests SevenManiaSkinApplicationTests SevenManiaSkinEditor)
+foreach(font_target SevenManiaSkinRenderTests SevenManiaTextAnimationRenderTests SevenManiaSkinBindingTests SevenManiaSkinApplicationTests SevenManiaSkinEditor)
  target_sources(${font_target} PRIVATE src/app.rc)
 endforeach()
 set_property(SOURCE src/app.rc APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Fonts/Oxanium-Regular.ttf" "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Fonts/Oxanium-Bold.ttf")

@@ -1,6 +1,5 @@
 ﻿#include "SkinApplication.h"
 #include "SelectionSlotLayout.h"
-#include "SkinEntrance.h"
 #include "HudFrameProbe.h"
 #include "SkinInternal.h"
 #include <d3d11.h>
@@ -92,7 +91,6 @@ struct SkinApplication::Impl {
         for(const auto& [kind,screen]:package->screens) {
             (void)screen;auto renderer=std::make_unique<SkinRenderer>();
             if(auto error=renderer->prepare(package,kind,next->target.Get()))throw detail::Failure{*error};
-            if(kind==ScreenKind::Play)renderer->forceEntranceDuration(gameplayEntranceDurationSeconds);
             prepared[static_cast<std::size_t>(kind)]=std::move(renderer);
         }
         needsText=false;imageHud=false;
@@ -105,7 +103,19 @@ struct SkinApplication::Impl {
 SkinApplication::SkinApplication()=default;
 SkinApplication::~SkinApplication()=default;
 void SkinApplication::clear() noexcept {impl_.reset();error_.reset();}
-void SkinApplication::setGearState(const SkinGearState& state) noexcept {if(impl_){impl_->gear=state;if(state.active)impl_->cached=false;}}
+void SkinApplication::setGearState(const SkinGearState& state) noexcept {if(impl_){impl_->gear=state;if(state.active||state.suppressNativeGear)impl_->cached=false;}}
+bool SkinApplication::hasKeyGuides() const noexcept {
+    if(!impl_)return false;
+    const auto& renderer=impl_->renderers[static_cast<size_t>(ScreenKind::Play)];
+    return renderer&&renderer->hasKeyGuides();
+}
+bool SkinApplication::supportsGearMode(int mode) const noexcept {
+    if(mode<=0)return impl_!=nullptr;
+    if(!impl_)return false;
+    const auto& renderer=impl_->renderers[static_cast<size_t>(ScreenKind::Play)];
+    return renderer&&renderer->supportsGearMode(mode);
+}
+void SkinApplication::setAnimationPaused(bool paused) noexcept {if(!impl_)return;for(auto& r:impl_->renderers)if(r)r->setAnimationPaused(paused);impl_->gpu.setAnimationPaused(paused);impl_->cached=false;}
 void SkinApplication::emit(std::string_view event) noexcept {if(!impl_)return;for(auto& r:impl_->renderers)if(r)r->emit(event);impl_->gpu.emit(event);impl_->cached=false;}
 bool SkinApplication::animating() const noexcept {if(impl_)for(auto& r:impl_->renderers)if(r&&r->animating())return true;return false;}
 void SkinApplication::setJudgementRainbow(bool enabled) noexcept {if(impl_)impl_->judgementRainbow=enabled;}
@@ -248,7 +258,7 @@ bool SkinApplication::prepareGpu(ID2D1RenderTarget* target,const SkinDataSnapsho
         HUD_COUNT(PrepareTargetChanges);
         impl_->gpu.unload();impl_->gpuTarget=target;impl_->gpuFailed=false;
         if(auto error=impl_->gpu.prepare(impl_->package,ScreenKind::Play,target)){error_=*error;impl_->gpuFailed=true;}
-        else {impl_->gpu.forceEntranceDuration(gameplayEntranceDurationSeconds);impl_->gpu.prewarmText();}
+        else impl_->gpu.prewarmText();
     }
     if(impl_->gpuFailed)return false;
     if(impl_->scene!=ScreenKind::Play){impl_->gpu.emit("screen.enter");impl_->scene=ScreenKind::Play;}

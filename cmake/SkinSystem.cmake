@@ -30,3 +30,14 @@ target_link_libraries(SevenManiaSkinRenderTests PRIVATE sevenmania_skin_render d
 add_test(NAME SevenManiaSkinRenderTests COMMAND SevenManiaSkinRenderTests
     "${PROJECT_SOURCE_DIR}/tests/fixtures/skins/render-layers.semaskin" "${CMAKE_BINARY_DIR}/Validation/SkinRender")
 set_tests_properties(SevenManiaSkinRenderTests PROPERTIES TIMEOUT 120)
+add_executable(SevenManiaTextAnimationRenderTests "${PROJECT_SOURCE_DIR}/tests/TextAnimationRenderTests.cpp")
+target_link_libraries(SevenManiaTextAnimationRenderTests PRIVATE sevenmania_skin_render d3d11 d2d1 windowscodecs ole32)
+add_test(NAME SevenManiaTextAnimationRenderTests COMMAND SevenManiaTextAnimationRenderTests "${PROJECT_SOURCE_DIR}/tests/fixtures/skins/render-layers.semaskin")
+set_tests_properties(SevenManiaTextAnimationRenderTests PROPERTIES TIMEOUT 60)
+
+# Native gear for 5K/10K/14K/PMS (extensions.gearModes) and the editor's per-mode editing.
+add_executable(SevenManiaGearModeTests "${PROJECT_SOURCE_DIR}/tests/GearModeTests.cpp" "${PROJECT_SOURCE_DIR}/src/app.rc")
+target_include_directories(SevenManiaGearModeTests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(SevenManiaGearModeTests PRIVATE sevenmania_skin_render d3d11 d2d1 windowscodecs ole32)
+add_test(NAME SevenManiaGearModeTests COMMAND SevenManiaGearModeTests "${PROJECT_SOURCE_DIR}/Assets/Skins/DefaultSkin/DefaultReference.semaskin")
+set_tests_properties(SevenManiaGearModeTests PROPERTIES TIMEOUT 120)

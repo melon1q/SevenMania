@@ -179,12 +179,12 @@ int main(int argc, char** argv) {
         const auto fivePath = root / L"classic.bms";
         writeChart(fivePath, L"#PLAYER 1\n#TITLE Five Key\n#BPM 120\n#WAV01 click.wav\n#00011:01\n#00015:01\n");
         auto five = bms::BmsParser().parse(fivePath);
-        require(five.chart.mode == bms::ChartMode::FiveKey && five.chart.playable, "5키 차단 실패");
+        require(five.chart.mode == bms::ChartMode::FiveKey && five.chart.playable, "5키 모드 판별 실패");
 
         const auto tenPath = root / L"ten.bms";
         writeChart(tenPath, L"#PLAYER 1\n#TITLE Ten\n#BPM 120\n#WAV01 click.wav\n#00011:01\n#00021:01\n");
         auto ten = bms::BmsParser().parse(tenPath);
-        require(ten.chart.mode == bms::ChartMode::TenKey && ten.chart.playable, "10키 차단 실패");
+        require(ten.chart.mode == bms::ChartMode::TenKey && ten.chart.playable, "10키 모드 판별 실패");
 
         const auto modernSevenPath = root / L"modern-seven.bms";
         writeChart(modernSevenPath, L"#PLAYER 1\n#TITLE Modern Seven\n#BPM 120\n#WAV01 click.wav\n#00018:01\n");
@@ -194,12 +194,12 @@ int main(int argc, char** argv) {
         const auto doublePath = root / L"double.bme";
         writeChart(doublePath, L"#PLAYER 1\n#TITLE Double\n#BPM 120\n#WAV01 click.wav\n#00011:01\n#00021:01\n#00028:01\n");
         auto dual = bms::BmsParser().parse(doublePath);
-        require(dual.chart.mode == bms::ChartMode::FourteenKey && dual.chart.playable, "DP 모드 차단 실패");
+        require(dual.chart.mode == bms::ChartMode::FourteenKey && dual.chart.playable, "DP 모드 판별 실패");
 
         const auto popnPath = root / L"popn.pms";
         writeChart(popnPath, L"#PLAYER 1\n#TITLE Popn\n#BPM 120\n#WAV01 click.wav\n#00011:01\n");
         auto popn = bms::BmsParser().parse(popnPath);
-        require(popn.chart.mode == bms::ChartMode::PopnNine && popn.chart.playable, "PMS 차단 실패");
+        require(popn.chart.mode == bms::ChartMode::PopnNine && popn.chart.playable, "PMS 모드 판별 실패");
 
         const auto randomPath = root / L"branch.bme";
         writeChart(randomPath, L"#PLAYER 1\n#TITLE Branch\n#BPM 120\n#WAV01 click.wav\n#SETRANDOM 1\n#IF 2\n#00011:01\n#ELSE\n#00018:01\n#ENDIF\n");

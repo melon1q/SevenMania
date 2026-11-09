@@ -9,12 +9,12 @@
  gPlayPreview.touched();gPlayPreview.requested=false;gPlaybackJob.previewDirty=true;saveDisplaySettings();return true;
 }
 void drawPreviewNotes(HDC dc){
- const int w=LaneLayout::defaultKeyWidth,scratch=LaneLayout::defaultScratchWidth;
+ const auto widths=bms::chartDeckWidths(gCharts[gActiveChartIndex]);const int w=widths.key,scratch=widths.scratch;
  const auto base=bms::chartLayout(gCharts[gActiveChartIndex],0,w,scratch);const int available=std::max(0,gWindowWidth-base.totalWidth()),edge=std::min(64,available/2);
  const int left=gGearPosition==0?edge:gGearPosition==2?available-edge:available/2;
  const auto lanes=bms::chartLayout(gCharts[gActiveChartIndex],left,w,scratch);
  const int judge=bms::optionJudgeLine(gChartOptions,gPlayhead,judgementLineY(gWindowHeight),gWindowHeight),guard=judge*gLaneCoverPercent/100;
- for(int i=0;i<7;++i)if(gLaneSeparators[i]){const int x=lanes.left(i+1);drawLaneSeparator(dc,{x,0,x+1,judge},judge);}
+ for(int lane=0;lane<lanes.laneCount();++lane){const int index=lanes.separatorIndex(lane);if(index>=0&&gLaneSeparators[static_cast<size_t>(index)]){const int x=lanes.left(lane);drawLaneSeparator(dc,{x,0,x+1,judge},judge);}}
  const RECT clip{left,std::max(PLAYFIELD_TOP,guard),left+lanes.totalWidth(),judge};
  const double speed=270*(gChartOptions.hiSpeed>0?gChartOptions.hiSpeed:gNoteSpeed)*bms::speedAt(gCharts[gActiveChartIndex],gPlayhead),time=gPlayPreview.seconds();
  // One whole chord traverses the field, followed by a short empty interval.
@@ -24,7 +24,7 @@ void drawPreviewNotes(HDC dc){
  const double y=PLAYFIELD_TOP-gNoteHeight+phase*speed;
  if((GetKeyState(VK_CONTROL)&0x8000)&&phase<=duration)for(int lane=0;lane<8;++lane){
   if(!gPlayPreview.group[lane]||y+gNoteHeight<clip.top||y>=judge)continue;
-  fillGameRectSubpixel(dc,lanes.left(lane),y,lanes.right(lane),y+gNoteHeight,gPalette[gLaneColors[lane%8]].color,clip);
+  fillGameRectSubpixel(dc,lanes.left(lane),y,lanes.right(lane),y+gNoteHeight,gPalette[gLaneColors[static_cast<size_t>(lanes.colorSlot(lane))]].color,clip);
  }
  if(!gPlaybackLoad.canStart()){
   RECT info{left,std::max(0,judge-48),left+lanes.totalWidth(),judge-8};

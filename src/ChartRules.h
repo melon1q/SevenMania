@@ -95,6 +95,13 @@ inline LaneLayout chartLayout(const Chart& chart,int x,int width,int scratch) {
     return {x,width,scratch,chart.mode==ChartMode::FiveKey || chart.mode==ChartMode::TenKey?5:7,
         chart.mode==ChartMode::TenKey || chart.mode==ChartMode::FourteenKey?2:1,chart.mode==ChartMode::PopnNine};
 }
+// Key / scratch lane widths of the play field: DP charts use narrower lanes so both sides fit.
+// Every screen that lays out lanes (gameplay, loading preview, skin gear anchor) must use these.
+struct DeckWidths { int key; int scratch; };
+inline DeckWidths chartDeckWidths(const Chart& chart) {
+    const bool dual=chart.mode==ChartMode::TenKey || chart.mode==ChartMode::FourteenKey;
+    return dual?DeckWidths{std::max(28,LaneLayout::defaultKeyWidth*2/3),68}:DeckWidths{LaneLayout::defaultKeyWidth,LaneLayout::defaultScratchWidth};
+}
 inline int chartLanes(const Chart& chart) {
     switch(chart.mode) {
     case ChartMode::FiveKey:return 6; case ChartMode::TenKey:return 16;

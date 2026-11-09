@@ -15,10 +15,14 @@ inline bool readableAssetExists(const std::filesystem::path& path) {
 
 enum class LongNoteMode { LN = 1, CN = 2, HCN = 3 };
 
-enum class ChartMode { Unknown, FiveKey, SevenKey, TenKey, FourteenKey, PopnNine, Other };
+// Numeric values are persisted in the song metadata cache and passed to the Rust
+// song-selection model; never renumber them; add new modes after Other.
+enum class ChartMode { Unknown = 0, FiveKey = 1, SevenKey = 2, TenKey = 3, FourteenKey = 4, PopnNine = 5, Other = 6 };
 
 struct Note {
-    int lane{}; // 0 = scratch, 1..7 = keys
+    // 5K/7K/14K/10K: x%8==0 is scratch, x%8 in 1..7 are keys, x/8 is the player side (0..1).
+    // PMS 9K: 0..8 are all keys (no scratch).
+    int lane{};
     double timeSeconds{};
     double lengthSeconds{};
     std::wstring sampleId;

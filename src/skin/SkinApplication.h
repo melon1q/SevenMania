@@ -20,8 +20,13 @@ public:
     bool hasBox(std::string_view mode,ScreenKind screen=ScreenKind::Select) const noexcept;
     void updateBox(std::string_view mode,const std::uint32_t* pixels,unsigned width,unsigned height,ScreenKind screen=ScreenKind::Select) noexcept;
     void emit(std::string_view event) noexcept;
+    void setAnimationPaused(bool paused) noexcept;
     void enterScreen(ScreenKind screen) noexcept;
     void setGearState(const SkinGearState& state) noexcept;
+    // True if the active skin has a native gear for this key mode (0 = 7K).
+    bool supportsGearMode(int mode) const noexcept;
+    // True if the Play screen has gear-key-guide elements (the skin then shows the key names itself).
+    bool hasKeyGuides() const noexcept;
     const SkinManifest* manifest() const noexcept;
     const SkinScreen* screenLayout(ScreenKind screen) const noexcept;
     bool supports(ScreenKind screen) const noexcept;

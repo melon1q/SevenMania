@@ -2,7 +2,6 @@
 #include "HudFrameProbe.h"
 #include "SkinInternal.h"
 #include "SkinAnimation.h"
-#include "SkinEntrance.h"
 #include "TextRasterCache.h"
 #include "TextMarquee.h"
 #include "HudTextStyle.h"
@@ -66,7 +65,6 @@ struct SkinRenderer::Impl {
     struct Font {HFONT handle{};~Font(){if(handle)DeleteObject(handle);}};
     struct MemoryFont {HANDLE handle{};std::shared_ptr<const Bytes> bytes;~MemoryFont(){if(handle)RemoveFontMemResourceEx(handle);}};
     struct Layer {
-        Entrance entrance;double entranceStart{};mutable bool entrancePending{};
         ComPtr<ID2D1RoundedRectangleGeometry> rounded;ComPtr<ID2D1Layer> roundedLayer;double roundedWidth{},roundedHeight{};
         std::unique_ptr<HudImageAtlas> hud;
         SkinElement element;ComPtr<ID2D1Bitmap> bitmap,fillMask;D2D1_RECT_F source{};SkinRect destination;
@@ -80,6 +78,10 @@ struct SkinRenderer::Impl {
     std::array<bool,3> legacySlotsCovered{};
     std::array<std::array<double,4>,3> legacyPanelBounds{};
     std::chrono::steady_clock::time_point animationStart=std::chrono::steady_clock::now();
+    // Animation clock that freezes while the game is paused; resume continues from the frozen value.
+    bool animPaused{};std::chrono::steady_clock::time_point animPausedAt{};std::chrono::steady_clock::duration animPausedTotal{};
+    double animNow() const noexcept {const auto at=animPaused?animPausedAt:std::chrono::steady_clock::now();return std::chrono::duration<double>(at-animationStart-animPausedTotal).count();}
+    void setAnimPaused(bool paused) noexcept {if(paused==animPaused)return;if(paused)animPausedAt=std::chrono::steady_clock::now();else animPausedTotal+=std::chrono::steady_clock::now()-animPausedAt;animPaused=paused;}
     std::vector<std::unique_ptr<MemoryFont>> memoryFonts;
     std::map<std::tuple<std::string,std::string,unsigned>,std::shared_ptr<Font>> fonts;
     std::vector<Layer> layers;
@@ -128,6 +130,7 @@ struct SkinRenderer::Impl {
             const auto& e=layer.element;
             SkinBindingResolver::resolve(e,layer.binding,snapshot,scratch);
             if(gear.active&&e.id=="gear-speed-reference"){char value[64];std::snprintf(value,sizeof(value),"%.2fx",gear.speed);scratch=value;}
+            else if(gear.active&&gear.keyLabels&&e.id.starts_with("gear-key-guide-")){const int lane=gearGuideLane(e.id,gear.mode);if(lane>=0&&lane<16)scratch=(*gear.keyLabels)[static_cast<size_t>(lane)];}
             const bool rainbow=e.binding=="play.judgementCombo"&&judgementRainbow&&!scratch.empty();
             const int phase=rainbow?0:-1;
             COLORREF displayColor=RGB(e.tint.r,e.tint.g,e.tint.b);
@@ -239,7 +242,7 @@ std::optional<SkinError> SkinRenderer::prepare(std::shared_ptr<const SkinPackage
             if(e.binding=="play.judgementCombo"&&!e.hud.images()){e.width=600;e.height=100;e.x=660;e.y=520;e.rotation=0;e.opacity=1;e.tint={255,255,255,255};e.textStyle.fontSize=80;e.textStyle.align=TextAlign::Center;e.textStyle.verticalAlign=TextVerticalAlign::Center;e.textStyle.clip=true;}
             const bool isText=e.kind==ElementKind::Text||e.kind==ElementKind::Number;
             const auto binding=isText?SkinBindingResolver::compile(e,screen,next->diagnostics):CompiledBinding{};
-            if(!e.visible||e.opacity==0||e.tint.a==0) {++next->stats.skippedLayers;continue;}
+            if((!e.visible||e.opacity==0||e.tint.a==0)&&e.extensions[L"gearModes"].type!=bms::JsonValue::Type::Object) {++next->stats.skippedLayers;continue;}
             if(e.binding=="play.judgementCombo"&&e.hud.images()){
                 Impl::Layer layer;layer.element=e;layer.destination={e.x,e.y,e.width,e.height};layer.hud=std::make_unique<HudImageAtlas>();
                 layer.hud->prepare(*package,e,target,getPixels,limits_,next->stats,next->diagnostics);next->layers.push_back(std::move(layer));++next->stats.imageLayers;continue;
@@ -329,7 +332,6 @@ std::optional<SkinError> SkinRenderer::prepare(std::shared_ptr<const SkinPackage
         }
         for(auto& layer:next->layers){
             layer.animations=parseAnimations(layer.element.extensions);
-            layer.entrance=Entrance::parse(layer.element.extensions);layer.entrancePending=layer.entrance.preset!=0;
             const auto& e=layer.element;
             if(e.cornerRadius>0&&layer.bitmap&&(e.kind==ElementKind::Image||e.kind==ElementKind::Box)){
                 ComPtr<ID2D1Factory> geometryFactory;target->GetFactory(&geometryFactory);
@@ -370,49 +372,41 @@ bool SkinRenderer::draw(float width,float height,bool foregroundOnly,bool skipFo
     t->SetTransform(D2D1::Matrix3x2F::Identity());
     t->PushAxisAlignedClip(D2D1::RectF(ox,oy,ox+vw*scale,oy+vh*scale),D2D1_ANTIALIAS_MODE_ALIASED);
     impl_->stats.hudDrawCalls=0;
-    const double entranceNow=std::chrono::duration<double>(std::chrono::steady_clock::now()-impl_->animationStart).count();
     for(const auto& layer:impl_->layers) {
         const auto& e=layer.element;
-        const double entryAge=entranceNow-layer.entranceStart;
-        const auto entry=layer.entrance.sample(entryAge,e.height);
-        if(entryAge>=layer.entrance.delay+layer.entrance.duration)layer.entrancePending=false;
-        const auto drawEntrance=[&](const SkinRect& d,float opacity,auto paint){
-            if(!layer.entrance.preset||entryAge>=layer.entrance.delay+layer.entrance.duration){paint(opacity);return;}
-            D2D1_MATRIX_3X2_F previous;t->GetTransform(&previous);
-            const auto center=D2D1::Point2F(float(d.x+d.width/2),float(d.y+d.height/2));
-            const auto transform=D2D1::Matrix3x2F::Scale(float(entry.scale),float(entry.scale),center)*D2D1::Matrix3x2F::Rotation(float(entry.rotation),center)*D2D1::Matrix3x2F::Translation(0,float(entry.y))*previous;
-            t->SetTransform(transform);
-            if(entry.wipe<1)t->PushAxisAlignedClip(D2D1::RectF(float(d.x),float(d.y),float(d.x+d.width*entry.wipe),float(d.y+d.height)),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            if(entry.blur>.1){for(int iy=-1;iy<=1;++iy)for(int ix=-1;ix<=1;++ix){t->SetTransform(D2D1::Matrix3x2F::Translation(float(ix*entry.blur),float(iy*entry.blur))*transform);paint(float(opacity*entry.opacity/9));}}
-            else paint(float(opacity*entry.opacity));
-            if(entry.wipe<1)t->PopAxisAlignedClip();t->SetTransform(previous);
-        };
         const auto drawBitmap=[&](const SkinRect& destination,float opacity,D2D1_BITMAP_INTERPOLATION_MODE interpolation){
-            drawEntrance(destination,opacity,[&](float alpha){
-                if(layer.rounded){auto params=D2D1::LayerParameters();params.geometricMask=layer.rounded.Get();params.maskTransform=D2D1::Matrix3x2F::Scale(float(destination.width/layer.roundedWidth),float(destination.height/layer.roundedHeight))*D2D1::Matrix3x2F::Translation(float(destination.x),float(destination.y));t->PushLayer(params,layer.roundedLayer.Get());}
-                t->DrawBitmap(layer.bitmap.Get(),rect(destination),alpha,interpolation,&layer.source);
-                if(layer.rounded)t->PopLayer();
-            });
+            if(layer.rounded){auto params=D2D1::LayerParameters();params.geometricMask=layer.rounded.Get();params.maskTransform=D2D1::Matrix3x2F::Scale(float(destination.width/layer.roundedWidth),float(destination.height/layer.roundedHeight))*D2D1::Matrix3x2F::Translation(float(destination.x),float(destination.y));t->PushLayer(params,layer.roundedLayer.Get());}
+            t->DrawBitmap(layer.bitmap.Get(),rect(destination),opacity,interpolation,&layer.source);
+            if(layer.rounded)t->PopLayer();
         };
         const bool foreground=impl_->screen==ScreenKind::Play&&(e.binding=="play.judgement"||e.binding=="play.judgementCombo"||e.binding=="play.combo");
-        if((foregroundOnly&&!foreground)||(skipForeground&&foreground)||(!layer.bitmap&&!layer.hud))continue;t->SetTransform(base);
+        if((foregroundOnly&&!foreground)||(skipForeground&&foreground)||(!layer.bitmap&&!layer.hud))continue;
+        // Per key mode geometry/visibility (extensions.gearModes.<mode>); elements hidden in the base layout stay hidden unless a mode shows them.
+        const bool gearModeActive=impl_->screen==ScreenKind::Play&&impl_->gear.active&&impl_->gear.mode>0;
+        const auto& modeGeometry=e.extensions[L"gearModes"][gearModeName(gearModeActive?impl_->gear.mode:0)];
+        const bool hasModeGeometry=gearModeActive&&modeGeometry.type==bms::JsonValue::Type::Object;
+        const bool shown=hasModeGeometry&&modeGeometry[L"visible"].type==bms::JsonValue::Type::Boolean?modeGeometry[L"visible"].boolean:(e.visible&&e.opacity>0&&e.tint.a>0);
+        if(!shown)continue;
+        if(impl_->screen==ScreenKind::Play&&!impl_->gear.active&&impl_->gear.suppressNativeGear&&e.extensions[L"nativeGearPart"].boolean)continue;
+        t->SetTransform(base);
         HUD_SCOPE_IF(HudLayer,foreground);
         if(impl_->screen==ScreenKind::Play&&!layer.hud&&!layer.fillMask&&(e.extensions[L"nativeGearPart"].boolean||e.extensions[L"followGear"].boolean)&&impl_->gear.active){
             const auto& gear=impl_->gear;
             auto d=layer.destination;const auto& layout=e.extensions[L"gearLayouts"][gear.position==0?L"left":gear.position==2?L"right":L"center"];
             if(layout.type==bms::JsonValue::Type::Object){d.x+=layout[L"x"].num(e.x)-e.x;d.y+=layout[L"y"].num(e.y)-e.y;}
-            if(!e.extensions[L"nativeGearPart"].boolean&&e.extensions[L"followGear"].boolean){const auto& center=e.extensions[L"gearLayouts"][L"center"];d.x=layer.destination.x+center[L"x"].num(e.x)-e.x;d.y=layer.destination.y+center[L"y"].num(e.y)-e.y;d.x+=gear.centerX-960;d.y+=gear.lineY-720;t->SetTransform(D2D1::Matrix3x2F::Identity());drawBitmap(d,float(e.opacity*e.tint.a/255.0),D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);continue;}
+            if(hasModeGeometry){d.x+=modeGeometry[L"x"].num(e.x)-e.x;d.y+=modeGeometry[L"y"].num(e.y)-e.y;if(e.width>0)d.width*=modeGeometry[L"width"].num(e.width)/e.width;if(e.height>0)d.height*=modeGeometry[L"height"].num(e.height)/e.height;}
+            if(!e.extensions[L"nativeGearPart"].boolean&&e.extensions[L"followGear"].boolean){const auto& center=e.extensions[L"gearLayouts"][L"center"];d.x=layer.destination.x+center[L"x"].num(e.x)-e.x;d.y=layer.destination.y+center[L"y"].num(e.y)-e.y;if(hasModeGeometry){d.x+=modeGeometry[L"x"].num(e.x)-e.x;d.y+=modeGeometry[L"y"].num(e.y)-e.y;}d.x+=gear.centerX-960;d.y+=gear.lineY-720;t->SetTransform(D2D1::Matrix3x2F::Identity());drawBitmap(d,float(e.opacity*e.tint.a/255.0),D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);continue;}
             const double centers[]={342,960,1578};d.x+=gear.centerX-(layout.type==bms::JsonValue::Type::Object?centers[gear.position]:960);d.y+=gear.lineY-720;
             float opacity=float(e.opacity*e.tint.a/255.0);
-            if(e.id=="gear-gauge-fill-reference")d.width=(556-8)*std::clamp(gear.gauge,0.0,100.0)/100;
-            if(e.id.starts_with("gear-key-")&&!e.id.starts_with("gear-key-guide-")){const auto lane=e.id.back()-'0';if(lane>=0&&lane<8&&gear.pressed[lane])opacity*=.6f;}
-            const auto local=e.id=="gear-scratch-disc"?D2D1::Matrix3x2F::Rotation(float(gear.rotation),D2D1::Point2F(float(d.x+d.width/2),float(d.y+d.height/2))):D2D1::Matrix3x2F::Identity();
+            if(e.id=="gear-gauge-fill-reference")d.width=(hasModeGeometry?modeGeometry[L"fullWidth"].num(556-8):556-8)*std::clamp(gear.gauge,0.0,100.0)/100;
+            if(e.id.starts_with("gear-key-")&&!e.id.starts_with("gear-key-guide-")){const int lane=gearKeyLane(e.id,gear.mode);if(lane>=0&&lane<16&&gear.pressed[static_cast<size_t>(lane)])opacity*=.6f;}
+            const auto local=(e.id=="gear-scratch-disc"||e.id=="gear-scratch-disc-p2")?D2D1::Matrix3x2F::Rotation(float(gear.rotation),D2D1::Point2F(float(d.x+d.width/2),float(d.y+d.height/2))):D2D1::Matrix3x2F::Identity();
             t->SetTransform(local);drawBitmap(d,opacity,D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);continue;
         }
         double ax=0,ay=0,as=1,ar=e.rotation,ao=e.opacity;
-        if(impl_->screen==ScreenKind::Play&&impl_->gear.active&&!layer.hud){const auto& layout=e.extensions[L"gearLayouts"][(impl_->gear.mirrorUi?2-impl_->gear.position:impl_->gear.position)==0?L"left":(impl_->gear.mirrorUi?2-impl_->gear.position:impl_->gear.position)==2?L"right":L"center"];if(layout.type==bms::JsonValue::Type::Object){ax=layout[L"x"].num(e.x)-e.x;ay=layout[L"y"].num(e.y)-e.y;}if(impl_->gear.mirrorUi)ax=impl_->resolution.width-(e.x+ax)-e.width-e.x;}
+        if(impl_->screen==ScreenKind::Play&&impl_->gear.active&&!layer.hud){const auto& layout=e.extensions[L"gearLayouts"][(impl_->gear.mirrorUi?2-impl_->gear.position:impl_->gear.position)==0?L"left":(impl_->gear.mirrorUi?2-impl_->gear.position:impl_->gear.position)==2?L"right":L"center"];if(layout.type==bms::JsonValue::Type::Object){ax=layout[L"x"].num(e.x)-e.x;ay=layout[L"y"].num(e.y)-e.y;}if(hasModeGeometry){ax+=modeGeometry[L"x"].num(e.x)-e.x;ay+=modeGeometry[L"y"].num(e.y)-e.y;}if(impl_->gear.mirrorUi)ax=impl_->resolution.width-(e.x+ax)-e.width-e.x;}
 
-        if(impl_->screen==ScreenKind::Play&&e.binding=="play.judgementCombo"){if(impl_->anchorWidth>0&&impl_->anchorHeight>0){const double scale=std::min(impl_->anchorWidth/impl_->resolution.width,impl_->anchorHeight/impl_->resolution.height);const double ox=(impl_->anchorWidth-impl_->resolution.width*scale)/2,oy=(impl_->anchorHeight-impl_->resolution.height*scale)/2;ax=layer.hud?(impl_->anchorX-ox)/scale-impl_->resolution.width/2:(impl_->anchorX-ox)/scale-e.width/2-e.x;ay=(impl_->anchorY-oy)/scale-impl_->resolution.height*2.0/3+impl_->judgementOffset;}else {ax=layer.hud?0:(impl_->resolution.width-e.width)/2-e.x;ay=impl_->judgementOffset;}}const double now=std::chrono::duration<double>(std::chrono::steady_clock::now()-impl_->animationStart).count();
+        if(impl_->screen==ScreenKind::Play&&e.binding=="play.judgementCombo"){if(impl_->anchorWidth>0&&impl_->anchorHeight>0){const double scale=std::min(impl_->anchorWidth/impl_->resolution.width,impl_->anchorHeight/impl_->resolution.height);const double ox=(impl_->anchorWidth-impl_->resolution.width*scale)/2,oy=(impl_->anchorHeight-impl_->resolution.height*scale)/2;ax=layer.hud?(impl_->anchorX-ox)/scale-impl_->resolution.width/2:(impl_->anchorX-ox)/scale-e.width/2-e.x;ay=(impl_->anchorY-oy)/scale-impl_->resolution.height*2.0/3+impl_->judgementOffset;}else {ax=layer.hud?0:(impl_->resolution.width-e.width)/2-e.x;ay=impl_->judgementOffset;}}const double now=impl_->animNow();
         { HUD_SCOPE_IF(Animations,foreground);
         for(const auto& track:layer.animations)if((e.binding!="play.judgementCombo"||layer.hud)&&track.running(now)){double value=track.sample(now);if(track.property=="x")ax=value-e.x;else if(track.property=="y")ay=value-e.y;else if(track.property=="scale")as=value;else if(track.property=="rotation")ar=value;else if(track.property=="opacity")ao=value;}
 
@@ -421,7 +415,7 @@ bool SkinRenderer::draw(float width,float height,bool foregroundOnly,bool skipFo
         if(e.clip)t->PushAxisAlignedClip(rect(*e.clip),D2D1_ANTIALIAS_MODE_ALIASED);
         if((layer.text||layer.hud)&&e.textStyle.clip){const double clipScale=e.binding=="play.judgementCombo"?1:as;t->PushAxisAlignedClip(rect({e.x+ax+e.width*(1-clipScale)/2,e.y+ay+e.height*(1-clipScale)/2,e.width*clipScale,e.height*clipScale}),D2D1_ANTIALIAS_MODE_ALIASED);}
         t->SetTransform(D2D1::Matrix3x2F::Scale(float(as),float(as),D2D1::Point2F(float(e.x+e.width/2),float(e.y+e.height/2)))*D2D1::Matrix3x2F::Rotation(float(std::remainder(ar,360.0)),D2D1::Point2F(float(e.x+e.width/2),float(e.y+e.height/2)))*D2D1::Matrix3x2F::Translation(float(ax),float(ay))*base);
-        if(layer.hud){drawEntrance({e.x,e.y,e.width,e.height},float(ao*e.tint.a/255.0),[&](float alpha){impl_->stats.hudDrawCalls+=layer.hud->draw(t,e,alpha);});if(e.textStyle.clip)t->PopAxisAlignedClip();if(e.clip)t->PopAxisAlignedClip();continue;}
+        if(layer.hud){impl_->stats.hudDrawCalls+=layer.hud->draw(t,e,float(ao*e.tint.a/255.0));if(e.textStyle.clip)t->PopAxisAlignedClip();if(e.clip)t->PopAxisAlignedClip();continue;}
         auto destination=layer.destination;
         if(layer.overflow>0)destination.x-=bms::ui::textMarqueeOffset(layer.overflow,std::chrono::duration<double>(std::chrono::steady_clock::now()-layer.marqueeStart).count());
         { HUD_SCOPE_IF(HudBitmapGroup,foreground);if(foreground)HUD_BITMAP(layer.bitmap.Get(),1);
@@ -446,11 +440,19 @@ bool SkinRenderer::coversLegacySlots(int position,double left,double top,double 
     return bounds[0]<=left&&bounds[1]<=top&&bounds[2]>=right&&bounds[3]>=bottom;
 }
 void SkinRenderer::setGearState(const SkinGearState& state) noexcept {if(impl_)impl_->gear=state;}
-void SkinRenderer::forceEntranceDuration(double seconds) noexcept {
-    if(!impl_||impl_->screen!=ScreenKind::Play||!std::isfinite(seconds)||seconds<=0)return;
-    for(auto& layer:impl_->layers)if(layer.entrance.preset){layer.entrance.duration=seconds;layer.entrance.delay=0;}
+bool SkinRenderer::hasKeyGuides() const noexcept {
+    if(!impl_)return false;
+    for(const auto& layer:impl_->layers)if(layer.element.id.starts_with("gear-key-guide-"))return true;
+    return false;
 }
-void SkinRenderer::emit(std::string_view event) noexcept {if(!impl_)return;double now=std::chrono::duration<double>(std::chrono::steady_clock::now()-impl_->animationStart).count();for(auto& layer:impl_->layers)if(event=="screen.enter"){layer.entranceStart=now;layer.entrancePending=layer.entrance.preset!=0;}for(auto& layer:impl_->layers)for(auto& t:layer.animations)if(t.trigger==event&&!(t.policy=="ignore"&&t.active&&(t.loop||now-t.start<t.duration))){t.start=now;t.active=true;}}
+bool SkinRenderer::supportsGearMode(int mode) const noexcept {
+    if(mode<=0)return true;
+    if(!impl_)return false;
+    for(const auto& layer:impl_->layers)if(layer.element.extensions[L"nativeGearPart"].boolean&&layer.element.extensions[L"gearModes"][gearModeName(mode)].type==bms::JsonValue::Type::Object)return true;
+    return false;
+}
+void SkinRenderer::emit(std::string_view event) noexcept {if(!impl_)return;double now=impl_->animNow();for(auto& layer:impl_->layers)for(auto& t:layer.animations)if(t.trigger==event&&!(t.policy=="ignore"&&t.active&&(t.loop||now-t.start<t.duration))){t.start=now;t.active=true;}}
+void SkinRenderer::setAnimationPaused(bool paused) noexcept {if(impl_)impl_->setAnimPaused(paused);}
 void SkinRenderer::setJudgementRainbow(bool enabled) noexcept {if(impl_)impl_->judgementRainbow=enabled;}
 void SkinRenderer::setJudgementAnchor(double x,double y,double w,double h) noexcept {if(impl_){impl_->anchorX=x;impl_->anchorY=y;impl_->anchorWidth=w;impl_->anchorHeight=h;}}
 void SkinRenderer::setJudgementOffset(double offset) noexcept {if(impl_)impl_->judgementOffset=offset;}
@@ -464,7 +466,7 @@ bool SkinRenderer::updateBox(std::string_view mode,const std::uint32_t* pixels,u
  if(FAILED(impl_->target->CreateBitmap(D2D1::SizeU(width,height),pixels,width*4,D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96),&bitmap)))return false;
  layer.bitmap=std::move(bitmap);layer.source=D2D1::RectF(0,0,float(width),float(height));}else if(FAILED(layer.bitmap->CopyFromMemory(nullptr,pixels,width*4)))return false;updated=true;}return updated;
 }
-bool SkinRenderer::animating() const noexcept {if(!impl_)return false;double now=std::chrono::duration<double>(std::chrono::steady_clock::now()-impl_->animationStart).count();for(auto& l:impl_->layers){if(l.entrancePending)return true;for(auto& t:l.animations)if(t.active)return true;}return false;}
+bool SkinRenderer::animating() const noexcept {if(!impl_)return false;double now=impl_->animNow();for(auto& l:impl_->layers){for(auto& t:l.animations)if(t.active)return true;}return false;}
 bool SkinRenderer::editGeometry(std::string_view id,double x,double y,double width,double height) noexcept {
     if(!impl_||!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(width)||!std::isfinite(height)||std::abs(x)>1000000||std::abs(y)>1000000||width<=0||height<=0||width>1000000||height>1000000)return false;
     for(auto& layer:impl_->layers)if(layer.element.id==id){auto& e=layer.element;

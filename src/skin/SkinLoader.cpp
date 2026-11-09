@@ -1,5 +1,5 @@
 ﻿#include "SkinInternal.h"
-#include "SkinEntrance.h"
+#include "SkinAnimation.h"
 #include "FontPolicy.h"
 #include <algorithm>
 #include <cmath>
@@ -206,6 +206,8 @@ SkinScreen layout(const J& root,ScreenKind kind,const Resolution& base,const std
 }
 void validate(SkinPackage& p,const Limits& l) {
     for(auto& [kind,screen]:p.screens){(void)kind;for(auto& e:screen.elements){
+        e.extensions.object.erase(L"entrance"); // removed legacy entrance presets: never active, even if an old skin still declares them
+        (void)parseAnimations(e.extensions); // reject malformed animation tracks at load time, not only at renderer preparation
         const bool legacy=sevenmania::isLegacyHudFont(e.textStyle.font);
         if(legacy){e.textStyle.font="Michroma";e.resource.clear();}
         else if(!e.resource.empty()&&p.resources.contains(e.resource)&&sevenmania::isLegacyHudFont(p.resources.at(e.resource).path)){e.textStyle.font="Michroma";e.resource.clear();}
@@ -291,7 +293,7 @@ void validate(SkinPackage& p,const Limits& l) {
             if(hud.images()&&(e.kind!=ElementKind::Text||e.binding!="play.judgementCombo"||kind!=ScreenKind::Play))fail(ErrorCode::InvalidScreen,e.id,"HUD images need a play.judgementCombo text element");
             for(const auto& id:hud.judgements)if(!id.empty())identifier(id,e.id);
             for(const auto& id:hud.digits)if(!id.empty())identifier(id,e.id);
-            extension(e.extensions,e.id);(void)Entrance::parse(e.extensions);
+            extension(e.extensions,e.id);
             if(e.kind!=ElementKind::Image&&e.kind!=ElementKind::Sprite&&e.kind!=ElementKind::Text&&e.kind!=ElementKind::Number&&e.kind!=ElementKind::Box)fail(ErrorCode::InvalidScreen,e.id,"Unknown element kind");
             if(e.kind==ElementKind::Box&&(e.boxMode!="solid"&&e.boxMode!="title"&&e.boxMode!="bga"&&e.boxMode!="hybrid"))fail(ErrorCode::InvalidScreen,e.id,"Invalid box mode");
             if(e.kind==ElementKind::Box&&!e.resource.empty())fail(ErrorCode::InvalidScreen,e.id,"Box cannot use a resource");

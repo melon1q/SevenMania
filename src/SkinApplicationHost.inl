@@ -137,19 +137,38 @@ void runSkinSettingsAction(int action) {
     if(IsWindow(gSkinNativeStatus))SetWindowTextW(gSkinNativeStatus,skinSummary().c_str());
     setBindingStatus(gSkinStatus);
 }
+// Key names the skin's gear-key-guide elements show; rebuilt only when the mode or a binding changes.
+std::shared_ptr<const std::array<std::string,16>> skinKeyLabels(bms::ChartMode mode) {
+    static std::shared_ptr<const std::array<std::string,16>> labels;
+    static std::array<UINT,16> codes{};
+    static bms::ChartMode cachedMode=bms::ChartMode::Other;
+    std::array<UINT,16> current{};
+    for(int lane=0;lane<16;++lane)current[static_cast<size_t>(lane)]=laneKey(lane);
+    if(labels&&cachedMode==mode&&current==codes)return labels;
+    auto next=std::make_shared<std::array<std::string,16>>();
+    for(int lane=0;lane<16;++lane){
+        if(!current[static_cast<size_t>(lane)])continue;
+        const auto text=keyName(current[static_cast<size_t>(lane)]);
+        const int length=WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);
+        if(length<=0)continue;
+        (*next)[static_cast<size_t>(lane)].resize(static_cast<size_t>(length));
+        WideCharToMultiByte(CP_UTF8,0,text.data(),static_cast<int>(text.size()),(*next)[static_cast<size_t>(lane)].data(),length,nullptr,nullptr);
+    }
+    codes=current;cachedMode=mode;labels=std::move(next);
+    return labels;
+}
 void updateSkinJudgementAnchor() {
     if((!gPlaying&&!gPlaybackLoad.preparing()) || gActiveChartIndex<0 || gActiveChartIndex>=static_cast<int>(gCharts.size()))return;
     const auto& chart=gCharts[static_cast<size_t>(gActiveChartIndex)];
-    const bool dp=chart.mode==bms::ChartMode::TenKey||chart.mode==bms::ChartMode::FourteenKey;
-    const int lane=dp?std::max(28,LaneLayout::defaultKeyWidth*2/3):LaneLayout::defaultKeyWidth;
-    const int scratch=dp?68:LaneLayout::defaultScratchWidth;
+    const auto widths=bms::chartDeckWidths(chart);
+    const int lane=widths.key,scratch=widths.scratch;
     const int width=bms::chartLayout(chart,0,lane,scratch).totalWidth();
     const int available=std::max(0,gWindowWidth-width),edge=std::min(64,available/2);
     const int left=gGearPosition==0?edge:gGearPosition==2?std::max(edge,available-edge):available/2;
     const int line=bms::optionJudgeLine(gChartOptions,gPlayhead,judgementLineY(gWindowHeight),gWindowHeight);
     gTimingHintScale=std::min(gWindowWidth/1920.0,gWindowHeight/1080.0);gTimingHintX=left+width/2.0;gTimingHintY=line+(-200+gJudgementTextYOffset-24)*gTimingHintScale;
     gSkinApplication.setJudgementAnchor(left+width/2.0,line,gWindowWidth,gWindowHeight);
-    sevenmania::skin::SkinGearState gear;gear.judgementColor=gJudgementColor;gear.judgementScale=gJudgementPop.scale();gear.position=gGearPosition;gear.mirrorUi=gSkinMirrorUi;gear.active=chart.mode==bms::ChartMode::SevenKey||chart.mode==bms::ChartMode::Unknown;gear.centerX=left+width/2.0;gear.lineY=line;gear.gauge=gGrooveGauge.value();gear.speed=gNoteSpeed;gear.rotation=gScratchDisc.angle()*180/3.141592653589793;gear.pressed=primaryPressed();gSkinApplication.setGearState(gear);
+    sevenmania::skin::SkinGearState gear;gear.judgementColor=gJudgementColor;gear.judgementScale=gJudgementPop.scale();gear.position=gGearPosition;gear.mirrorUi=gSkinMirrorUi;gear.mode=bms::gearModeIndex(chart.mode);gear.active=gear.mode==0||gSkinApplication.supportsGearMode(gear.mode);gear.suppressNativeGear=!gear.active;gear.centerX=left+width/2.0;gear.lineY=line;gear.gauge=gGrooveGauge.value();gear.speed=gNoteSpeed;gear.rotation=gScratchDisc.angle()*180/3.141592653589793;gear.pressed=gPressed;gear.keyLabels=skinKeyLabels(chart.mode);gSkinApplication.setGearState(gear);
 }
 void drawAppliedSkinDc(HDC dc) {
     if(gPlaybackLoad.preparing()){

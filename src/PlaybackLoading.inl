@@ -42,7 +42,7 @@ bool prepareSelectedChartData(bool deferred=false) {
             gLaneNoteIndices[static_cast<size_t>(chartNotes[i].lane)].push_back(i);
     }
     gMissScanIndex = 0;
-    gAutoJudge.reset();gAutoJudgeUsedThisPlay=false;
+    gAutoJudge.reset();gAutoJudgeUsedThisPlay=false;gAutoJudgePending=false;
     gPressed.fill(false);gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();clearAccuracyRestart();
     gHolds.fill(LongNoteHold{});
     resetMines();

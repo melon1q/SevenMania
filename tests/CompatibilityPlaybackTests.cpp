@@ -66,13 +66,13 @@ int wmain(int argc,wchar_t** argv){
     }
 
     for(const auto mode:{bms::ChartMode::Unknown,bms::ChartMode::FiveKey,bms::ChartMode::SevenKey,bms::ChartMode::TenKey,bms::ChartMode::FourteenKey,bms::ChartMode::PopnNine,bms::ChartMode::Other}){
-        bms::Chart c;c.mode=mode;check(bms::gameplayModeAllowed(c)==(mode==bms::ChartMode::SevenKey),"only 7+1 gameplay policy");
+        bms::Chart c;c.mode=mode;check(bms::gameplayModeAllowed(c)==(mode!=bms::ChartMode::Unknown&&mode!=bms::ChartMode::Other),"gameplay policy admits every laned key mode");
     }
     if(argc==3&&std::wstring(argv[1])==L"--real-modes"){
         unsigned count=0;for(const auto& e:std::filesystem::recursive_directory_iterator(argv[2]))if(e.is_regular_file()&&e.path().extension()==L".bms"){
             const auto c=bms::BmsParser().parse(e.path()).chart;
-            check(!bms::gameplayModeAllowed(c),"unexpected 7-key chart in yamajet fixture");
-            std::cout<<c.path.filename().string()<<" mode="<<static_cast<int>(c.mode)<<" blocked=1\n";++count;
+            check(bms::gameplayModeAllowed(c),"yamajet fixture mode must be playable");
+            std::cout<<c.path.filename().string()<<" mode="<<static_cast<int>(c.mode)<<" blocked=0\n";++count;
         }check(count==4,"yamajet chart count changed");return 0;
     }
     if(argc<2)return 2;CoInitializeEx(nullptr,COINIT_MULTITHREADED);MFStartup(MF_VERSION);AVIFileInit();

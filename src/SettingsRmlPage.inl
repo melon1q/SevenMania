@@ -86,7 +86,7 @@ void syncRmlSettingsState(const std::wstring& status = L"") {
     for(int option=0;option<2;++option)gRmlSettingsPage.setClass("low-latency:"+std::to_string(option),"disabled",!(reflexAvailable || gReflexRequested));
     gRmlSettingsPage.setOptions("key-mode",{{"0","5키"},{"1","7키"},{"2","9키"},{"3","10키"},{"4","14키"}});
     gRmlSettingsPage.setValue("key-mode",std::to_string(gBindingMode));
-    std::wstring summary;for(int i=0;i<bms::KeyProfiles::counts[gBindingMode];++i)summary+=keyName(gKeyProfiles.keys[gBindingMode][i])+L"  ";
+    std::wstring summary;for(int i=0;i<bms::KeyProfiles::counts[gBindingMode];++i){summary+=keyName(gKeyProfiles.keys[gBindingMode][static_cast<size_t>(bms::keyProfileCaptureSlot(gBindingMode,i))])+((gBindingMode==3&&i==5)||(gBindingMode==4&&i==7)?L"  |  ":L"  ");}
     gRmlSettingsPage.setText("key-summary",settingsUtf8(summary));
     gRmlSettingsPage.setEnabled("bind-keys",!gCapturingBindings);
     gRmlSettingsPage.setEnabled("cancel-keys",gCapturingBindings);

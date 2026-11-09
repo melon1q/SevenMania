@@ -44,6 +44,7 @@ constexpr BindingDefinition definitions[]{
     {BindingId::SummaryGauge,"summary.gauge",BindingType::String,32},
     {BindingId::SummaryAccuracy,"summary.accuracy",BindingType::String,32},
     {BindingId::SummaryVolume,"summary.volume",BindingType::String,32},
+    {BindingId::SelectKeyMode,"select.keyMode",BindingType::String,1},
 
 };
 static_assert(std::size(definitions)==static_cast<std::size_t>(BindingId::Count));

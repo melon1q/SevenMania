@@ -38,6 +38,11 @@ class SettingsDialog {
             label(name.c_str(),x,y,155);auto box=combo(110+i,x+155,y-3,130);add(box,L"사용 안 함");for(int b=1;b<=128;++b)add(box,L"버튼 "+std::to_wstring(b));
             select(110+i,(i<7?original_.keys[i]:i==7?original_.scratchCw:i==8?original_.scratchCcw:original_.menu)+1);
         }
+        for(int i=0;i<9;++i){const int x=690,y=125+i*39;
+            const std::wstring name=i<7?L"2P 건반 "+std::to_wstring(i+1):i==7?L"2P 스크래치 버튼 1":L"2P 스크래치 버튼 2";
+            label(name.c_str(),x,y,155);auto box=combo(150+i,x+155,y-3,130);add(box,L"사용 안 함");for(int b=1;b<=128;++b)add(box,L"버튼 "+std::to_wstring(b));
+            select(150+i,(i<7?original_.keys2p[i]:i==7?original_.scratch2pCw:original_.scratch2pCcw)+1);
+        }
         label(L"턴테이블 축",350,255);auto axes=combo(130,505,252,150);for(auto name:{L"사용 안 함",L"X",L"Y",L"Z",L"Rx",L"Ry",L"Rz",L"Slider 1",L"Slider 2"})add(axes,name);select(130,original_.axis+1);
         label(L"축 동작",350,294);auto mode=combo(131,505,291,150);for(auto name:{L"버튼만 사용",L"턴테이블 회전축",L"중앙 복귀 축"})add(mode,name);select(131,original_.mode);
         label(L"축 감도 (1~8192)",350,333);control(L"EDIT",std::to_wstring(original_.threshold).c_str(),132,540,330,115,24,WS_BORDER|ES_NUMBER|ES_AUTOHSCROLL);
@@ -45,13 +50,15 @@ class SettingsDialog {
         label(L"입력 확인: 아래에서 연결 상태, 버튼 번호, 축 값을 확인하세요.",20,420,640);
         control(L"STATIC",L"장치를 확인하는 중...",140,20,449,635,72);
         label(L"IIDX 컨트롤러: 게임패드/HID 모드에서 건반과 축을 맞춰 주세요.",20,530,640);
-        label(L"키보드 모드는 기존 키 배치 설정을 사용합니다. 1P 7+1키 지원.",20,552,640);
-        control(L"BUTTON",L"저장",IDOK,425,587,110,32,BS_DEFPUSHBUTTON);control(L"BUTTON",L"취소",IDCANCEL,545,587,110,32);
+        label(L"키보드 모드는 기존 키 배치 설정을 사용합니다. 2P 버튼은 DP(10K/14K)와 PMS 7~9번 키에 사용됩니다.",20,552,980);
+        control(L"BUTTON",L"저장",IDOK,765,587,110,32,BS_DEFPUSHBUTTON);control(L"BUTTON",L"취소",IDCANCEL,885,587,110,32);
         scan();SetTimer(window_,1,16,nullptr);
     }
     void save(){
         Config draft=original_;draft.enabled=SendDlgItemMessageW(window_,100,BM_GETCHECK,0,0)==BST_CHECKED;
         for(int i=0;i<7;++i)draft.keys[i]=selected(110+i)-1;
+        for(int i=0;i<7;++i)draft.keys2p[i]=selected(150+i)-1;
+        draft.scratch2pCw=selected(157)-1;draft.scratch2pCcw=selected(158)-1;
         draft.scratchCw=selected(117)-1;draft.scratchCcw=selected(118)-1;draft.menu=selected(119)-1;draft.axis=selected(130)-1;draft.mode=selected(131);
         BOOL validThreshold{},validHold{};draft.threshold=int(GetDlgItemInt(window_,132,&validThreshold,FALSE));draft.holdMs=int(GetDlgItemInt(window_,133,&validHold,FALSE));
         if(!validThreshold||draft.threshold<1||draft.threshold>8192||!validHold||draft.holdMs<20||draft.holdMs>250){MessageBoxW(window_,L"축 감도와 유지시간을 표시된 범위로 입력해 주세요.",L"컨트롤러 설정",MB_OK|MB_ICONINFORMATION);return;}
@@ -81,7 +88,7 @@ public:
     SettingsDialog(Device& device,HWND owner,const std::wstring& ini):device_(device),original_(device.config),originalId_(device.deviceId),ini_(ini),owner_(owner){}
     bool show(HWND gameWindow){
         WNDCLASSW type{};type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=L"SevenManiaControllerSettings";type.lpfnWndProc=proc;type.hCursor=LoadCursor(nullptr,IDC_ARROW);type.hbrBackground=HBRUSH(COLOR_BTNFACE+1);RegisterClassW(&type);
-        const auto window=CreateWindowExW(WS_EX_DLGMODALFRAME|WS_EX_CONTROLPARENT,type.lpszClassName,L"컨트롤러 설정",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,CW_USEDEFAULT,CW_USEDEFAULT,700,670,owner_,nullptr,type.hInstance,this);
+        const auto window=CreateWindowExW(WS_EX_DLGMODALFRAME|WS_EX_CONTROLPARENT,type.lpszClassName,L"컨트롤러 설정",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,CW_USEDEFAULT,CW_USEDEFAULT,1040,670,owner_,nullptr,type.hInstance,this);
         if(!window)return false;
         SetWindowTextW(window,L"컨트롤러 설정");EnableWindow(owner_,FALSE);ShowWindow(window,SW_SHOW);SetFocus(GetDlgItem(window,100));
         MSG message{};while(!done_){const auto read=GetMessageW(&message,nullptr,0,0);if(read<=0){if(read==0)PostQuitMessage(int(message.wParam));break;}if(!IsDialogMessageW(window,&message)){TranslateMessage(&message);DispatchMessageW(&message);}}

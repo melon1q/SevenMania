@@ -2,11 +2,11 @@
 #include "BmsParser.h"
 
 namespace bms {
-// Parsing remains format-compatible; the shipping player currently admits only 7+1.
+// Every parsed key mode is playable; Unknown/Other have no lane layout.
 inline bool gameplayModeAllowed(const Chart& chart) noexcept {
-    return chart.mode==ChartMode::SevenKey;
+    return chart.mode!=ChartMode::Unknown&&chart.mode!=ChartMode::Other;
 }
 inline std::wstring gameplayModeBlockReason(const Chart& chart) {
-    return L"현재는 7+1키 채보만 플레이할 수 있습니다. 이 채보: "+BmsParser::modeLabel(chart.mode);
+    return L"지원하지 않는 키 모드입니다: "+BmsParser::modeLabel(chart.mode);
 }
 }
