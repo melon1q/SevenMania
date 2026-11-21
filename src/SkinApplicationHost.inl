@@ -1,5 +1,69 @@
 ﻿// Included inside Main.cpp's UI owner namespace, with BMS_ENABLE_SKIN_BINDINGS.
-constexpr int ID_SKIN_LOAD=1290, ID_SKIN_CLEAR=1291, ID_SKIN_ANIMATION=1292, ID_SKIN_RETRY=1293;
+constexpr int ID_SKIN_ANIMATION=1292, ID_SKIN_RETRY=1293;
+void logSkinWarning(const std::wstring& text) {
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string line(static_cast<std::size_t>(std::max(size, 0)), '\0');
+    if (size > 0) WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), line.data(), size, nullptr, nullptr);
+    std::ofstream log(gSettingsFile.parent_path() / L"skin-render.log", std::ios::app);
+    log << line << '\n';
+    OutputDebugStringA((line + "\n").c_str());
+}
+std::map<int, TurntableImage> gSkinHitEffects;
+std::map<int, int> gSkinHitEffectFrames;
+int gSkinHitEffect{};
+
+bool selectSkinHitEffect(int number) {
+    const auto found = gSkinHitEffects.find(number);
+    if (found == gSkinHitEffects.end()) return false;
+    const auto& image = found->second;
+    if (!gFeedback.setSpriteSheet(image.width(), image.height(), image.pixels(), gSkinHitEffectFrames[number])) return false;
+    gSkinHitEffect = number;
+    return true;
+}
+
+
+void loadSkinHitEffects(const std::filesystem::path& root, const std::shared_ptr<const sevenmania::skin::Bytes>& packaged = {}) {
+    gSkinHitEffects.clear();
+    gSkinHitEffectFrames.clear();
+    gSkinHitEffect = 0;
+    if (!root.empty() && gGdiPlusToken) {
+        std::vector<std::wstring> issues;
+        for (const auto& [number,path] : skinHitEffectFiles(root, &issues)) {
+            const auto name = L"HitEffects/" + path.filename().wstring();
+            const int frames = skinHitEffectFrames(path);
+            TurntableImage image;
+            if (frames < 1 || frames > PlayFeedback::maxSpriteFrames) {
+                issues.push_back(name + L" ignored: Frames must be 1-" + std::to_wstring(PlayFeedback::maxSpriteFrames) + L".");
+            } else if (!loadRasterPngFile(path, image)) {
+                issues.push_back(name + L" ignored: the PNG could not be decoded.");
+            } else if (image.width() % frames != 0) {
+                issues.push_back(name + L" ignored: the width (" + std::to_wstring(image.width()) +
+                    L") must be a multiple of the frame count (" + std::to_wstring(frames) + L").");
+            } else {
+                gSkinHitEffects.emplace(number, std::move(image));
+                gSkinHitEffectFrames[number] = frames;
+            }
+        }
+        for (const auto& issue : issues) logSkinWarning(issue);
+    }
+    if (!gSkinHitEffects.empty()) {
+        const int saved = static_cast<int>(GetPrivateProfileIntW(L"Skin", L"HitEffect", 0, gSettingsFile.c_str()));
+        selectSkinHitEffect(gSkinHitEffects.contains(saved) ? saved : gSkinHitEffects.begin()->first);
+    } else {
+        TurntableImage image;
+        if (packaged && gGdiPlusToken) {
+            Microsoft::WRL::ComPtr<IStream> stream;
+            stream.Attach(SHCreateMemStream(packaged->data(), static_cast<UINT>(packaged->size())));
+            if (stream) {
+                Gdiplus::Bitmap bitmap(stream.Get());
+                loadRasterBitmap(bitmap, image, 0, 0);
+            }
+        }
+        if (!gFeedback.setSpriteSheet(image.width(), image.height(), image.pixels()) &&
+            !gFeedback.setSpriteSheet(gHitSplashSheet.width(), gHitSplashSheet.height(), gHitSplashSheet.pixels()))
+            gFeedback.useDefaultSprites();
+    }
+}
 sevenmania::skin::SkinApplication gSkinApplication;
 sevenmania::skin::SkinDataProvider gSkinData;
 void restartSongInformationEntrance(){gSkinApplication.enterScreen(sevenmania::skin::ScreenKind::SongInformation);}
@@ -11,15 +75,14 @@ std::wstring gSkinStatus=L"기본 화면 사용 중";
 HWND gSkinNativeStatus{};
 std::filesystem::path gSkinWanted;
 bool gSkinRetryPending=false;
-bool gSkinMirrorUi=false;
 std::filesystem::path defaultSkinPath(){
     const auto skins=executableFolder()/L"Assets/Skins";
     const auto current=skins/L"DefaultSkin/DefaultReference.semaskin";
     std::error_code ec;
     return std::filesystem::is_regular_file(current,ec)?current:skins/L"DefaultReference.semaskin";
 }
-void skinVisibility(bool ready){if(!ready){for(HWND button:gPauseButtons)if(IsWindow(button))ShowWindow(button,SW_HIDE);for(HWND child:{gList,gFolder,gInfo,gStatus,gHiddenSongs,gResultNext})if(IsWindow(child))ShowWindow(child,SW_HIDE);}else{if(IsWindow(gList))ShowWindow(gList,!gPlaying&&!gShowingResult&&!gStartupSplash?SW_SHOWNA:SW_HIDE);updateHiddenSongsVisibility();if(IsWindow(gResultNext))ShowWindow(gResultNext,gShowingResult?SW_SHOWNA:SW_HIDE);for(HWND button:gPauseButtons)if(IsWindow(button))ShowWindow(button,gPlaying&&gPaused?SW_SHOWNA:SW_HIDE);}}
-void unloadSkinSelection(){if(IsWindow(gWindow)){KillTimer(gWindow,ID_SKIN_RETRY);KillTimer(gWindow,ID_SKIN_ANIMATION);}gCompositionPresenter.setFrameOverlay(nullptr);gCompositionPresenter.setFrameForeground(nullptr);gSkinApplication.clear();gSkinData.clear();gSkinRetryPending=false;gSkinWanted.clear();}
+void skinVisibility(bool ready){if(!ready){for(HWND button:gPauseButtons)if(IsWindow(button))ShowWindow(button,SW_HIDE);for(HWND child:{gList,gFolder,gInfo,gStatus,gHiddenSongs,gResultNext})if(IsWindow(child))ShowWindow(child,SW_HIDE);}else{if(IsWindow(gList))ShowWindow(gList,!gPlaying&&!gShowingResult&&!gStartupSplash?SW_SHOWNA:SW_HIDE);updateHiddenSongsVisibility();syncNativeResultNext();for(HWND button:gPauseButtons)if(IsWindow(button))ShowWindow(button,gPlaying&&gPaused?SW_SHOWNA:SW_HIDE);}}
+void unloadSkinSelection(){if(IsWindow(gWindow)){KillTimer(gWindow,ID_SKIN_RETRY);KillTimer(gWindow,ID_SKIN_ANIMATION);}gCompositionPresenter.setFrameOverlay(nullptr);gCompositionPresenter.setFrameForeground(nullptr);gSkinApplication.clear();gNoteImages.clear();gSkinData.clear();gSkinRetryPending=false;gSkinWanted.clear();}
 
 
 std::wstring skinWide(const std::string& value) {
@@ -73,10 +136,18 @@ bool applySkinFile(const std::filesystem::path& file,bool persist=true) {
     if(error) {
         static std::string lastLoggedError;const auto message=error->path+": "+error->message;
         if(message!=lastLoggedError){std::ofstream log(gSettingsFile.parent_path()/L"skin-render.log",std::ios::app);log<<message<<'\n';OutputDebugStringA(message.c_str());lastLoggedError=message;}
-        gSkinApplication.clear();gSkinRetryPending=true;skinVisibility(false);SetTimer(gWindow,ID_SKIN_RETRY,1000,nullptr);InvalidateRect(gWindow,nullptr,FALSE);
+        gSkinApplication.clear();gNoteImages.clear();loadSkinHitEffects({});gSkinRetryPending=true;skinVisibility(false);SetTimer(gWindow,ID_SKIN_RETRY,1000,nullptr);InvalidateRect(gWindow,nullptr,FALSE);
         gSkinStatus=L"스킨을 불러오지 못했습니다. 빈 화면에서 1초 간격으로 재시도합니다.\n"+skinWide(error->path)+L": "+skinWide(error->message);
         return false;
     }
+    if (gGdiPlusToken) {
+        wchar_t sheet[1024]{};
+        GetPrivateProfileStringW(L"Skin", L"NoteGroup", L"", sheet, 1024, gSettingsFile.c_str());
+        const bool bundledSkin = std::filesystem::equivalent(absolute, defaultSkinPath(), ec);
+        for (const auto& warning : gNoteImages.load(absolute, skinSettingDecode(sheet), bundledSkin)) logSkinWarning(warning);
+    }
+    for (const auto& warning : gSkinApplication.warnings()) logSkinWarning(warning);
+    loadSkinHitEffects(absolute.parent_path(), gSkinApplication.hitSplash());
     gSkinRetryPending=false;gSkinTitleRevision=0;gSkinBgaRevision=0;gSkinBoxWidth=0;gSkinBoxHeight=0;KillTimer(gWindow,ID_SKIN_RETRY);skinVisibility(true);
     gSkinSource=absolute;gSkinData.clear();KillTimer(gWindow,ID_SKIN_ANIMATION);if(gSkinApplication.animating())SetTimer(gWindow,ID_SKIN_ANIMATION,16,nullptr);
     gSkinStatus=L"적용 중: "+skinWide(gSkinApplication.manifest()->name);
@@ -108,35 +179,6 @@ bool drawSkinOnly(HDC dc){
     if(gSkinRetryPending||!gSkinApplication.active())return false;
     drawAppliedSkinDc(dc);return true;
 }
-std::optional<std::filesystem::path> pickSkinFile(HWND owner) {
-    Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
-    if(FAILED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&dialog)))) {
-        gSkinStatus=L"스킨 파일 선택창을 열지 못했습니다.";return {};
-    }
-    const COMDLG_FILTERSPEC filters[]{{L"SevenMania 스킨",L"*.semaskin"}};
-    dialog->SetFileTypes(1,filters);dialog->SetDefaultExtension(L"semaskin");dialog->SetTitle(L"SevenMania 스킨 불러오기");
-    dialog->SetOptions(FOS_FORCEFILESYSTEM|FOS_FILEMUSTEXIST|FOS_PATHMUSTEXIST|FOS_NOCHANGEDIR|FOS_DONTADDTORECENT);
-    const auto shown=dialog->Show(owner);
-    if(shown==HRESULT_FROM_WIN32(ERROR_CANCELLED))return {};
-    if(FAILED(shown)){gSkinStatus=L"스킨 파일 선택창에 오류가 발생했습니다.";return {};}
-    Microsoft::WRL::ComPtr<IShellItem> item;PWSTR name{};
-    if(FAILED(dialog->GetResult(&item))||FAILED(item->GetDisplayName(SIGDN_FILESYSPATH,&name))) {
-        gSkinStatus=L"선택한 스킨 경로를 읽지 못했습니다.";return {};
-    }
-    // Keep the shell allocation safe even if constructing a path throws.
-    struct Name {PWSTR p;~Name(){CoTaskMemFree(p);}} cleanup{name};
-    return std::filesystem::path(name);
-}
-using SkinPicker=std::function<std::optional<std::filesystem::path>(HWND)>;
-SkinPicker gSkinPicker=pickSkinFile;
-void runSkinSettingsAction(int action) {
-    try {
-        if(action==ID_SKIN_LOAD) {if(const auto path=gSkinPicker(gSettingsWindow))applySkinFile(*path);}
-        else if(action==ID_SKIN_CLEAR)clearSkinSelection();
-    }catch(...){gSkinStatus=L"스킨을 불러오지 못했습니다. 기존 선택을 유지합니다.";}
-    if(IsWindow(gSkinNativeStatus))SetWindowTextW(gSkinNativeStatus,skinSummary().c_str());
-    setBindingStatus(gSkinStatus);
-}
 // Key names the skin's gear-key-guide elements show; rebuilt only when the mode or a binding changes.
 std::shared_ptr<const std::array<std::string,16>> skinKeyLabels(bms::ChartMode mode) {
     static std::shared_ptr<const std::array<std::string,16>> labels;
@@ -157,18 +199,22 @@ std::shared_ptr<const std::array<std::string,16>> skinKeyLabels(bms::ChartMode m
     codes=current;cachedMode=mode;labels=std::move(next);
     return labels;
 }
+// Skin elements bound to play.keyGuide are shown while the song loads and until playback starts.
+bool skinKeyGuideShown() {return gPlaybackLoad.preparing()||!gPlaying||gPlayhead<0;}
 void updateSkinJudgementAnchor() {
     if((!gPlaying&&!gPlaybackLoad.preparing()) || gActiveChartIndex<0 || gActiveChartIndex>=static_cast<int>(gCharts.size()))return;
     const auto& chart=gCharts[static_cast<size_t>(gActiveChartIndex)];
-    const auto widths=bms::chartDeckWidths(chart);
+    const auto widths=bms::chartDeckWidths(chart,gUiScale),designWidths=bms::chartDeckWidths(chart);
     const int lane=widths.key,scratch=widths.scratch;
     const int width=bms::chartLayout(chart,0,lane,scratch).totalWidth();
-    const int available=std::max(0,gWindowWidth-width),edge=std::min(64,available/2);
+    // The skin gear is authored for the FHD deck; scale it to the deck the engine actually draws.
+    const int designWidth=bms::chartLayout(chart,0,designWidths.key,designWidths.scratch).totalWidth();
+    const int available=std::max(0,gWindowWidth-width),edge=std::min(ui(64),available/2);
     const int left=gGearPosition==0?edge:gGearPosition==2?std::max(edge,available-edge):available/2;
     const int line=bms::optionJudgeLine(gChartOptions,gPlayhead,judgementLineY(gWindowHeight),gWindowHeight);
-    gTimingHintScale=std::min(gWindowWidth/1920.0,gWindowHeight/1080.0);gTimingHintX=left+width/2.0;gTimingHintY=line+(-200+gJudgementTextYOffset-24)*gTimingHintScale;
+    gTimingHintScale=gUiScale;gTimingHintX=left+width/2.0;gTimingHintY=line+(-200+gJudgementTextYOffset-24)*gTimingHintScale;
     gSkinApplication.setJudgementAnchor(left+width/2.0,line,gWindowWidth,gWindowHeight);
-    sevenmania::skin::SkinGearState gear;gear.judgementColor=gJudgementColor;gear.judgementScale=gJudgementPop.scale();gear.position=gGearPosition;gear.mirrorUi=gSkinMirrorUi;gear.mode=bms::gearModeIndex(chart.mode);gear.active=gear.mode==0||gSkinApplication.supportsGearMode(gear.mode);gear.suppressNativeGear=!gear.active;gear.centerX=left+width/2.0;gear.lineY=line;gear.gauge=gGrooveGauge.value();gear.speed=gNoteSpeed;gear.rotation=gScratchDisc.angle()*180/3.141592653589793;gear.pressed=gPressed;gear.keyLabels=skinKeyLabels(chart.mode);gSkinApplication.setGearState(gear);
+    sevenmania::skin::SkinGearState gear;gear.judgementColor=gJudgementColor;gear.judgementScale=gJudgementPop.scale();gear.position=gGearPosition;gear.mirrorUi=gSkinMirrorUi;gear.mode=bms::gearModeIndex(chart.mode);gear.active=gear.mode==0||gSkinApplication.supportsGearMode(gear.mode);gear.suppressNativeGear=!gear.active;gear.centerX=left+width/2.0;gear.lineY=line;gear.scale=designWidth>0?double(width)/designWidth:gUiScale;gear.gauge=gGrooveGauge.value();gear.speed=gNoteSpeed;gear.rotation=gScratchDisc.angle()*180/3.141592653589793;gear.pressed=gPressed;gear.keyLabels=skinKeyLabels(chart.mode);gear.keyGuide=skinKeyGuideShown();gSkinApplication.setGearState(gear);
 }
 void drawAppliedSkinDc(HDC dc) {
     if(gPlaybackLoad.preparing()){
@@ -177,6 +223,7 @@ void drawAppliedSkinDc(HDC dc) {
     }
     if(gGpuFrame||gLoading||gStartupSplash||!gSkinApplication.active())return;
     gSkinApplication.releaseGpu();
+    gNoteImages.releaseGpu();
     if(!captureSevenManiaSkinData(gSkinData))return;
     const bool boxResized=gSkinBoxWidth!=gWindowWidth||gSkinBoxHeight!=gWindowHeight;
     if(!gPlaying&&!gShowingResult) {
@@ -230,7 +277,12 @@ void drawAppliedSkinForeground(ID2D1RenderTarget* target,int width,int height) {
 void prepareAppliedSkinGpu() {
     HUD_SCOPE(SkinHostPrepare);
     gCompositionPresenter.setFrameOverlay(nullptr);gCompositionPresenter.setFrameForeground(nullptr);
+    if(gGpuFrame&&gPlaying&&gLr2PlayScene&&!gLr2GpuFailed&&gLr2PlayScene->playLanes(gWindowWidth,gWindowHeight)) {
+        gNoteImages.prepareGpu(gCompositionPresenter.renderTarget());
+        return;
+    }
     if(!gGpuFrame||!gSkinApplication.active())return;
+    if (!hybridRendererEnabled) gNoteImages.prepareGpu(gCompositionPresenter.renderTarget());
     gSkinApplication.setJudgementRainbow(gJudgementRainbow && std::chrono::steady_clock::now()<gJudgementUntil);
     updateSkinJudgementAnchor();
     gSkinApplication.setJudgementOffset(gJudgementTextYOffset);

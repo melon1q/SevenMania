@@ -1,4 +1,4 @@
-﻿"""Offline aggregation. Kernel-wait timings exclude the message-pumping spin tail."""
+"""Offline aggregation. Kernel-wait timings exclude the message-pumping spin tail."""
 import argparse,csv,json,re,statistics,os
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('label');p.add_argument('--directory',type=Path,default=Path('build-rmlui-song-list/Validation/HudFrameStudy'));a=p.parse_args()

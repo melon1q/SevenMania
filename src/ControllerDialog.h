@@ -88,7 +88,10 @@ public:
     SettingsDialog(Device& device,HWND owner,const std::wstring& ini):device_(device),original_(device.config),originalId_(device.deviceId),ini_(ini),owner_(owner){}
     bool show(HWND gameWindow){
         WNDCLASSW type{};type.hInstance=GetModuleHandleW(nullptr);type.lpszClassName=L"SevenManiaControllerSettings";type.lpfnWndProc=proc;type.hCursor=LoadCursor(nullptr,IDC_ARROW);type.hbrBackground=HBRUSH(COLOR_BTNFACE+1);RegisterClassW(&type);
+        // Fixed-pixel dialog: created DPI unaware so Windows scales it (the game window is per-monitor aware).
+        const auto previousDpi=SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE);
         const auto window=CreateWindowExW(WS_EX_DLGMODALFRAME|WS_EX_CONTROLPARENT,type.lpszClassName,L"컨트롤러 설정",WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU,CW_USEDEFAULT,CW_USEDEFAULT,1040,670,owner_,nullptr,type.hInstance,this);
+        if(previousDpi)SetThreadDpiAwarenessContext(previousDpi);
         if(!window)return false;
         SetWindowTextW(window,L"컨트롤러 설정");EnableWindow(owner_,FALSE);ShowWindow(window,SW_SHOW);SetFocus(GetDlgItem(window,100));
         MSG message{};while(!done_){const auto read=GetMessageW(&message,nullptr,0,0);if(read<=0){if(read==0)PostQuitMessage(int(message.wParam));break;}if(!IsDialogMessageW(window,&message)){TranslateMessage(&message);DispatchMessageW(&message);}}

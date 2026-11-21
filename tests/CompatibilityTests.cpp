@@ -6,10 +6,12 @@
 #include "ScrollTimeline.h"
 #include "LongNoteHold.h"
 #include "GrooveGauge.h"
+#include "PlaybackGauge.h"
 #include "BgaRaster.h"
 #include "VideoFixtures.h"
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <set>
 #include <stdexcept>
 
@@ -53,6 +55,41 @@ int wmain(int argc,wchar_t** argv){
         require(events.chart.invisible.size()==1 && events.chart.mines.size()==1,"invisible/mine missing");checkNear(events.chart.mines[0].damage,5,"mine damage must be base36/2");checkNear(bms::rankPercent(events.chart,2.1),37.5,"dynamic EXRANK unused");
         checkNear(bms::chartTotal(events.chart,1),420,"TOTAL ignored");require(bms::hiddenAt(events.chart,1,0)!=nullptr,"hidden keysound lookup missing");require(bms::textAt(events.chart,2.1)==L"Compatibility sample","TEXT timeline unused");
         GrooveGauge gauge;gauge.configure(100,GrooveGaugeMode::Normal,420);gauge.apply(TimingJudgement::PGreat);checkNear(gauge.value(),24.2,"TOTAL not used by gauge");gauge.damage(5);checkNear(gauge.value(),19.2,"mine damage not used by gauge");
+        // LR2oraja uses a different default, but explicit BMS TOTAL is absolute.
+        bms::Chart noTotal;
+        checkNear(bms::lr2orajaChartTotal(noTotal,0),160,"zero-note default TOTAL");
+        checkNear(bms::lr2orajaChartTotal(noTotal,400),224,"400-note default TOTAL");
+        checkNear(bms::lr2orajaChartTotal(noTotal,600),288,"600-note default TOTAL");
+        checkNear(bms::lr2orajaChartTotal(noTotal,1000),352,"1000-note default TOTAL");
+        bms::Chart hugeRelative;hugeRelative.bmson=true;hugeRelative.bmsonRelativeTotal=std::numeric_limits<double>::max();
+        checkNear(bms::lr2orajaChartTotal(hugeRelative,1000),352,"overflowing relative TOTAL must fall back safely");
+        checkNear(bms::lr2orajaChartTotal(events.chart,1000),420,"explicit BMS TOTAL overwritten");
+        const auto bmsonParse=[&](const wchar_t* name,const std::string& json){const auto file=root/name;write(file,json);return bms::BmsParser(false,123,false).parse(file);};
+        const std::string bmsonTail=R"(,"mode_hint":"beat-7k","init_bpm":120,"resolution":240},"sound_channels":[{"name":"tone.wav","notes":[{"x":1,"y":0}]}]})";
+        auto bmson150=bmsonParse(L"total-relative.bmson",std::string(R"({"version":"1.0.0","info":{"title":"relative","total":150)")+bmsonTail);
+        require(bmson150.chart.playable && bmson150.chart.bmsonRelativeTotal==150,"BMSON relative TOTAL lost");
+        checkNear(bmson150.chart.total,390,"legacy resolved BMSON TOTAL changed");
+        checkNear(bms::lr2orajaChartTotal(bmson150.chart,1),240.24,"BMSON relative TOTAL was not based on LR2 default");
+        auto bmsonDefault=bmsonParse(L"total-default.bmson",std::string(R"({"version":"1.0.0","info":{"title":"default")")+bmsonTail);
+        require(bmsonDefault.chart.playable && bmsonDefault.chart.bmsonRelativeTotal==100,"BMSON missing TOTAL default");
+        checkNear(bms::lr2orajaChartTotal(bmsonDefault.chart,1),160.16,"BMSON default TOTAL");
+        auto bmsonZero=bmsonParse(L"total-zero.bmson",std::string(R"({"version":"1.0.0","info":{"title":"zero","total":0)")+bmsonTail);
+        require(bmsonZero.chart.playable && bmsonZero.chart.bmsonRelativeTotal==100,"invalid BMSON TOTAL default");
+        checkNear(bms::lr2orajaChartTotal(bmsonZero.chart,1),160.16,"invalid BMSON TOTAL fallback");
+        auto bmsonLegacy=bmsonParse(L"total-legacy.bmson",std::string(R"({"info":{"title":"legacy","total":180)")+bmsonTail);
+        require(bmsonLegacy.chart.bmsonRelativeTotal<0,"legacy BMSON TOTAL must not become a percentage");
+        checkNear(bms::lr2orajaChartTotal(bmsonLegacy.chart,1),180,"legacy BMSON absolute TOTAL changed");
+        GrooveGauge trialGauge;trialGauge.setCompatibilityEnabled(true);
+        trialGauge.setCompatibilityTrialOptions(sevenmania::independent_gauge::Kind::Normal,sevenmania::independent_gauge::Mode::None,
+            sevenmania::independent_gauge::Kind::AssistEasy,sevenmania::independent_gauge::Profile::LR2oraja);
+        bms::configurePlaybackGauge(trialGauge,bmson150.chart,GrooveGaugeMode::Normal,false);
+        trialGauge.apply(TimingJudgement::PGreat,.01);
+        require(std::abs(trialGauge.value()-22.4024)<.0001,"playback did not use LR2oraja relative TOTAL");
+        bms::configurePlaybackGauge(trialGauge,bmson150.chart,GrooveGaugeMode::Normal,false);
+        require(trialGauge.value()==20,"restart did not reset gauge");
+        bms::configurePlaybackGauge(trialGauge,bmson150.chart,GrooveGaugeMode::Normal,true);
+        trialGauge.apply(TimingJudgement::PGreat,.01);
+        require(std::abs(trialGauge.value()-23.9)<.0001,"practice TOTAL behavior changed");
         auto mgq=parse("06-mgq-long-note","#TITLE MGQ continuous slots\n#LNTYPE 2\n#00051:01010000\n#00019:01\n");require(mgq.chart.playable,"MGQ blocked");const auto ln=std::find_if(mgq.chart.notes.begin(),mgq.chart.notes.end(),[](const auto& n){return n.longNote();});require(ln!=mgq.chart.notes.end(),"MGQ not converted");checkNear(ln->lengthSeconds,1,"MGQ closes at wrong slot");
         for(int mode=1;mode<=3;++mode){
             auto result=parse("07-lnmode-"+std::to_string(mode),"#TITLE LN MODE "+std::to_string(mode)+"\n#LNMODE "+std::to_string(mode)+"\n#00051:0102\n#00019:01\n");

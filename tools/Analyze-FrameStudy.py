@@ -1,4 +1,4 @@
-﻿"""Analyze buffered, real-player traces; standard library only, no guessed metrics."""
+"""Analyze buffered, real-player traces; standard library only, no guessed metrics."""
 import csv, json, math, statistics, pathlib, argparse, collections, hashlib, re
 
 def percentile(values, p):

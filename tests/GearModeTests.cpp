@@ -16,10 +16,10 @@ namespace ed = sevenmania::editor;
 namespace {
 struct Spec { int mode; double width; std::vector<int> lanes; };
 const Spec specs[] = {
-    {1, 428, {1, 2, 3, 4, 5}},
-    {2, 554, {1, 2, 3, 4, 5, 9, 10, 11, 12, 13}},
-    {3, 718, {1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15}},
-    {4, 612, {0, 1, 2, 3, 4, 5, 6, 7, 8}},
+    {1, 384, {1, 2, 3, 4, 5}},
+    {2, 504, {1, 2, 3, 4, 5, 9, 10, 11, 12, 13}},
+    {3, 648, {1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15}},
+    {4, 540, {0, 1, 2, 3, 4, 5, 6, 7, 8}},
 };
 
 ed::J* findElement(std::vector<ed::J>& elements, const wchar_t* id) {
@@ -78,6 +78,13 @@ void testRenderer(const std::filesystem::path& skin, const std::filesystem::path
     stray.pressed[9] = true;
     renderer.setGearState(stray);
     require(surface.render(renderer) == fiveIdle, "5K reacted to a 2P lane");
+    // Elements bound to play.keyGuide (the default skin's key guides) disappear once the song starts.
+    auto started = state(0);
+    started.keyGuide = false;
+    renderer.setGearState(started);
+    require(surface.render(renderer) != sevenKey, "play.keyGuide elements stayed visible after the song started");
+    renderer.setGearState(state(0));
+    require(surface.render(renderer) == sevenKey, "play.keyGuide elements did not come back");
     // Different modes never share a rendering.
     renderer.setGearState(state(3));
     const auto dp = surface.render(renderer);
@@ -86,7 +93,7 @@ void testRenderer(const std::filesystem::path& skin, const std::filesystem::path
     // A skin without gear for the mode must not leave its 7K gear floating at the authored position.
     SkinGearState raw;
     renderer.setGearState(raw);
-    require(brightness(surface.render(renderer), 200, 760) > 600, "inactive gear should draw the authored 7K key");
+    require(brightness(surface.render(renderer), 230, 760) > 600, "inactive gear should draw the authored 7K key");
     raw.suppressNativeGear = true;
     renderer.setGearState(raw);
     require(brightness(surface.render(renderer), 200, 760) < 100, "suppressed native gear is still drawn");
@@ -129,34 +136,34 @@ void testEditor(const std::filesystem::path& skin) {
     const auto get = [&](const wchar_t* id, const wchar_t* key) { return (*findElement(doc.elements(), id))[key]; };
     const auto panelWidth = [&] { return get(L"gear-panel", L"width").num(); };
     const auto panelX = [&] { return get(L"gear-panel", L"x").num(); };
-    require(panelWidth() == 556 && panelX() == 64, "7K base geometry changed");
+    require(panelWidth() == 492 && panelX() == 96, "7K base geometry changed");
     require(get(L"gear-key-p2-1", L"visible").type == ed::T::Boolean && !get(L"gear-key-p2-1", L"visible").boolean, "2P parts must be hidden in the 7K base");
 
     ed::switchGearMode(doc, 3);
-    require(ed::editorGearMode(doc) == 3 && panelWidth() == 718 && panelX() == -17, "switching to 14K did not apply its geometry");
+    require(ed::editorGearMode(doc) == 3 && panelWidth() == 648 && panelX() == 18, "switching to 14K did not apply its geometry");
     require(get(L"gear-key-p2-1", L"visible").boolean, "14K should show 2P keys");
     require(get(L"gear-key-guide-1", L"visible").boolean && get(L"gear-key-guide-p2-1", L"visible").boolean, "14K should show key guides for both sides");
     // Edit the 14K gear, go to 5K and come back: the edit is remembered, 5K is untouched.
     findElement(doc.elements(), L"gear-panel")->object[L"width"] = ed::num(730);
     ed::switchGearMode(doc, 1);
-    require(panelWidth() == 428, "5K geometry polluted by the 14K edit");
+    require(panelWidth() == 384, "5K geometry polluted by the 14K edit");
     ed::switchGearMode(doc, 3);
     require(panelWidth() == 730, "14K edit lost when switching modes");
     ed::switchGearMode(doc, 0);
-    require(panelWidth() == 556 && panelX() == 64, "7K geometry not restored");
+    require(panelWidth() == 492 && panelX() == 96, "7K geometry not restored");
     ed::switchGearMode(doc, 4);
 
     // Saving while a non-7K mode is being edited must persist the 7K base and keep the mode data.
     const auto output = std::filesystem::temp_directory_path() / L"SevenManiaGearModeTests.semaskin";
-    ed::withBaseGearGeometry(doc, [&] { require(panelWidth() == 556, "base geometry missing while saving"); doc.save(output); });
-    require(ed::editorGearMode(doc) == 4 && panelWidth() == 612, "editing mode not restored after saving");
+    ed::withBaseGearGeometry(doc, [&] { require(panelWidth() == 492, "base geometry missing while saving"); doc.save(output); });
+    require(ed::editorGearMode(doc) == 4 && panelWidth() == 540, "editing mode not restored after saving");
     ed::Document reloaded;
     reloaded.open(output);
     reloaded.screen = "play";
     require(ed::editorGearMode(reloaded) == 0, "saved file must open in 7K");
-    require((*findElement(reloaded.elements(), L"gear-panel"))[L"width"].num() == 556, "saved base geometry is not 7K");
+    require((*findElement(reloaded.elements(), L"gear-panel"))[L"width"].num() == 492, "saved base geometry is not 7K");
     const auto& modes = (*findElement(reloaded.elements(), L"gear-panel"))[L"extensions"][L"gearModes"];
-    require(modes[L"14k"][L"width"].num() == 730 && modes[L"pms"][L"width"].num() == 612, "per-mode edits not saved");
+    require(modes[L"14k"][L"width"].num() == 730 && modes[L"pms"][L"width"].num() == 540, "per-mode edits not saved");
     std::error_code ec;
     std::filesystem::remove(output, ec);
 }

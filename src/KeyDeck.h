@@ -120,6 +120,78 @@ public:
         for (int y = std::max(0, top + 108); y < height; ++y)
             std::fill_n(pixels + static_cast<size_t>(y) * width + left, right - left, 0xff000000u);
     }
+    // Resolution-scaled deck: the FHD deck (designKeyWidth/designScratchWidth) is drawn once per state
+    // change and resampled lane by lane to the scaled lane widths, so every lane edge lines up with the
+    // scaled playfield. Heights (113px cache, 5px rim margin, 108px panel, 4px gap) scale by `scale`.
+    static void drawScaled(uint32_t* pixels, int width, int height, int fieldX, int laneWidth, int judgeY,
+        const std::array<bool, 8>& pressed, double angle, int scratchWidth, int designKeyWidth, int designScratchWidth, double scale,
+        const TurntableImage* turntable, const TurntableImage* black, const TurntableImage* white) {
+        if (!pixels || width <= 0 || height <= 0 || laneWidth <= 0 || designKeyWidth <= 0 || !(scale > 0)) return;
+        struct Cache {
+            std::vector<uint32_t> design, scaled;
+            std::array<bool, 8> pressed{};
+            std::array<const TurntableImage*, 3> images{};
+            std::array<uint64_t, 3> generations{};
+            int keyWidth{}, scratchWidth{}, designKeyWidth{}, designScratchWidth{}, rotation{}, scaledHeight{};
+        };
+        static thread_local Cache cache;
+        const LaneLayout source{0, designKeyWidth, designScratchWidth}, target{0, laneWidth, scratchWidth};
+        const int sourceWidth = source.totalWidth(), targetWidth = target.totalWidth();
+        const int margin = std::max(1, static_cast<int>(std::lround(5 * scale)));
+        const int scaledHeight = std::max(margin + 1, static_cast<int>(std::lround(113 * scale)));
+        constexpr double pi = 3.141592653589793;
+        const int rotation = static_cast<int>(std::lround(angle * 360.0 / pi));
+        const std::array<const TurntableImage*, 3> images{turntable, black, white};
+        const std::array<uint64_t, 3> generations{turntable ? turntable->generation() : 0,
+            black ? black->generation() : 0, white ? white->generation() : 0};
+        if (cache.scaled.empty() || cache.keyWidth != laneWidth || cache.scratchWidth != scratchWidth || cache.designKeyWidth != designKeyWidth ||
+            cache.designScratchWidth != designScratchWidth || cache.scaledHeight != scaledHeight || cache.pressed != pressed ||
+            cache.rotation != rotation || cache.images != images || cache.generations != generations) {
+            cache.design.assign(static_cast<size_t>(sourceWidth) * 113, 0);
+            draw(cache.design.data(), sourceWidth, 113, 0, designKeyWidth, 1, pressed, rotation * pi / 360.0, designScratchWidth, turntable, black, white);
+            cache.scaled.assign(static_cast<size_t>(targetWidth) * scaledHeight, 0);
+            const auto channel = [](uint32_t p, int shift) { return static_cast<double>((p >> shift) & 255u); };
+            for (int lane = 0; lane < 8; ++lane) {
+                const int dl = target.left(lane), dw = target.width(lane), sl = source.left(lane), sw = source.width(lane);
+                if (dw <= 0 || sw <= 0) continue;
+                for (int y = 0; y < scaledHeight; ++y) {
+                    const double sy = std::clamp((y + 0.5) * 113.0 / scaledHeight - 0.5, 0.0, 112.0);
+                    const int y0 = static_cast<int>(sy), y1 = std::min(112, y0 + 1);
+                    const double fy = sy - y0;
+                    for (int x = 0; x < dw; ++x) {
+                        const double sx = std::clamp((x + 0.5) * sw / dw - 0.5, 0.0, sw - 1.0);
+                        const int x0 = static_cast<int>(sx), x1 = std::min(sw - 1, x0 + 1);
+                        const double fx = sx - x0;
+                        const uint32_t a = cache.design[static_cast<size_t>(y0) * sourceWidth + sl + x0], b = cache.design[static_cast<size_t>(y0) * sourceWidth + sl + x1];
+                        const uint32_t c = cache.design[static_cast<size_t>(y1) * sourceWidth + sl + x0], d = cache.design[static_cast<size_t>(y1) * sourceWidth + sl + x1];
+                        uint32_t out = 0;
+                        for (int shift = 0; shift < 32; shift += 8) {
+                            const double top = channel(a, shift) * (1 - fx) + channel(b, shift) * fx;
+                            const double bottom = channel(c, shift) * (1 - fx) + channel(d, shift) * fx;
+                            out |= static_cast<uint32_t>(std::clamp(std::lround(top * (1 - fy) + bottom * fy), 0L, 255L)) << shift;
+                        }
+                        cache.scaled[static_cast<size_t>(y) * targetWidth + dl + x] = out;
+                    }
+                }
+            }
+            cache.keyWidth = laneWidth; cache.scratchWidth = scratchWidth; cache.designKeyWidth = designKeyWidth; cache.designScratchWidth = designScratchWidth;
+            cache.scaledHeight = scaledHeight; cache.pressed = pressed; cache.rotation = rotation; cache.images = images; cache.generations = generations;
+        }
+        const int left = std::max(0, fieldX), right = std::min(width, fieldX + targetWidth);
+        const int top = judgeY + std::max(1, static_cast<int>(std::lround(4 * scale)));
+        if (left >= right) return;
+        for (int y = std::max(0, top - margin); y < std::min(height, top); ++y)
+            for (int x = left; x < right; ++x) {
+                const auto pixel = cache.scaled[static_cast<size_t>(y - top + margin) * targetWidth + x - fieldX];
+                if (pixel >> 24) pixels[static_cast<size_t>(y) * width + x] = pixel;
+            }
+        const int panelBottom = top + scaledHeight - margin;
+        for (int y = std::max(0, top); y < std::min(height, panelBottom); ++y)
+            std::copy_n(cache.scaled.data() + static_cast<size_t>(y - top + margin) * targetWidth + left - fieldX,
+                right - left, pixels + static_cast<size_t>(y) * width + left);
+        for (int y = std::max(0, panelBottom); y < height; ++y)
+            std::fill_n(pixels + static_cast<size_t>(y) * width + left, right - left, 0xff000000u);
+    }
     static void draw(uint32_t* pixels, int width, int height, int fieldX, int laneWidth, int judgeY, const std::array<bool, 8>& pressed, double discAngle = 0, int scratchWidth = 0, const TurntableImage* turntable = nullptr, const TurntableImage* blackKeyImage = nullptr, const TurntableImage* whiteKeyImage = nullptr) {
         if (!pixels || width <= 0 || height <= 0 || laneWidth <= 0) return;
         const int panelTop = judgeY + 4;

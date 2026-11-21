@@ -1,5 +1,8 @@
 ﻿#include "SharedStartupSettings.h"
 #include "skin/SkinPackage.h"
+#include "SkinHitEffectFiles.h"
+#include "SkinNoteGroupFiles.h"
+#include "SkinRasterImage.h"
 #include "UserBackground.h"
 #include <wrl/client.h>
 #include "SongLibrarySources.h"
@@ -73,9 +76,13 @@ bool save(){
     auto resolution=resolutions[std::clamp(selected(resolutionChoice),0,int(resolutions.size())-1)];
     change(L"Display",L"ResolutionWidth",std::to_wstring(resolution.first),resolution.first!=initial.width||resolution.second!=initial.height);
     change(L"Display",L"ResolutionHeight",std::to_wstring(resolution.second),resolution.first!=initial.width||resolution.second!=initial.height);
-    for(const auto& f:skinFields){wchar_t text[32768]{};GetWindowTextW(f.control,text,32768);std::wstring value=f.choice?std::to_wstring(selected(f.control)):text;
-        if(!f.path&&std::wstring(f.key)!=L"CustomBackground"){try{size_t used;int n=std::stoi(value,&used);if(used!=value.size()||n<(std::wstring(f.key)==L"JudgementTextYOffset"?-256:0)||n>(std::wstring(f.key)==L"JudgementTextYOffset"?256:std::wstring(f.key)==L"Background"?3:100))throw 0;}catch(...){message(L"스킨 설정의 숫자 범위를 확인하세요.");return false;}}
-        if(f.path)value=value.empty()?L"":skinPathEncode(value);if(value!=f.baseline)changes.push_back({f.section,f.key,f.baseline,value});
+    for(const auto& f:skinFields){
+        auto value=skinFieldValue(f);
+        if(value==f.initial)continue;
+        if(f.numeric&&!validSkinNumber(value,f.minimum,f.maximum)){
+            message(L"스킨 설정의 숫자 범위를 확인하세요.");return false;
+        }
+        if(value!=f.baseline)changes.push_back({f.section,f.key,f.baseline,std::move(value)});
     }
     bool ok=sevenmania::atomicSettingsUpdate(config,[&](const auto& temp){
         for(const auto& c:changes){if(sevenmania::iniText(temp,c.section.c_str(),c.key.c_str())!=c.expected)return false;if(!WritePrivateProfileStringW(c.section.c_str(),c.key.c_str(),c.value.c_str(),temp.c_str()))return false;}
@@ -85,7 +92,7 @@ bool save(){
     if(!ok){message(L"저장 실패: 게임/다른 인덱싱이 실행 중이거나 같은 설정이 변경되었습니다. 게임 종료 후 런처를 다시 여세요.");return false;}
     const int oldRootIndex=int(SendMessageW(rootList,LB_GETCURSEL,0,0));
     const auto selectedRoot=oldRootIndex>=0&&oldRootIndex<int(sources.roots.size())?sources.roots[size_t(oldRootIndex)]:std::filesystem::path{};
-    for(auto& f:skinFields)f.baseline=sevenmania::iniText(config,f.section,f.key);
+    reloadSkinFields();
     initial=sevenmania::readStartupSettings(config);sources.initialize(base/L"Songs",config);originalRoots=sources.roots;
     select(modeChoice,initial.mode);select(fpsChoice,frameRateIndex(initial.fps));
     for(size_t i=0;i<sevenmania::startupBuffers.size();++i)if(sevenmania::startupBuffers[i]==initial.buffer)select(bufferChoice,int(i));
@@ -126,7 +133,7 @@ case WM_CREATE:{window=hwnd;launcherFont=CreateFontW(-scaled(16),0,0,0,FW_NORMAL
     label(L"화면 모드",165,0);modeChoice=choice(255,160,12,0);for(auto text:{L"창 모드",L"테두리 없는 전체 창",L"전체화면 (기존 엔진 방식)"})add(modeChoice,text);select(modeChoice,initial.mode);
     label(L"최대 FPS / VSync",215,0);fpsChoice=choice(255,210,13,0);for(auto text:frameRateLabels)add(fpsChoice,text);select(fpsChoice,frameRateIndex(initial.fps));
     bgaCheck=control(L"BUTTON",L"BGA 출력",255,265,400,30,14,0,BS_AUTOCHECKBOX|WS_TABSTOP);SendMessageW(bgaCheck,BM_SETCHECK,initial.brightness?BST_CHECKED:BST_UNCHECKED,0);
-    control(L"STATIC",L"VSync는 기존 FPS 모드와 함께 선택합니다. 무제한은 최대 1500FPS입니다.\n이 값은 현재 게임의 플레이 제한이며, 화면별 FPS는 아직 지원하지 않습니다.",35,330,820,65,0,0);
+    control(L"STATIC",L"VSync는 기존 FPS 모드와 함께 선택합니다. 무제한은 최대 1500FPS, 완전 무제한(테스트)은 제한이 없습니다.\n이 값은 현재 게임의 플레이 제한이며, 화면별 FPS는 아직 지원하지 않습니다.",35,330,820,65,0,0);
     label(L"사용자 FPS (1~1500)",405,0);customFps=control(L"EDIT",std::to_wstring(initial.fps>0?initial.fps:1000).c_str(),255,405,250,28,69,0,WS_BORDER|ES_NUMBER|WS_TABSTOP);
     label(L"오디오 버퍼 (frames)",75,1);bufferChoice=choice(255,70,20,1);i=0;for(auto value:sevenmania::startupBuffers){add(bufferChoice,std::to_wstring(value));if(value==initial.buffer)select(bufferChoice,i);++i;}
     control(L"STATIC",L"현재 엔진: WASAPI 공유 모드 / Windows 기본 출력 장치\n장치 선택과 별도 오디오 API 선택은 이 버전에서 제공하지 않습니다.",35,135,820,80,0,1);
@@ -142,7 +149,7 @@ case WM_SIZE:{SCROLLINFO info{sizeof(info),SIF_RANGE|SIF_PAGE};info.nMax=scaled(
 case WM_VSCROLL:{SCROLLINFO info{sizeof(info),SIF_ALL};GetScrollInfo(hwnd,SB_VERT,&info);int position=info.nPos;switch(LOWORD(w)){case SB_LINEUP:position-=scaled(30);break;case SB_LINEDOWN:position+=scaled(30);break;case SB_PAGEUP:position-=info.nPage;break;case SB_PAGEDOWN:position+=info.nPage;break;case SB_THUMBTRACK:position=info.nTrackPos;break;}scrollTo(position);return 0;}
 case WM_MOUSEWHEEL:{SCROLLINFO info{sizeof(info),SIF_POS};GetScrollInfo(hwnd,SB_VERT,&info);scrollTo(info.nPos-GET_WHEEL_DELTA_WPARAM(w)/WHEEL_DELTA*scaled(60));return 0;}
 case WM_NOTIFY:if(reinterpret_cast<NMHDR*>(l)->hwndFrom==tab){showPage();return 0;}break;
-case WM_COMMAND:{int id=LOWORD(w);if(id==61||id==68)pickSkinAsset(id==61);if(id==62)SetWindowTextW(GetDlgItem(window,60),L"");if(id==10&&HIWORD(w)==CBN_SELCHANGE)refreshResolutions();
+case WM_COMMAND:{int id=LOWORD(w);if(id==61||id==68)pickSkinAsset(id==61);if(id==62){SetWindowTextW(GetDlgItem(window,60),L"");refreshLauncherHitEffects();}if(id==10&&HIWORD(w)==CBN_SELCHANGE)refreshResolutions();
     if(id==31&&!scanning){std::vector<std::filesystem::path> paths;if(bms::ui::chooseSongSources(window,base,paths)){for(auto path:paths){std::error_code ec;if(!std::filesystem::is_directory(path,ec))path=path.parent_path();sources.add(path);}refreshRoots();}}
     if(id==32&&!scanning){int index=int(SendMessageW(rootList,LB_GETCURSEL,0,0));if(index>=0)sources.remove(size_t(index));refreshRoots();}
     if(id==33||id==34)scan(id==34);

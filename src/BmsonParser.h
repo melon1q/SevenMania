@@ -27,6 +27,7 @@ inline ParseResult parseBmson(const std::filesystem::path& path,const std::wstri
         const double resolution=info[L"resolution"].num(240);if(resolution<=0)throw std::runtime_error("invalid resolution");
         c.extendedRank=field(info,L"judge_rank",L"judgeRank").num(100);
         const double relativeTotal=info[L"total"].num(100);
+        if(!legacy)c.bmsonRelativeTotal=std::isfinite(relativeTotal)&&relativeTotal>0?relativeTotal:100;
         const auto hint=info[L"mode_hint"].str(L"beat-7k");
         if(hint==L"beat-5k")c.mode=ChartMode::FiveKey;else if(hint==L"beat-10k")c.mode=ChartMode::TenKey;
         else if(hint==L"beat-14k")c.mode=ChartMode::FourteenKey;else if(hint==L"popn-9k")c.mode=ChartMode::PopnNine;
@@ -67,6 +68,8 @@ inline ParseResult parseBmson(const std::filesystem::path& path,const std::wstri
             const auto& p=next==clock.begin()?clock.front():*std::prev(next);
             return p.after+(y-p.pulse)*60/p.bpm/resolution;
         };
+        for(const auto& line:root[L"lines"].array)c.measureTimes.push_back(timeAt(line[L"y"].num()));
+        std::sort(c.measureTimes.begin(),c.measureTimes.end());
         const auto lane=[&](int x){
             if(x<=0)return -1;
             if(c.mode==ChartMode::PopnNine)return x<=9?x-1:-1;

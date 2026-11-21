@@ -1,8 +1,11 @@
 #pragma once
 
 struct LaneLayout {
-    static constexpr int defaultKeyWidth = 68;
-    static constexpr int defaultScratchWidth = 104;
+    // Native size of the NoteGroup sheet cells at the fixed 36px note height: white key 60,
+    // blue key 48 (= 4/5 of the key width), scratch 108.
+    static constexpr int defaultKeyWidth = 60;
+    static constexpr int defaultScratchWidth = 108;
+    static constexpr int evenKeyWidth(int keyWidth) {return keyWidth*4/5;}
     int fieldX{}, keyWidth = defaultKeyWidth, scratchWidth = defaultScratchWidth;
     int keys = 7, players = 1;
     bool popn{};
@@ -21,7 +24,7 @@ struct LaneLayout {
         if(popn)return keyWidth;
         const int key=lane%8;
         if(key>keys)return 0;
-        return key==0?scratchWidth:keyWidth+(key%2==1?0:-8);
+        return key==0?scratchWidth:key%2==1?keyWidth:evenKeyWidth(keyWidth);
     }
     int left(int lane) const {int x=fieldX;for(int prior=0,end=position(lane);prior<end;++prior)x+=width(laneAt(prior));return x;}
     int right(int lane) const {return left(lane)+width(lane);}

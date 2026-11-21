@@ -44,7 +44,7 @@ struct StartupSettings {
 inline StartupSettings readStartupSettings(const std::filesystem::path& file) {
     StartupSettings s;
     auto get=[&](const wchar_t* section,const wchar_t* key,int fallback){return int(GetPrivateProfileIntW(section,key,fallback,file.c_str()));};
-    s.fps=get(L"Display",L"FPS",240);if(s.fps!=vsyncFps&&(s.fps<0||s.fps>1500))s.fps=240;
+    s.fps=get(L"Display",L"FPS",240);if(!validFpsSetting(s.fps))s.fps=240;
     s.mode=std::clamp(get(L"Display",L"ScreenMode",0),0,2);
     s.width=get(L"Display",L"ResolutionWidth",0);s.height=get(L"Display",L"ResolutionHeight",0);
     if(s.width<=0||s.height<=0){s.width=s.height=0;}

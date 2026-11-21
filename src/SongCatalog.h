@@ -12,4 +12,6 @@ namespace bms {
 std::string serializeSongCatalog(const std::vector<Chart>& charts,
     const std::filesystem::path& libraryRoot, uint64_t parseSeed);
 
+int runCatalogCommand(int argumentCount, wchar_t** arguments);
+
 } // namespace bms

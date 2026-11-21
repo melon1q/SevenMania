@@ -1,4 +1,4 @@
-﻿"""Offline analysis of matched real-engine upload/pool diagnostic captures."""
+"""Offline analysis of matched real-engine upload/pool diagnostic captures."""
 import argparse
 import csv
 import json

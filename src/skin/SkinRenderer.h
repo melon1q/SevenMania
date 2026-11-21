@@ -10,7 +10,9 @@
 namespace sevenmania::skin {
 // suppressNativeGear: the skin has no gear for this key mode; hide its (7K) native gear parts instead of
 // drawing them unattached, so the engine deck is shown alone.
-struct SkinGearState { bool active{}; bool suppressNativeGear{}; int mode{}; int position=1; bool mirrorUi{}; std::uint32_t judgementColor=RGB(74,222,128); double judgementScale=1; double centerX{},lineY{},gauge=20,speed=1,rotation{}; std::array<bool,16> pressed{};
+struct SkinGearState { bool active{}; bool suppressNativeGear{}; int mode{}; int position=1; bool mirrorUi{}; std::uint32_t judgementColor=RGB(74,222,128); double judgementScale=1; double centerX{},lineY{},gauge=20,speed=1,rotation{};
+    // Window pixels per gear design pixel (engine deck width / FHD deck width); 1 keeps the FHD size.
+    double scale=1; bool keyGuide=true; std::array<bool,16> pressed{};
     // UTF-8 key names per lane (parser numbering) shown by gear-key-guide elements; null keeps the skin text.
     std::shared_ptr<const std::array<std::string,16>> keyLabels; };
 struct SkinRenderStats {
@@ -32,7 +34,8 @@ public:
     std::optional<SkinError> prepare(std::shared_ptr<const SkinPackage> package,
         ScreenKind screen, ID2D1RenderTarget* target) noexcept;
     // width/height are target DIPs (pixels at 96 DPI). Caller owns draw transaction.
-    // Uses contain scaling, preserves target transform, performs no I/O/decoding/allocation.
+    // Height-based scaling with per-element screen anchors (ResolutionScale.h, SkinAnchors.h);
+    // preserves target transform, performs no I/O/decoding/allocation.
     bool draw(float width, float height, bool foregroundOnly=false, bool skipForeground=false) const noexcept;
     void emit(std::string_view event) noexcept;
     // Freezes/resumes the animation clock (game pause). Keyframe tracks keep their progress.

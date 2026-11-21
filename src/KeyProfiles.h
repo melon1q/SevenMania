@@ -33,6 +33,10 @@ struct KeyProfiles {
             for(int i=0;i<counts[m];++i){
                 const auto key=L"Lane"+std::to_wstring(i);
                 UINT v=GetPrivateProfileIntW(section.c_str(),key.c_str(),defaults[i],file.c_str());
+                // Older captures stored the side-less Shift/Ctrl codes, which key events never report
+                // (they are normalized to the left/right code), so such a lane could never fire.
+                if(v==VK_SHIFT)v=defaults[i]==VK_RSHIFT?VK_RSHIFT:VK_LSHIFT;
+                else if(v==VK_CONTROL)v=VK_LCONTROL;
                 if(reservedKey(v)||std::find(loaded.begin(),loaded.begin()+i,v)!=loaded.begin()+i){
                     warn(section+L" "+key+L": 사용할 수 없거나 중복된 키라 기본값으로 되돌렸습니다.");
                     v=defaults[i];

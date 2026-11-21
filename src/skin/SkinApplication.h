@@ -28,6 +28,8 @@ public:
     // True if the Play screen has gear-key-guide elements (the skin then shows the key names itself).
     bool hasKeyGuides() const noexcept;
     const SkinManifest* manifest() const noexcept;
+    std::shared_ptr<const Bytes> hitSplash() const noexcept;
+    bool hasExternalGear() const noexcept;
     const SkinScreen* screenLayout(ScreenKind screen) const noexcept;
     bool supports(ScreenKind screen) const noexcept;
     bool ownsJudgement() const noexcept;
@@ -48,11 +50,14 @@ public:
     bool drawGpuForeground(float width,float height) const noexcept;
     void releaseGpu() noexcept;
     const std::optional<SkinError>& error() const noexcept {return error_;}
+    // Non-fatal notes from the last load (e.g. a Gear folder image the skin cannot use).
+    const std::vector<std::wstring>& warnings() const noexcept {return warnings_;}
     std::uint64_t readbacks() const noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     std::optional<SkinError> error_;
+    std::vector<std::wstring> warnings_;
     int judgementMode_=-1,comboMode_=-1;
 };
 }

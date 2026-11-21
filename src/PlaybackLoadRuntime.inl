@@ -1,5 +1,15 @@
 ﻿// UI-only publication, readiness and diagnostics. No decoder runs in these functions.
 void drawGameScreen(HDC);void drawPlaybackLoadingScreen(HDC);
+bool waitingForLr2Play() {
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    if(gPlaybackJob.active&&gPlaybackJob.applied)return gLr2PlayScene!=nullptr;
+    if(!gCompositionEnabled||gLoadResult.index<0||gLoadResult.index>=static_cast<int>(gCharts.size()))return false;
+    const auto screen=lr2PlayScreen(gCharts[gLoadResult.index].mode);
+    return screen&&!lr2PlayFile(*screen).empty();
+#else
+    return false;
+#endif
+}
 void samplePlaybackLoadMemory(){
     PROCESS_MEMORY_COUNTERS_EX memory{};memory.cb=sizeof(memory);
     if(GetProcessMemoryInfo(GetCurrentProcess(),reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory),sizeof(memory))){gPlaybackJob.peakWorkingSet=std::max(gPlaybackJob.peakWorkingSet,size_t(memory.WorkingSetSize));gPlaybackJob.peakPrivate=std::max(gPlaybackJob.peakPrivate,size_t(memory.PrivateUsage));}
@@ -68,13 +78,36 @@ void pollPreparingPlayback(bool automaticStart=true,bool notifyFailure=true){
     if(images&&!j.imageMs)j.imageMs=PlaybackLoadJob::elapsed(j.imageStarted);
     if(j.consumed&&j.gpuReady&&j.painted&&images){
         if(gPlaybackLoad.phase()==bms::PlaybackLoadPhase::PreparingPlay&&gPlaybackLoad.ready()){j.ready=PlaybackLoadJob::Clock::now();samplePlaybackLoadMemory();}
-        if(automaticStart&&!songEntryActive()&&gPlaybackLoad.canStart()&&(gPlayPreview.requested||PlaybackLoadJob::elapsed(j.ready)>=3000)){
+        // An LR2 play scene on screen starts the song from its own timeline: READY after
+        // LOADSTART+LOADEND (or the load, if later), then the song PLAYSTART later.
+        bool lr2LeadIn=false,lr2Due=false;
+        double lr2Scene=0,lr2Ready=0;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+        if(gLr2PlayScene&&!gLr2GpuFailed&&!gLr2Play.leadInFailed&&gLr2Play.leadInAge()>=0) {
+            if(gLr2Play.loadedAt<0&&gPlaybackLoad.canStart())gLr2Play.loadedAt=gLr2Play.leadInAge();
+            const auto lead=sevenmania::skin::lr2::playLeadIn(gLr2Play.leadInTimes,gLr2Play.leadInAge(),gLr2Play.loadedAt);
+            lr2LeadIn=true;lr2Due=lead.start;lr2Scene=lead.sceneAge;lr2Ready=std::max(0.,lead.readyAge);
+        }
+#endif
+        const bool due=gPlayPreview.requested||(lr2LeadIn?lr2Due:PlaybackLoadJob::elapsed(j.ready)>=3000);
+        if(automaticStart&&!songEntryActive()&&gPlaybackLoad.canStart()&&due){
             const bool started=startPreparedChart(notifyFailure);if(started)j.playing=PlaybackLoadJob::Clock::now();
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+            if(started&&lr2LeadIn){gLr2Play.sceneLead=lr2Scene;gLr2Play.readyLead=lr2Ready;}
+#endif
             samplePlaybackLoadMemory();reportPlaybackLoad(started?"playing":"failed");j.active=false;gPlayPreview.group.fill(false);std::vector<uint32_t>().swap(gPlayPreview.background);
         }
     }
 }
 void drawPreparingPlayback(HDC dc){
+    if(waitingForLr2Play()) {
+        RECT bounds{};
+        GetClientRect(gWindow,&bounds);
+        FillRect(dc,&bounds,static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+        // The loader waits for a paint before preparing GPU resources.
+        if(gPlaybackJob.applied)gPlaybackJob.painted=true;
+        return;
+    }
     if(songEntryActive()){drawSongEntry(dc);return;}
     auto& j=gPlaybackJob;
     if(!gPlaybackLoad.preparing()||!j.applied){drawPlaybackLoadingScreen(dc);return;}

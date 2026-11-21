@@ -35,7 +35,7 @@ public:
     // textSeconds is time since the selected chart changed. Returns false to allow
     // the native painter to take over.
     bool paint(HDC dc, int width, int height, const std::vector<SongListVisualRow>& rows,
-        double textSeconds = 0, float trackTop = 0, float guideTop = 0, int rowHeight = 58);
+        double textSeconds = 0, float trackTop = 0, float guideTop = 0, int rowHeight = 58, float density = 1.0f);
     bool needsAnimation() const noexcept;
     bool enabled() const noexcept;
     void reset();

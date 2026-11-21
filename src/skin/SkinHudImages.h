@@ -9,6 +9,7 @@
 #include <functional>
 #include <array>
 #include <limits>
+#include <cmath>
 
 namespace sevenmania::skin {
 struct HudImageAtlas {
@@ -31,7 +32,7 @@ struct HudImageAtlas {
         return true;
     }
     template<class Pixels> void prepare(const SkinPackage& package,const SkinElement& e,ID2D1RenderTarget* target,
-        Pixels getPixels,const Limits& limits,SkinRenderStats& stats,std::vector<BindingDiagnostic>& diagnostics) {
+        Pixels getPixels,const Limits& limits,SkinRenderStats& stats,std::vector<BindingDiagnostic>& diagnostics,double rasterDensity=1) {
         HUD_COUNT(AtlasBuilds);
         struct Image{unsigned width{},height{};Bytes fallback;const Bytes* pixels{};};std::array<Image,16> images;
         EmbeddedHudFont embedded;HFONT font{};HANDLE privateFont{};
@@ -58,7 +59,7 @@ struct HudImageAtlas {
                         privateFont=AddFontMemResourceEx(const_cast<BYTE*>(resource.bytes->data()),DWORD(resource.bytes->size()),nullptr,&count);
                         if(!privateFont||!count)detail::fail(ErrorCode::UnsupportedResource,e.id,"Cannot load HUD font");}
                     const auto family=detail::wide(e.textStyle.font=="Oxanium Bold"?"Oxanium":e.textStyle.font,e.id);
-                    font=CreateFontW(-int(e.textStyle.fontSize),0,0,0,e.textStyle.font=="Oxanium Bold"?FW_BOLD:FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,family.c_str());
+                    font=CreateFontW(-std::max(1,int(std::lround(e.textStyle.fontSize*rasterDensity))),0,0,0,e.textStyle.font=="Oxanium Bold"?FW_BOLD:FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH,family.c_str());
                     if(!font)detail::fail(ErrorCode::AllocationFailed,e.id,"Cannot prepare HUD font");
                 }
                 const std::wstring text=judgement?std::wstring(labels[i]):std::wstring(1,wchar_t(L'0'+i-6));

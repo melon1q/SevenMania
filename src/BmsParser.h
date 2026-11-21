@@ -105,6 +105,9 @@ struct Chart {
     std::unordered_map<std::wstring, SampleEffect> sampleEffects;
     bool nonMonotonicScroll{},halfJudgement{};
     bool bmson{};
+    // Raw BMSON 1.0 percentage, kept separately from the resolved total.
+    // A negative value denotes BMS or legacy BMSON absolute TOTAL semantics.
+    double bmsonRelativeTotal = -1;
     std::unordered_map<std::wstring,SampleSlice> sampleSlices;
     std::unordered_map<std::wstring,std::vector<std::wstring>> sampleGroups;
     double initialBpm{};
@@ -119,6 +122,7 @@ struct Chart {
     std::vector<Note> notes;
     std::vector<BgmEvent> bgm;
     std::vector<TempoEvent> tempos;
+    std::vector<double> measureTimes;
     std::vector<ScrollEvent> scroll;
     std::vector<BgaEvent> bga;
     std::array<std::vector<ValueEvent>,4> bgaOpacity;

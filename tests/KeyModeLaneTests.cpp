@@ -295,6 +295,18 @@ void testKeyProfileLoad() {
     check(partial.keys[4][4] == 'Q', "other custom lanes are kept");
     check(!partial.warnings.empty(), "fallback leaves a warning");
 
+    // 예전에 저장된 좌우 구분 없는 Shift(16)는 그 레인의 기본 Shift로 바꿔 읽는다(눌러도 반응하지 않던 문제).
+    WritePrivateProfileStringW(L"KeyBindings14", L"Lane1", nullptr, ini.c_str());
+    WritePrivateProfileStringW(L"KeyBindings14", L"Lane4", nullptr, ini.c_str());
+    WritePrivateProfileStringW(L"KeyBindings14", L"Lane8", L"16", ini.c_str());
+    WritePrivateProfileStringW(L"KeyBindings7", L"Lane0", L"16", ini.c_str());
+    bms::KeyProfiles generic;
+    generic.load(ini);
+    check(generic.keys[4][8] == VK_RSHIFT, "side-less Shift on the 2P scratch becomes Right Shift");
+    check(generic.keys[1][0] == VK_LSHIFT, "side-less Shift on the 1P scratch becomes Left Shift");
+    WritePrivateProfileStringW(L"KeyBindings14", L"Lane8", nullptr, ini.c_str());
+    WritePrivateProfileStringW(L"KeyBindings7", L"Lane0", nullptr, ini.c_str());
+
     // 기본값과 충돌하면 해당 모드만 전체 기본값으로 되돌린다.
     WritePrivateProfileStringW(L"KeyBindings14", L"Lane1", nullptr, ini.c_str());
     WritePrivateProfileStringW(L"KeyBindings14", L"Lane4", nullptr, ini.c_str());
@@ -310,9 +322,9 @@ void testKeyProfileLoad() {
 void testDeckWidths() {
     using bms::ChartMode;
     // The loading preview, gameplay and the skin gear share these widths; the default skin's gear
-    // panels (tools/generate-gear-modes.py) are 428 / 556 / 554 / 718 / 612 px wide.
-    const struct { ChartMode mode; int total; } cases[] = {{ChartMode::FiveKey, 428}, {ChartMode::SevenKey, 556}, {ChartMode::TenKey, 554},
-                                                           {ChartMode::FourteenKey, 718}, {ChartMode::PopnNine, 612}};
+    // panels (tools/generate-gear-modes.py) are 384 / 492 / 504 / 648 / 540 px wide.
+    const struct { ChartMode mode; int total; } cases[] = {{ChartMode::FiveKey, 384}, {ChartMode::SevenKey, 492}, {ChartMode::TenKey, 504},
+                                                           {ChartMode::FourteenKey, 648}, {ChartMode::PopnNine, 540}};
     for (const auto& c : cases) {
         bms::Chart chart;
         chart.mode = c.mode;

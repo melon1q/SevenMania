@@ -1,4 +1,4 @@
-﻿"""Build an editable 1920x1080 reference from current native layout constants; never changes source assets."""
+"""Build an editable 1920x1080 reference from current native layout constants; never changes source assets."""
 from pathlib import Path
 import json,zipfile,zlib,struct
 root=Path(__file__).resolve().parents[1]

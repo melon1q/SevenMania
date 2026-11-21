@@ -1,4 +1,4 @@
-﻿"""Summarize the stage-1 CPU/GPU baseline; submission timing is not scanout latency."""
+"""Summarize the stage-1 CPU/GPU baseline; submission timing is not scanout latency."""
 import argparse
 import csv
 import json

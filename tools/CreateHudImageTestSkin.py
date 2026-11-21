@@ -1,4 +1,4 @@
-﻿"""Generate a small loader/render fixture; never overwrite the default skin."""
+"""Generate a small loader/render fixture; never overwrite the default skin."""
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import io,json,zipfile

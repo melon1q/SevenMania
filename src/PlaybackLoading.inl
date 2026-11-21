@@ -13,8 +13,12 @@ bool prepareSelectedChartData(bool deferred=false) {
     gLoadResult.chart.previewStartSeconds = gCharts[static_cast<size_t>(index)].previewStartSeconds;
     gLoadResult.chart.previewDurationSeconds = gCharts[static_cast<size_t>(index)].previewDurationSeconds;
     gCharts[static_cast<size_t>(index)] = std::move(gLoadResult.chart);
+    gLr2ChartSummaries.erase(index);
     auto& playingChart = gCharts[static_cast<size_t>(index)];
     gChartOptions=bms::forcedOptions(playingChart);gAuthoredCoverPercent=0;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    loadLr2PlaySkin(playingChart);
+#endif
     gBgaVideoStartSeconds = bms::bgaVideoStartSeconds(playingChart);
     if (gPractice.enabled) {
         gPracticeNotesChartIndex = index;
@@ -24,10 +28,11 @@ bool prepareSelectedChartData(bool deferred=false) {
     }
     rebuildPartialLoadSummary();
     gHit.assign(gCharts[static_cast<size_t>(index)].notes.size(), false);
-    gLingeringLongNotes.clear();
+    gLingeringLongNotes.clear();gReleasedLongNotes.clear();
     gResultScore.reset(static_cast<int>(bms::judgementNoteCount(gCharts[index])));
     gFeedback.reset();
-    gGrooveGauge.configure(bms::judgementNoteCount(gCharts[index]),gGrooveGaugeMode,bms::chartTotal(gCharts[index],bms::judgementNoteCount(gCharts[index])));
+    gPlayAbandoned=false;
+    bms::configurePlaybackGauge(gGrooveGauge,gCharts[index],gGrooveGaugeMode,gPractice.enabled);
     if(gChartOptions.gaugeAuthored)gGrooveGauge.configureAuthored(gChartOptions.gameLevel,gChartOptions.extra);
     gKeyBeams.reset();
     if(gActiveChartIndex>=0 && gActiveChartIndex<static_cast<int>(gCharts.size())) {
@@ -46,13 +51,15 @@ bool prepareSelectedChartData(bool deferred=false) {
     gPressed.fill(false);gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();clearAccuracyRestart();
     gHolds.fill(LongNoteHold{});
     resetMines();
+    resetAutoPlay();
     gPlayhead = gPractice.enabled ? gPractice.startSeconds : 0;
     gBgaEventIndex = 0;
     gBgaActiveImages.fill(L"");gBgaActiveImages[1]=L"00";
     gMissBgaUntil = 0;
     gBgaRaster.reset();
-    if(deferred)gBgaRaster.begin(gCharts[static_cast<size_t>(index)],gWindowWidth,gWindowHeight,gPlayhead);
-    else gBgaRaster.start(gCharts[static_cast<size_t>(index)], gWindowWidth, gWindowHeight, gPlayhead);
+    const auto bgaCanvas=playBgaCanvas();
+    if(deferred)gBgaRaster.begin(gCharts[static_cast<size_t>(index)],bgaCanvas.right,bgaCanvas.bottom,gPlayhead);
+    else gBgaRaster.start(gCharts[static_cast<size_t>(index)],bgaCanvas.right,bgaCanvas.bottom,gPlayhead);
     gBgaBackplateDirty = true;
     updateBgaState(gCharts[static_cast<size_t>(index)], gPlayhead);
     gJudgementText.clear();
@@ -90,6 +97,7 @@ bool startPreparedChart(bool notifyFailure=true) {
         return false;
     }
     gPlaybackLoad.started();gPlaying=true;gLoading=false;beginPresentDiagnostics();
+    triggerSystemSound(bms::SystemSound::PlayReady);
     gFpsEpoch = std::chrono::steady_clock::now();
     gFpsFrameCount = 0;
     gMeasuredFps = 0;

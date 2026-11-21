@@ -1,4 +1,4 @@
-﻿"""Replace the retired HUD font in .semaskin packages, preserving authored layouts."""
+"""Replace the retired HUD font in .semaskin packages, preserving authored layouts."""
 import argparse,json,zipfile,os
 from pathlib import Path
 

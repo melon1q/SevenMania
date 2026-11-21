@@ -104,10 +104,18 @@ int wmain(int argc,wchar_t** argv){
             state.begin();state.cancel();state.resourcesLoaded();check(!state.beginPreparation(),"cancelled completion accepted");state.begin();state.fail();check(!state.canStart(),"failed load start accepted");
             const auto path=root/L"load-boundary.bms";writeChart(path,prefix+"#00011:01\n#00118:01\n");
             const auto source=bms::BmsParser().parse(path).chart;check(bms::gameplayModeAllowed(source),"load fixture mode");
+            gGrooveGauge.setCompatibilityEnabled(true);
+            gGrooveGauge.setCompatibilityTrialOptions(sevenmania::independent_gauge::Kind::Normal,sevenmania::independent_gauge::Mode::None,
+                sevenmania::independent_gauge::Kind::AssistEasy,sevenmania::independent_gauge::Profile::LR2oraja);
             for(int repeat=0;repeat<3;++repeat){
                 gAudio.releaseSong();gCharts={source};gLoadResult={};gLoadResult.chart=source;gLoadResult.index=0;gLoadResult.playback=true;gLoadCancelled=false;gLoading=true;gPlaying=false;gPaused=false;gPractice.enabled=false;
                 std::wstring prepError;check(gAudio.prepare(source,prepError),"boundary audio decode");
                 gPlaybackLoad.begin();gPlaybackLoad.resourcesLoaded();check(gPlaybackLoad.beginPreparation(),"boundary preparing");check(prepareSelectedChartData(),"boundary data preparation");
+                const auto totalNotes=bms::judgementNoteCount(source);
+                check(totalNotes>0 && gGrooveGauge.compatibilityActive(),"LR2oraja preparation inactive");
+                gGrooveGauge.apply(TimingJudgement::PGreat,.01);
+                check(std::abs(gGrooveGauge.value()-(20+bms::lr2orajaChartTotal(source,totalNotes)/totalNotes*.01))<.0001,"LR2oraja preparation TOTAL mismatch");
+                gGrooveGauge.reset();
                 const double frozen=gPlayhead;const auto misses=gMissScanIndex;const auto score=gResultScore.value();
                 Sleep(25);updatePlaybackFrame();pressLane(1);
                 check(!gAudio.isRunning()&&!gPlaying&&gPlayhead==frozen&&gMissScanIndex==misses&&gResultScore.value()==score&&AudioEngineTestAccess::lastTrigger(gAudio).empty(),"preparing advanced audio or judgement");
@@ -119,6 +127,8 @@ int wmain(int argc,wchar_t** argv){
                     else std::cout<<"Load boundary: WASAPI start unavailable; state failure path exercised.\n";
                 }else{gLoadCancelled=true;check(!startPreparedChart(false)&&!gAudio.isRunning(),"cancelled ready state started");gPlaybackLoad.cancel();gLoading=false;showBrowseView();check(gPlaybackLoad.phase()==Phase::Cancelled,"cancel terminal state lost");}
             }
+            std::cout<<"LR2oraja TOTAL: three preparation cycles passed.\n";
+            gGrooveGauge.setCompatibilityEnabled(false);gGrooveGauge.configure(1,GrooveGaugeMode::Normal);
             gAudio.releaseSong();gBgaRaster.reset();gCharts.clear();gPlaybackLoad.reset();gLoadCancelled=false;gLoading=false;gPlaying=false;gActiveChartIndex=-1;
         }
         auto nativeChart=bga.chart;nativeChart.options={L"charatbeatHDX:bgamode 1"};BgaVideoLayers nativeVideo;nativeVideo.prepare(nativeChart,32,32);
@@ -176,6 +186,39 @@ int wmain(int argc,wchar_t** argv){
             check(!gHolds[1].active() && gResultScore.value()>0,"CN/HCN endpoint not resolved in gameplay");
             if(mode==bms::LongNoteMode::CN)check(gResultScore.value()==750000,"CN late GOOD release was incorrectly promoted to PGREAT");gAudio.stop();
         }
+        // Exercise the real miss scan, not just the standalone calculator.
+        // A missed charge head consumes two compatibility gauge units, while
+        // ordinary LN and the existing non-trial path retain one.
+        using GaugeProfile=sevenmania::independent_gauge::Profile;
+        for(const auto& [mode,trial,profile]:{
+                std::tuple{bms::LongNoteMode::LN,true,GaugeProfile::SevenKeys},
+                std::tuple{bms::LongNoteMode::CN,true,GaugeProfile::SevenKeys},
+                std::tuple{bms::LongNoteMode::HCN,true,GaugeProfile::SevenKeys},
+                std::tuple{bms::LongNoteMode::CN,true,GaugeProfile::BeatorajaLR2},
+                std::tuple{bms::LongNoteMode::HCN,true,GaugeProfile::BeatorajaLR2},
+                std::tuple{bms::LongNoteMode::CN,true,GaugeProfile::LR2oraja},
+                std::tuple{bms::LongNoteMode::HCN,true,GaugeProfile::LR2oraja},
+                std::tuple{bms::LongNoteMode::CN,false,GaugeProfile::SevenKeys}}) {
+            auto typed=gameplay.chart;typed.notes={{1,1,1,L"01",L"02",mode}};typed.mines.clear();typed.invisible.clear();
+            gCharts={typed};gActiveChartIndex=0;gPlaying=true;gShowingResult=gPaused=false;gAccuracyRestartPending=false;gPractice.enabled=false;
+            gHit.assign(1,false);gHolds.fill(LongNoteHold{});gPressed.fill(false);gMineHit.clear();gMissScanIndex=0;gLingeringLongNotes.clear();
+            gGrooveGauge.setCompatibilityEnabled(trial);
+            gGrooveGauge.setCompatibilityTrialOptions(sevenmania::independent_gauge::Kind::Normal,sevenmania::independent_gauge::Mode::None,
+                sevenmania::independent_gauge::Kind::AssistEasy,profile);
+            gGrooveGauge.configure(2,GrooveGaugeMode::Normal,200);gResultScore.reset(1);
+            double expected=14.0;
+            if(trial){
+                sevenmania::independent_gauge::Bank reference;check(reference.configure(profile,200,2),"missed charge reference setup");
+                reference.apply(sevenmania::independent_gauge::Event::Poor);
+                if(mode!=bms::LongNoteMode::LN)reference.apply(sevenmania::independent_gauge::Event::Poor);
+                expected=reference.value(sevenmania::independent_gauge::Kind::Normal);
+            }
+            check(gAudio.prepare(typed,error),"missed charge audio prepare failed");AudioEngineTestAccess::clock(gAudio,1.5);updatePlaybackFrame();
+            check(gHit[0] && std::abs(gGrooveGauge.value()-expected)<.0001 && gResultScore.value()==0,"missed charge gauge or score mismatch");
+            updatePlaybackFrame();check(std::abs(gGrooveGauge.value()-expected)<.0001,"missed charge applied more than once");gAudio.stop();
+        }
+        gGrooveGauge.setCompatibilityEnabled(false);
+        std::cout<<"Missed charge: LN/CN/HCN across three trial profiles and legacy path passed.\n";
         gPlaying=false;
 
         for(const auto& [extension,mode,channels]:{std::tuple{L"13-five.bms",bms::ChartMode::FiveKey,"#00011:01\n#00115:01\n"},std::tuple{L"14-ten.bms",bms::ChartMode::TenKey,"#00011:01\n#00125:01\n"},std::tuple{L"15-double.bme",bms::ChartMode::FourteenKey,"#00019:01\n#00129:01\n"},std::tuple{L"16-popn.pms",bms::ChartMode::PopnNine,"#00011:01\n#00125:01\n#001D1:0A\n#001E5:0A\n"}}){
@@ -193,7 +236,10 @@ int wmain(int argc,wchar_t** argv){
             check(keyLane(laneKey(parsed.chart.notes.back().lane),0)==parsed.chart.notes.back().lane,"2P/PMS key input mapping failed");
             check(gCompositionPresenter.prepare(gWindow,gWindowWidth,gWindowHeight),"GPU compatibility render initialization failed");gGpuFrame=true;drawGameScreen(gBackBufferDc);
             const auto gpu=GpuTestAccess::read(gCompositionPresenter,gBackBufferPixels,gWindowWidth,gWindowHeight);
-            check((gpu[py*gWindowWidth+px]&0xffffffu)==expected,"CPU/GPU note coordinates or colors differ");
+            const auto gpuPixel=gpu[py*gWindowWidth+px]&0xffffffu;
+            if(gpuPixel!=expected)throw std::runtime_error("CPU/GPU note pixel differs: mode="+
+                std::to_string(static_cast<int>(mode))+" x="+std::to_string(px)+" y="+std::to_string(py)+
+                " CPU="+std::to_string(expected)+" GPU="+std::to_string(gpuPixel));
             std::copy(gpu.begin(),gpu.end(),static_cast<uint32_t*>(gBackBufferPixels));snapshot(root/(std::wstring(extension)+L"-gpu.bmp"));
             check(gCompositionPresenter.present(gWindow,gBackBufferPixels,gWindowWidth,gWindowHeight),"GPU compatibility presentation failed");gGpuFrame=false;gCompositionPresenter.reset();
         }

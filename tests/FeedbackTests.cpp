@@ -37,6 +37,17 @@ int wmain(int argc, wchar_t** argv) {
         animated.draw(firstFrame.data(), 640, 180, 16, 76, 90, 0.01);
         animated.draw(lastFrame.data(), 640, 180, 16, 76, 90, 0.16);
         require(firstFrame != lastFrame, "video splash frames do not animate");
+        // Variable frame count: 4 frames advance over the same 0.18 s as 6 do.
+        const std::array<uint32_t, 4> fourFrames{0xffff0000u, 0xff00ff00u, 0xff0000ffu, 0xffffffffu};
+        PlayFeedback four;
+        require(four.setSpriteSheet(4, 1, fourFrames.data(), 4), "four-frame sprite sheet setup");
+        require(!four.setSpriteSheet(6, 1, fourFrames.data(), 4) && !four.setSpriteSheet(4, 1, fourFrames.data(), 0) &&
+            !four.setSpriteSheet(33, 1, fourFrames.data(), 33), "invalid frame counts were accepted");
+        four.hit(3, 0.0);
+        std::vector<uint32_t> fourFirst(640 * 180, background), fourLast(fourFirst);
+        four.draw(fourFirst.data(), 640, 180, 16, 76, 90, 0.01);
+        four.draw(fourLast.data(), 640, 180, 16, 76, 90, 0.17);
+        require(fourFirst != fourLast, "four-frame splash does not animate");
         feedback.miss(); require(feedback.combo() == 0, "miss reset");
         require(feedback.maxCombo() == 2, "miss preserves maximum combo");
         std::vector<uint32_t> canvas(width * height, background);

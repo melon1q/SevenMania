@@ -2,15 +2,85 @@
 #include "SelectionSlotLayout.h"
 #include "HudFrameProbe.h"
 #include "SkinInternal.h"
+#include "SkinAnchors.h"
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <fstream>
+#include <string>
+#include <vector>
 
 namespace sevenmania::skin {
 using Microsoft::WRL::ComPtr;
 namespace {
+// Every valid image in the folder is a candidate; the first by case-insensitive file name wins, so
+// extra files no longer disable the whole part. Decoding is by content, so the extension is immaterial.
+std::optional<SkinResource> externalGearImage(const std::filesystem::path& folder, const std::string& id) {
+    std::vector<std::filesystem::path> files;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file(ec)) files.push_back(it->path());
+        if (ec) return {};
+    }
+    if (ec) return {};
+    std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
+        return _wcsicmp(a.filename().c_str(), b.filename().c_str()) < 0;
+    });
+    for (const auto& path : files) {
+        const auto size = std::filesystem::file_size(path, ec);
+        if (ec || !size || size > 16u * 1024 * 1024) continue;
+        auto bytes = std::make_shared<Bytes>(static_cast<size_t>(size));
+        std::ifstream file(path, std::ios::binary);
+        if (!file.read(reinterpret_cast<char*>(bytes->data()), static_cast<std::streamsize>(size))) continue;
+        const bool png = bytes->size() >= 8 && (*bytes)[0] == 0x89 && (*bytes)[1] == 'P';
+        SkinResource image{id, "assets/images/" + id + (png ? ".png" : ".jpg"), {}, std::move(bytes)};
+        try {
+            detail::imageInfo(image, Limits{});
+            detail::verifyRenderableImage(image);
+        } catch (const detail::Failure&) { continue; }
+        return image;
+    }
+    return std::nullopt;
+}
+
+bool applyExternalGear(SkinPackage& package, const std::filesystem::path& root, std::vector<std::wstring>& warnings) {
+    if (!package.screens.contains(ScreenKind::Play)) return false;
+    bool applied = false;
+    for (const auto& [role, directory] : {
+        std::pair{"black-key", L"Buttons-Black"}, {"white-key", L"Buttons-White"}, {"disc", L"Scratch"}}) {
+        std::string id = std::string("external-") + role;
+        while (package.manifest.resourcePaths.contains(id)) id += "-override";
+        auto image = externalGearImage(root / L"Gear" / directory, id);
+        if (!image) continue;
+        auto candidate = package;
+        bool changed = false;
+        for (auto& element : candidate.screens.at(ScreenKind::Play).elements) {
+            if (element.kind != ElementKind::Image || !element.extensions[L"nativeGearPart"].boolean) continue;
+            const bool scratch = std::string_view(role) == "disc" &&
+                (element.id == "gear-scratch-disc" || element.id == "gear-scratch-disc-p2");
+            if (element.resource != role && !scratch) continue;
+            element.resource = id;
+            element.source.reset();
+            element.sprite.reset();
+            changed = true;
+        }
+        if (!changed) {
+            warnings.push_back(L"Gear/" + std::wstring(directory) + L" was ignored: the skin's play screen has no "
+                L"nativeGearPart image element for '" + std::wstring(role, role + std::strlen(role)) + L"'.");
+            continue;
+        }
+        candidate.manifest.resourcePaths.emplace(id, ResourcePath{image->path});
+        candidate.resources.emplace(id, std::move(*image));
+        if (auto valid = SkinLoader{}.prepare(std::move(candidate)); valid) {
+            package = *valid.package;
+            applied = true;
+        }
+    }
+    return applied;
+}
 void ensureSelectionRecordElements(SkinScreen& screen) {
     struct Definition { const char* id; const char* binding; const char* text; double y; };
     constexpr Definition definitions[]{
@@ -71,12 +141,14 @@ struct Surface {
 };
 }
 struct SkinApplication::Impl {
+    bool externalGear{};
     std::shared_ptr<const SkinPackage> package,source;
     SkinGearState gear;
     std::unique_ptr<Surface> surface;
     std::array<std::unique_ptr<SkinRenderer>,6> renderers;
     SkinRenderer gpu;
     ComPtr<ID2D1RenderTarget> gpuTarget;
+    float gpuWidth{},gpuHeight{};
     bool gpuFailed{},cpuFailed{},cached{};
     std::array<bool,6> entered{};
     std::optional<ScreenKind> scene;
@@ -132,6 +204,10 @@ void SkinApplication::enterScreen(ScreenKind screen) noexcept {
 }
 bool SkinApplication::active() const noexcept {return impl_!=nullptr;}
 const SkinManifest* SkinApplication::manifest() const noexcept {return impl_?&impl_->package->manifest:nullptr;}
+std::shared_ptr<const Bytes> SkinApplication::hitSplash() const noexcept {
+    return impl_ ? impl_->package->hitSplash : nullptr;
+}
+bool SkinApplication::hasExternalGear() const noexcept { return impl_ && impl_->externalGear; }
 bool SkinApplication::ownsJudgement() const noexcept {
     if(!impl_||impl_->gpuFailed||impl_->cpuFailed)return false;
     const auto screen=impl_->package->screens.find(ScreenKind::Play);if(screen==impl_->package->screens.end())return false;
@@ -141,11 +217,14 @@ int SkinApplication::selectShortcutAt(double x,double y,int width,int height) co
     if(!impl_||width<=0||height<=0)return -1;
     const auto found=impl_->package->screens.find(ScreenKind::Select);if(found==impl_->package->screens.end())return -1;
     const auto& screen=found->second;
-    const double scale=std::min(double(width)/screen.resolution.width,double(height)/screen.resolution.height);
-    x=(x-(width-screen.resolution.width*scale)/2)/scale;y=(y-(height-screen.resolution.height*scale)/2)/scale;
-    for(auto it=screen.elements.rbegin();it!=screen.elements.rend();++it){const auto& e=*it;
+    // Same height-based scale and anchors as the renderer, undone per element.
+    const auto view=bms::ui::viewport(width,height,screen.resolution.width,screen.resolution.height);
+    const auto anchors=computeAnchors(screen.elements,screen.resolution);
+    const double windowX=x,windowY=y;
+    for(std::size_t index=screen.elements.size();index-->0;){const auto& e=screen.elements[index];
         const int slot=e.id=="slot-0"?0:e.id=="slot-1"?1:e.id=="slot-2"?2:e.id=="select-settings"?3:e.id=="select-info"?4:-1;
         if(slot<0||!e.visible||e.opacity<=0||e.tint.a==0)continue;
+        x=windowX;y=windowY;bms::ui::unmapPoint(view,{e.x,e.y,e.width,e.height},anchors[index],x,y);
         if(e.clip&&(x<e.clip->x||x>=e.clip->x+e.clip->width||y<e.clip->y||y>=e.clip->y+e.clip->height))continue;
         // Undo the element's centre rotation, just as the renderer applies it.
         const double angle=-e.rotation*3.141592653589793/180,dx=x-e.x-e.width/2,dy=y-e.y-e.height/2;
@@ -161,12 +240,12 @@ bool SkinApplication::coversLegacySlots(double left,double top,double right,doub
     if(impl_->anchorWidth<=0||impl_->anchorHeight<=0)return false;
     const auto found=impl_->package->screens.find(ScreenKind::Play);
     if(found==impl_->package->screens.end())return false;
-    const auto& screen=found->second;
-    const double scale=std::min(impl_->anchorWidth/screen.resolution.width,impl_->anchorHeight/screen.resolution.height);
-    const double ox=(impl_->anchorWidth-screen.resolution.width*scale)/2,oy=(impl_->anchorHeight-screen.resolution.height*scale)/2;
-    if(left<ox||top<oy||right>impl_->anchorWidth-ox||bottom>impl_->anchorHeight-oy)return false;
+    (void)found;
+    if(left<0||top<0||right>impl_->anchorWidth||bottom>impl_->anchorHeight)return false;
     const auto& renderer=impl_->renderers[static_cast<size_t>(ScreenKind::Play)];
-    return renderer&&renderer->coversLegacySlots(impl_->gear.position,left-impl_->gear.centerX,top-impl_->gear.lineY,right-impl_->gear.centerX,bottom-impl_->gear.lineY);
+    // Panel bounds are gear design pixels around the gear anchor; the engine slots are window pixels.
+    const double s=impl_->gear.scale>0?impl_->gear.scale:1.0;
+    return renderer&&renderer->coversLegacySlots(impl_->gear.position,(left-impl_->gear.centerX)/s,(top-impl_->gear.lineY)/s,(right-impl_->gear.centerX)/s,(bottom-impl_->gear.lineY)/s);
 }
 SkinRenderStats SkinApplication::gpuStats() const noexcept {return impl_?impl_->gpu.stats():SkinRenderStats{};}
 std::span<const BindingDiagnostic> SkinApplication::diagnostics() const noexcept {
@@ -196,6 +275,8 @@ std::optional<SkinError> SkinApplication::load(const std::filesystem::path& file
         // Editing references are displayed by the editor only; the live engine owns notes and key input.
         auto runtime=std::make_shared<SkinPackage>(*loaded.package);
         for(auto& [kind,screen]:runtime->screens){(void)kind;std::erase_if(screen.elements,[](const auto& element){return element.extensions[L"editorOnly"].boolean;});}
+        warnings_.clear();
+        const bool externalGear = applyExternalGear(*runtime, file.parent_path(), warnings_);
         if(auto select=runtime->screens.find(ScreenKind::Select);select!=runtime->screens.end())ensureSelectionRecordElements(select->second);
         // Upgrade only the original reference controls in memory. Never rewrite a user's skin.
         if(auto select=runtime->screens.find(ScreenKind::Select);select!=runtime->screens.end())for(auto& e:select->second.elements){
@@ -213,7 +294,7 @@ std::optional<SkinError> SkinApplication::load(const std::filesystem::path& file
         auto source=std::make_shared<const SkinPackage>(*runtime);
         for(auto& [kind,screen]:runtime->screens)if(kind==ScreenKind::Play)for(auto& e:screen.elements)if(e.binding=="play.judgementCombo"){
             if(judgementMode_>=0)e.hud.judgementMode=judgementMode_?"image":"font";if(comboMode_>=0)e.hud.comboMode=comboMode_?"image":"font";}
-        auto next=std::make_unique<Impl>();next->source=std::move(source);next->package=std::move(runtime);next->resize(width,height);
+        auto next=std::make_unique<Impl>();next->externalGear=externalGear;next->source=std::move(source);next->package=std::move(runtime);next->resize(width,height);
         impl_=std::move(next);error_.reset();return {};
     }catch(const detail::Failure& e){error_=e.error;}
      catch(const std::bad_alloc&){error_=SkinError{ErrorCode::AllocationFailed,"skin application","Skin allocation failed"};}
@@ -254,7 +335,9 @@ bool SkinApplication::drawDc(HDC destination,int width,int height,const SkinData
 bool SkinApplication::prepareGpu(ID2D1RenderTarget* target,const SkinDataSnapshot& snapshot) noexcept {
     HUD_SCOPE(PrepareCheck);
     if(!target||!snapshot.active()||snapshot.screen()!=ScreenKind::Play||!supports(ScreenKind::Play))return false;
-    if(impl_->gpuTarget.Get()!=target) {
+    const auto targetSize=target->GetSize();
+    if(impl_->gpuTarget.Get()!=target||impl_->gpuWidth!=targetSize.width||impl_->gpuHeight!=targetSize.height) {
+        impl_->gpuWidth=targetSize.width;impl_->gpuHeight=targetSize.height;
         HUD_COUNT(PrepareTargetChanges);
         impl_->gpu.unload();impl_->gpuTarget=target;impl_->gpuFailed=false;
         if(auto error=impl_->gpu.prepare(impl_->package,ScreenKind::Play,target)){error_=*error;impl_->gpuFailed=true;}

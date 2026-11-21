@@ -93,9 +93,20 @@ inline std::wstring decodeBmsText(const std::vector<char>& bytes,const std::file
     const auto jpMetadata=metadata(sjis),krMetadata=metadata(korean);
     const auto& jp=jpMetadata.empty()?sjis:jpMetadata;
     const auto& kr=krMetadata.empty()?korean:krMetadata;
-    const auto hangul=std::count_if(kr.begin(),kr.end(),[](wchar_t c){return c>=0xac00&&c<=0xd7a3;});
+    // Shift-JIS lead bytes (0x81-0x9F) land in CP949's extension area, so kanji
+    // and kana decode into rare Hangul syllables that real Korean text almost
+    // never uses. Only the KS X 1001 syllables (lead 0xB0-0xC8, trail >= 0xA1)
+    // count as Korean evidence; a kanji-only title has no kana to outvote them.
+    long long hangul=0,rareHangul=0;
+    for(const wchar_t c:kr) {
+        if(c<0xac00 || c>0xd7a3)continue;
+        char encoded[4]{};
+        const int length=WideCharToMultiByte(949,0,&c,1,encoded,static_cast<int>(sizeof(encoded)),nullptr,nullptr);
+        const auto lead=static_cast<unsigned char>(encoded[0]),trail=static_cast<unsigned char>(encoded[1]);
+        if(length==2 && lead>=0xb0 && lead<=0xc8 && trail>=0xa1)++hangul;else ++rareHangul;
+    }
     const auto kana=std::count_if(jp.begin(),jp.end(),[](wchar_t c){return c>=0x3040&&c<=0x30ff;});
-    if (!korean.empty() && (sjis.empty() || (hangul>=3 && hangul>kana*2))) return korean;
+    if (!korean.empty() && (sjis.empty() || (hangul>=3 && hangul>kana*2 && hangul>rareHangul))) return korean;
     if (!sjis.empty()) return sjis;
     throw std::runtime_error("unknown chart encoding");
 }

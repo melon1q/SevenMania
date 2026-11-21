@@ -1,4 +1,4 @@
-﻿"""Offline CPU attribution with preceding-frame alignment and slow-frame neighbours."""
+"""Offline CPU attribution with preceding-frame alignment and slow-frame neighbours."""
 import argparse,csv,json,statistics,math
 from collections import defaultdict
 from pathlib import Path

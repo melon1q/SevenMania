@@ -79,6 +79,12 @@ int wmain(int argc,wchar_t** argv) {
         for(const auto& [id,value]:settingsController().snapshot()) {
             (void)value;
             if(id==ID_BROWSE_BACKGROUND||id==ID_PREVIEW_START||id==ID_JUDGEMENT_PROFILE||id==ID_COMBO_TEXT_Y||id==ID_SKIN_JUDGEMENT_MODE||id==ID_SKIN_COMBO_MODE)continue; // removed user controls; legacy keys retained
+            // Moved to the launcher skin settings in cdd0ccab; still persisted and read by the controller.
+            const bool launcherOwned=id==ID_LANE_TRANSPARENCY||id==ID_GEAR_POSITION||id==ID_NOTE_HEIGHT||id==ID_SEPARATOR_OPACITY||
+                id==ID_BACKGROUND_BLUR||id==ID_BACKGROUND_OPACITY||id==ID_JUDGEMENT_TEXT_Y||
+                (id>=ID_COLOR_BASE&&id<=ID_COLOR_BASE+7)||(id>=ID_SEPARATOR_BASE&&id<=ID_SEPARATOR_BASE+6);
+            if(launcherOwned||id==1098)continue; // 1098: song intro duration option removed in 7a0e4882 (fixed 2000ms)
+            if(!std::any_of(rmlSettingBindings().begin(),rmlSettingBindings().end(),[&](const auto& binding){return bms::SettingsController::canonicalId(binding.command)==id;}))std::fwprintf(stderr,L"unmapped setting id %d\n",id);
             require(std::any_of(rmlSettingBindings().begin(),rmlSettingBindings().end(),[&](const auto& binding){return bms::SettingsController::canonicalId(binding.command)==id;}),"snapshot contains an unmapped setting");
         }
         require(postSetting(ID_SPEED,13),"close queue fixture failed");

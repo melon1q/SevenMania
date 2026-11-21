@@ -33,8 +33,21 @@ int main(int argc,char** argv){try {
     gCharts[0].notes[0].lane=1;gCharts[0].notes[0].timeSeconds=.04;
     gActiveChartIndex=0;gPlaying=true;gPractice.enabled=true;gPractice.startSeconds=0;
     gPressed.fill(false);gHit.assign(1,0);gResultScore.reset(1);gFeedback.reset();gTimingHintCondition=0;
+    gGrooveGauge.setCompatibilityEnabled(true);gGrooveGauge.configure(1000,GrooveGaugeMode::Normal,300);
     pressLane(1);check(gHit[0]&&gSkinJudgementGrade==int(TimingJudgement::Great)&&gTimingHint==-1&&gResultScore.value()==800000,"actual key/FAST/score path");
+    check(gGrooveGauge.compatibilityActive()&&std::abs(gGrooveGauge.value()-20.3)<.00001,"actual key path compatibility gauge");
     pressLane(1);check(gResultScore.value()==800000,"held key repeated judgement");
+    gGrooveGauge.setCompatibilityTrialOptions(sevenmania::independent_gauge::Kind::Normal,sevenmania::independent_gauge::Mode::None,sevenmania::independent_gauge::Kind::AssistEasy,sevenmania::independent_gauge::Profile::BeatorajaLR2);
+    gGrooveGauge.configure(1000,GrooveGaugeMode::Normal,300);showTimingJudgement(TimingJudgement::Bad);
+    check(std::abs(gGrooveGauge.value()-16)<.00001,"actual judgement path LR2 profile");
+    gGaugeCompatibilityTest=true;gPractice.enabled=false;
+    gGrooveGauge.setCompatibilityTrialOptions(sevenmania::independent_gauge::Kind::Hazard,sevenmania::independent_gauge::Mode::SurvivalToGroove,sevenmania::independent_gauge::Kind::AssistEasy);
+    gGrooveGauge.configure(1000,GrooveGaugeMode::Normal,300);
+    showTimingJudgement(TimingJudgement::Bad);
+    check(gPlaying && !gGrooveGauge.depleted() && std::wstring(activeGaugeModeText())==L"NORMAL" && std::abs(gGrooveGauge.value()-17)<.00001,"actual judgement path auto shift and label");
+    gGaugeCompatibilityTest=false;gPractice.enabled=true;
+    gGrooveGauge.setCompatibilityTrialOptions(std::nullopt,sevenmania::independent_gauge::Mode::None,sevenmania::independent_gauge::Kind::AssistEasy);
+    gGrooveGauge.setCompatibilityEnabled(false);gGrooveGauge.configure(1,GrooveGaugeMode::Normal);
     gPressed.fill(false);gHit.assign(1,0);gResultScore.reset(1);gFeedback.reset();
     gCharts[0].notes[0].timeSeconds=0;gCharts[0].notes[0].lengthSeconds=1;gCharts[0].notes[0].mode=bms::LongNoteMode::LN;
     pressLane(1);check(gHolds[1].active()&&gHolds[1].headJudgement()==TimingJudgement::PGreat,"official LN head");
@@ -49,5 +62,8 @@ int main(int argc,char** argv){try {
     check(gPlayRecords.at(key).bestAccuracyScore==800000&&gPlayRecords.at(key).scoreJudgement.spec==L"LEGACY"&&gPlayRecords.at(key).clearJudgement.spec==L"SM-JUDGE-1","independent best provenance");
     savePlayRecord(path,true,15,900000,L"SM-JUDGE-1",1);loadPlayRecords();
     check(gPlayRecords.at(key).bestAccuracyScore==900000&&gPlayRecords.at(key).scoreJudgement.rank==1&&gPlayRecords.at(key).comboJudgement.rank==3,"new score provenance");
+    gGaugeCompatibilityTest=true;savePlayRecord(path,true,100,1000000,L"SM-JUDGE-1",1);loadPlayRecords();
+    check(gPlayRecords.at(key).bestAccuracyScore==900000,"experimental gauge must not overwrite records");
+    gGaugeCompatibilityTest=false;
     std::cout<<"rank parsing, cache, lane/candidate/miss policies, timestamp independence and record provenance passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -24,7 +24,8 @@ public:
         // the unsynchronized "unlimited" mode, bounded at 1500 Hz.
         const int limit = fps <= 0 ? unlimitedFpsLimit : fps;
         cappedUnlimited_ = fps == 0;
-        vsyncMode_ = fps < 0;
+        uncapped_ = fps == uncappedFps;
+        vsyncMode_ = fps == vsyncFps;
         alignedActive_ = false; lastVblankTarget_ = {}; suspendedFrames_ = 0;
         minimumStartInterval_ = fps == 0 || fps >= 500;
         period_ = std::chrono::nanoseconds((1'000'000'000LL + limit - 1) / limit);
@@ -32,6 +33,7 @@ public:
     }
     bool due() {
         const auto now = Clock::now();
+        if (uncapped_) { frameStarted_ = now; return true; }
         if (now < deadline_) return false;
         frameStarted_ = now;
         return true;
@@ -49,6 +51,7 @@ public:
     bool vblankAligned() const { return alignedActive_; }
     void advance() {
         if (suspendedFrames_ > 0) --suspendedFrames_;
+        if (uncapped_) { alignedActive_ = false; deadline_ = Clock::now(); return; }
         alignedActive_ = hasVblank_ && suspendedFrames_ == 0 && (vsyncMode_ || nearRefreshMultiple());
         if (alignedActive_) { advanceToVblank(Clock::now()); return; }
         if (HUD_LEGACY_REFLEX()?cappedUnlimited_:minimumStartInterval_) {
@@ -103,6 +106,7 @@ public:
     }
 private:
     HANDLE timer_{};
+    bool uncapped_{};
     bool cappedUnlimited_{},minimumStartInterval_{},vsyncMode_{};
     bool hasVblank_{},alignedActive_{};
     int suspendedFrames_{};

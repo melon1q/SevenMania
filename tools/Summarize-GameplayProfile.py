@@ -1,4 +1,4 @@
-﻿"""Summarize opt-in gameplay CSVs. Timings inside parent scopes overlap."""
+"""Summarize opt-in gameplay CSVs. Timings inside parent scopes overlap."""
 import argparse
 import csv
 import json

@@ -3,6 +3,8 @@
 #include "ChartOrdering.h"
 #include "PreviewTiming.h"
 #include "ScrollTimeline.h"
+#include "HiSpeedFix.h"
+#include "SelectFrameClock.h"
 
 #include <cmath>
 #include <filesystem>
@@ -77,6 +79,11 @@ int main(int argc, char** argv) {
         require(result.chart.playable, "정상 7+1 채보가 실행 가능 상태가 아님");
         require(result.chart.title == L"타임라인 확인", "UTF-8 메타데이터 읽기 실패");
         require(result.chart.genre == L"테스트 장르", "#GENRE must be preserved exactly");
+        require(result.chart.measureTimes.size()==3 &&
+            std::abs(result.chart.measureTimes[0])<1e-9 &&
+            std::abs(result.chart.measureTimes[1]-2)<1e-9 &&
+            std::abs(result.chart.measureTimes[2]-5)<1e-9,
+            "Measure boundaries must follow the meter, BPM and STOP timeline");
         require(result.chart.playLevel == L"3", "#DIFFICULTY chart category must not override #PLAYLEVEL");
         require(result.chart.bgm.size() == 1 && std::abs(result.chart.bgm.front().timeSeconds) < 0.001, "BGM 이벤트 시간 실패");
         bms::Chart delayedMusic;
@@ -210,6 +217,19 @@ int main(int argc, char** argv) {
         writeEncoded(sjisPath, L"#PLAYER 1\n#TITLE 日本語タイトル\n#BPM 120\n#WAV01 click.wav\n#00019:01\n", 932);
         auto sjis = bms::BmsParser().parse(sjisPath);
         require(sjis.chart.playable && sjis.chart.title == L"日本語タイトル", "Shift-JIS 채보 읽기 실패");
+
+        // 가나 없이 한자/전각 기호뿐인 Shift-JIS 메타데이터는 CP949로도 유효하게 풀리지만
+        // 전부 확장 영역의 희귀 한글이 되므로 한국어로 판정하면 안 된다.
+        const auto kanjiPath = root / L"shift-jis-kanji.bme";
+        writeEncoded(kanjiPath, L"#PLAYER 1\n#GENRE ART CORE\n#TITLE -零-［HYPER］\n#ARTIST SOMON\n#SUBARTIST obj:大我大和\n#BPM 142\n#WAV01 click.wav\n#00019:01\n", 932);
+        auto kanji = bms::BmsParser().parse(kanjiPath);
+        require(kanji.chart.title == L"-零-［HYPER］" && kanji.chart.subartist == L"obj:大我大和", "한자뿐인 Shift-JIS 제목이 CP949로 오판됨");
+        const auto mixedPath = root / L"shift-jis-mixed.bme";
+        writeEncoded(mixedPath, L"#PLAYER 1\n#TITLE 果て前の花\n#ARTIST noyrfa\n#SUBARTIST obj 四馬鉐屋\n#BPM 120\n#WAV01 click.wav\n#00019:01\n", 932);
+        require(bms::BmsParser().parse(mixedPath).chart.title == L"果て前の花", "가나가 적은 Shift-JIS 제목이 CP949로 오판됨");
+        const auto koreanPath = root / L"cp949-title.bme";
+        writeEncoded(koreanPath, L"#PLAYER 1\n#TITLE 한국어 제목 테스트\n#ARTIST 작곡가\n#BPM 120\n#WAV01 click.wav\n#00019:01\n", 949);
+        require(bms::BmsParser().parse(koreanPath).chart.title == L"한국어 제목 테스트", "선언 없는 CP949 채보가 한국어로 판정되지 않음");
 
         const auto unknownPath = root / L"unknown.bms";
         writeChart(unknownPath, L"#PLAYER 1\n#TITLE Unknown\n#BPM 120\n");
@@ -382,6 +402,56 @@ int main(int argc, char** argv) {
         const auto koreanAsset=bms::BmsParser(false,123,false).parse(root/L"auto-korean.bme");
         require(!koreanAsset.chart.partialLoad && koreanAsset.chart.samples.size()==1,"ASCII metadata lost automatic Korean asset encoding");
         std::filesystem::remove_all(root);
+        {   // HI-SPEED FIX: 150 BPM for 10 s, 300 BPM for 10 s, then 75 BPM to the last note at 35 s.
+            bms::Chart fixChart;fixChart.initialBpm=150;
+            fixChart.tempos={{0,150},{10,300},{20,75}};
+            fixChart.scroll={{0,0,1},{10,10,2},{20,30,.5}};
+            bms::Note last;last.timeSeconds=35;fixChart.notes.push_back(last);
+            const auto closeTo=[](double a,double b){return std::abs(a-b)<1e-9;};
+            require(closeTo(bms::mainBpm(fixChart),75)&&closeTo(bms::hiSpeedFixBpm(fixChart,bms::HiSpeedFix::Max),300)&&
+                closeTo(bms::hiSpeedFixBpm(fixChart,bms::HiSpeedFix::Min),75)&&closeTo(bms::hiSpeedFixBpm(fixChart,bms::HiSpeedFix::Start),150),
+                "HI-SPEED FIX reference BPMs");
+            require(closeTo(bms::hiSpeedFixScale(fixChart,bms::HiSpeedFix::Off),1)&&closeTo(bms::hiSpeedFixScale(fixChart,bms::HiSpeedFix::Start),1)&&
+                closeTo(bms::hiSpeedFixScale(fixChart,bms::HiSpeedFix::Max),.5)&&closeTo(bms::hiSpeedFixScale(fixChart,bms::HiSpeedFix::Main),2)&&
+                closeTo(bms::hiSpeedFixScale(fixChart,bms::HiSpeedFix::Min),2)&&closeTo(bms::hiSpeedFixScale(fixChart,bms::HiSpeedFix::Constant),1),
+                "HI-SPEED FIX scales");
+            // Off keeps the BPM-following scroll exactly; Constant moves with chart time through the BPM changes.
+            require(closeTo(bms::fixedScrollPosition(fixChart,15,bms::HiSpeedFix::Off),bms::scrollPositionSeconds(fixChart,15))&&
+                closeTo(bms::fixedScrollPosition(fixChart,15,bms::HiSpeedFix::Off),20)&&closeTo(bms::fixedScrollPosition(fixChart,15,bms::HiSpeedFix::Constant),15)&&
+                closeTo(bms::fixedScrollPosition(fixChart,25,bms::HiSpeedFix::Main),bms::scrollPositionSeconds(fixChart,25)),
+                "HI-SPEED FIX scroll positions");
+            fixChart.referenceBpm=300;
+            require(closeTo(bms::hiSpeedFixScale(fixChart,bms::HiSpeedFix::Start),2)&&closeTo(bms::hiSpeedFixScale(fixChart,bms::HiSpeedFix::Max),1),
+                "HI-SPEED FIX against #BASEBPM");
+            bms::Chart flat;flat.initialBpm=120;
+            require(closeTo(bms::mainBpm(flat),120)&&closeTo(bms::hiSpeedFixScale(flat,bms::HiSpeedFix::Main),1),"HI-SPEED FIX without tempo events");
+        }
+        {   // Select screen frame clock: 60 or 120 FPS, anything else falls back to 60.
+            SelectFrameClock clock;
+            clock.setFps(144);
+            require(clock.fps()==60,"select FPS outside 60/120 falls back to 60");
+            clock.setFps(120);
+            const auto start=SelectFrameClock::Clock::now();
+            require(clock.fps()==120&&clock.due(start)&&clock.waitMilliseconds(start)==0,"first select frame is due at once");
+            clock.advance(start);
+            require(!clock.due(start)&&clock.waitMilliseconds(start)==8&&clock.due(start+clock.period()),"120 FPS select period");
+            clock.advance(start+clock.period());
+            require(!clock.due(start+clock.period())&&clock.due(start+2*clock.period()),"select frames keep a fixed grid");
+            clock.advance(start+std::chrono::seconds(1));
+            require(!clock.due(start+std::chrono::seconds(1))&&clock.due(start+std::chrono::seconds(1)+clock.period()),
+                "a stalled select frame restarts from now");
+            clock.setFps(60);
+            require(clock.fps()==60&&clock.waitMilliseconds(start)==0&&std::chrono::duration_cast<std::chrono::microseconds>(clock.period()).count()==16666,
+                "60 FPS select period");
+            for (const int hz : {144, 240}) {
+                clock.setRate(hz);
+                require(clock.due(start), "first transition frame is immediately due");
+                clock.advance(start);
+                const auto period = std::chrono::nanoseconds(1'000'000'000 / hz);
+                require(!clock.due(start + period - std::chrono::nanoseconds(1)) && clock.due(start + period),
+                    "transition clock uses the monitor period");
+            }
+        }
         std::wcout << L"BmsCoreTests: all checks passed.\n";
         return 0;
     } catch (const std::exception& e) {

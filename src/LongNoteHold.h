@@ -18,12 +18,14 @@ public:
         noteIndex_ = noteIndex; mode_=mode;head_=head;
         nextGaugeTick_=startSeconds+0.2;
         endSeconds_ = endSeconds;
+        startSeconds_ = startSeconds;
         active_ = true;
         nextComboTickSeconds_ = startSeconds + comboIntervalSeconds_;
     }
     TimingJudgement headJudgement()const{return head_;}
     bool active() const { return active_; }
     size_t noteIndex() const { return noteIndex_; }
+    double startSeconds() const { return startSeconds_; }
     unsigned takeComboTicks(double timeSeconds) {
         if (!active_ || !std::isfinite(timeSeconds)) return 0;
         const double until = std::min(timeSeconds, endSeconds_);
@@ -72,7 +74,7 @@ private:
     bms::LongNoteMode mode_=bms::LongNoteMode::CN;
     double nextGaugeTick_{};
     size_t noteIndex_{};
-    double endSeconds_{};
+    double endSeconds_{},startSeconds_{};
     static constexpr double comboIntervalSeconds_ = 0.1;
     double nextComboTickSeconds_{};
 };

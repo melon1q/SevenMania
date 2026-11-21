@@ -5,6 +5,7 @@
 <button id="nav-graphics">화면</button>
 <button id="nav-sound">소리</button>
 <button id="nav-keys">키 · 입력</button>
+<button id="nav-skin">스킨</button>
 <button id="nav-other">시스템</button>
 </div><div class="content" id="settings-content">
 
@@ -23,43 +24,17 @@
 <div id="page-gameplay" style="display:none"><h2>플레이</h2>
 <h3>판정 · 속도</h3>
 <div class="row"><label for="game-speed">노트 배속</label><div class="ctl stepper"><select id="game-speed"></select><button id="game-speed-dec" class="step">−</button><button id="game-speed-inc" class="step">+</button></div></div>
+<div class="row"><label for="game-hs-fix">HI-SPEED FIX</label><div class="ctl"><select id="game-hs-fix"></select></div></div>
 <div class="row"><label>게이지 모드</label><div class="ctl"><select id="game-gauge" style="display:none"></select><div class="seg"><button id="game-gauge:0">NORMAL</button><button id="game-gauge:1">EASY</button><button id="game-gauge:2">HARD</button></div></div></div>
 <div class="row"><label for="game-accuracy">정확도 제한</label><div class="ctl"><select id="game-accuracy"></select></div></div>
 <div class="hint">선택한 판정보다 낮은 판정이 나오면 자동으로 재시작합니다. F5로도 재시작할 수 있습니다.</div>
 <div class="row"><label for="game-timing-hint">FAST / SLOW 표시</label><div class="ctl"><select id="game-timing-hint"></select></div></div>
 <h3>화면 배치</h3>
-<div class="row"><label>기어 위치</label><div class="ctl"><select id="gear-position" style="display:none"></select><div class="seg"><button id="gear-position:0">왼쪽</button><button id="gear-position:1">가운데</button><button id="gear-position:2">오른쪽</button></div></div></div>
 <div class="row"><label for="judge-position">판정선 위치</label><div class="ctl"><input id="judge-position" type="range" min="-4096" max="4096" step="1" /><div class="range-value" id="judge-position-value"></div></div></div>
 <div class="row"><label for="lane-cover">레인 커버</label><div class="ctl"><input id="lane-cover" type="range" min="0" max="100" step="1" value="0" /><div id="lane-cover-value" class="range-value">0%</div></div></div>
-<div class="row"><label for="game-height">노트 높이</label><div class="ctl"><select id="game-height"></select></div></div>
 <div class="row"><label for="game-brightness">BGA 밝기</label><div class="ctl"><input id="game-brightness" type="range" min="0" max="100" step="10" value="0" /><div id="game-brightness-value" class="range-value">0%</div></div></div>
-<h3>레인 표시</h3>
-<div class="row"><label for="lane-opacity">레인 투명도</label><div class="ctl"><input id="lane-opacity" type="range" min="0" max="100" step="1" value="0" /><div id="lane-opacity-value" class="range-value">0%</div></div></div>
-<div class="row"><label for="separator-opacity">구분선 불투명도</label><div class="ctl"><input id="separator-opacity" type="range" min="0" max="100" step="1" value="100" /><div id="separator-opacity-value" class="range-value">100%</div></div></div>
-<div class="hint">구분선 표시 (SCR | 1 · 1 | 2 · … · 6 | 7)</div>
-<div class="chips">
-<div class="chip"><input id="separator-0" type="checkbox" /><label for="separator-0">S|1</label></div>
-<div class="chip"><input id="separator-1" type="checkbox" /><label for="separator-1">1|2</label></div>
-<div class="chip"><input id="separator-2" type="checkbox" /><label for="separator-2">2|3</label></div>
-<div class="chip"><input id="separator-3" type="checkbox" /><label for="separator-3">3|4</label></div>
-<div class="chip"><input id="separator-4" type="checkbox" /><label for="separator-4">4|5</label></div>
-<div class="chip"><input id="separator-5" type="checkbox" /><label for="separator-5">5|6</label></div>
-<div class="chip"><input id="separator-6" type="checkbox" /><label for="separator-6">6|7</label></div>
-</div>
-<h3>레인 색상</h3>
-<div class="grid">
-<div class="cell"><label for="color-0">스크래치</label><select id="color-0"></select></div>
-<div class="cell"><label for="color-1">1번 건반</label><select id="color-1"></select></div>
-<div class="cell"><label for="color-2">2번 건반</label><select id="color-2"></select></div>
-<div class="cell"><label for="color-3">3번 건반</label><select id="color-3"></select></div>
-<div class="cell"><label for="color-4">4번 건반</label><select id="color-4"></select></div>
-<div class="cell"><label for="color-5">5번 건반</label><select id="color-5"></select></div>
-<div class="cell"><label for="color-6">6번 건반</label><select id="color-6"></select></div>
-<div class="cell"><label for="color-7">7번 건반</label><select id="color-7"></select></div>
-</div>
 <h3>곡 진입 연출</h3>
 <div class="row"><label>연출 사용</label><div class="ctl"><select id="intro-enabled" style="display:none"></select><div class="seg"><button id="intro-enabled:0">Off</button><button id="intro-enabled:1">On</button></div></div></div>
-<div class="row"><label for="intro-duration">연출 시간</label><div class="ctl"><select id="intro-duration"></select></div></div>
 <h3>미리보기</h3>
 <div class="actions"><button id="game-preview">플레이 화면 미리보기 켜기 / 끄기</button></div>
 <div class="hint">설정 창을 옆으로 이동하면 미리보기를 함께 볼 수 있습니다.</div>
@@ -69,7 +44,9 @@
 <h3>출력</h3>
 <div class="row"><label>화면 모드</label><div class="ctl"><select id="screen-mode" style="display:none"></select><div class="seg"><button id="screen-mode:0">창화면</button><button id="screen-mode:1">보더리스</button><button id="screen-mode:2">전체화면</button></div></div></div>
 <div class="row"><label for="resolution">해상도</label><div class="ctl"><select id="resolution"></select></div></div>
+<div class="row"><label for="display-lr2-aspect">LR2 스킨 화면 비율</label><div class="ctl"><select id="display-lr2-aspect"></select></div></div>
 <div class="row"><label for="graphics-fps">프레임 목표</label><div class="ctl"><select id="graphics-fps"></select></div></div>
+<div class="row"><label for="select-fps">선곡 화면 프레임</label><div class="ctl"><select id="select-fps"></select></div></div>
 <div class="row"><label for="custom-fps">직접 지정 (1~1500)</label><div class="ctl"><input id="custom-fps" type="range" min="1" max="1500" step="1" /><div id="custom-fps-value" class="range-value"></div></div></div>
 <div class="row"><label>저지연 기능</label><div class="ctl"><select id="low-latency" style="display:none"></select><div class="seg"><button id="low-latency:0">끔</button><button id="low-latency:1">NVIDIA Reflex</button></div></div></div>
 <h3>렌더링</h3>
@@ -78,9 +55,6 @@
 <div class="row"><label for="direct-composition">DirectComposition</label><div class="ctl"><input id="direct-composition" type="checkbox" /></div></div>
 <div class="row"><label for="note-subpixel">노트 서브픽셀</label><div class="ctl"><input id="note-subpixel" type="checkbox" /></div></div>
 <div class="row"><label for="note-antialias">노트 안티앨리어싱</label><div class="ctl"><input id="note-antialias" type="checkbox" /></div></div>
-<h3>곡 선택 배경</h3>
-<div class="row"><label for="bg-blur">블러 강도</label><div class="ctl"><input id="bg-blur" type="range" min="0" max="100" step="1" value="0" /><div id="bg-blur-value" class="range-value">0%</div></div></div>
-<div class="row"><label for="bg-opacity">불투명도</label><div class="ctl"><input id="bg-opacity" type="range" min="0" max="100" step="1" value="0" /><div id="bg-opacity-value" class="range-value">0%</div></div></div>
 </div>
 
 <div id="page-sound" style="display:none"><h2>소리</h2>
@@ -93,6 +67,12 @@
 <h3>곡 미리듣기</h3>
 <div class="row"><label for="song-preview">하이라이트 재생</label><div class="ctl"><input id="song-preview" type="checkbox" /></div></div>
 <div class="row"><label for="preview-volume">미리듣기 음량</label><div class="ctl"><input id="preview-volume" type="range" min="0" max="100" step="1" value="0" /><div id="preview-volume-value" class="range-value">0%</div></div></div>
+<h3>시스템 사운드</h3>
+<div class="row"><div class="name">효과음 폴더</div><div id="system-sound-folder" class="hint">기본 효과음</div></div>
+<div class="actions"><button id="system-sound-pick">효과음 폴더 선택...</button><button id="system-sound-clear">기본 효과음 사용</button></div>
+<div class="row"><div class="name">음악(BGM) 폴더</div><div id="system-bgm-folder" class="hint">기본 선곡 음악</div></div>
+<div class="actions"><button id="system-bgm-pick">음악 폴더 선택...</button><button id="system-bgm-clear">기본 선곡 음악 사용</button></div>
+<div class="hint">beatoraja 사운드 세트와 같은 이름을 씁니다. 음악: select(선곡 반복), decide. 효과음: scratch, f-open, f-close, o-open, o-close, o-change, playready, playstop, clear, fail, resultclose, click, levelchange. 확장자는 wav · flac · ogg · mp3 순서로 찾고, 없는 소리는 기본 소리(또는 무음)를 씁니다. 선곡 음악은 곡 미리듣기가 나오는 동안 5% 이하로 줄어듭니다.</div>
 <h3>소리 보정</h3>
 <div class="row"><label for="audio-latency">오디오 레이턴시</label><div class="ctl"><input id="audio-latency" type="range" min="-200" max="200" step="1" value="0" /><div id="audio-latency-value" class="range-value">0 ms</div></div></div>
 <div class="hint">소리가 화면보다 늦게 들리면 + 값을 올립니다. 노트 화면, 판정, BGA가 함께 이동하며 키음 재생 시점은 바뀌지 않습니다.</div>
@@ -118,12 +98,26 @@
 </div>
 
 <div id="page-skin" style="display:none"><h2>스킨</h2>
-<h3>외부 스킨</h3>
+<h3>LR2 스킨</h3>
+<div class="row"><div class="name">자동 검색 폴더</div><div id="lr2-root" class="hint"></div></div>
+<div class="actions"><button id="lr2-rescan">다시 검색</button><button id="lr2-clear">LR2 스킨 사용 안 함</button></div>
+<div class="row"><label for="lr2-select">선곡</label><div class="ctl"><select id="lr2-select" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div class="row"><label for="lr2-decide">곡 시작</label><div class="ctl"><select id="lr2-decide" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div class="row"><label for="lr2-play7">7KEY 플레이</label><div class="ctl"><select id="lr2-play7" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div class="row"><label for="lr2-play5">5KEY 플레이</label><div class="ctl"><select id="lr2-play5" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div class="row"><label for="lr2-play14">14KEY 플레이</label><div class="ctl"><select id="lr2-play14" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div class="row"><label for="lr2-play10">10KEY 플레이</label><div class="ctl"><select id="lr2-play10" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div class="row"><label for="lr2-play9">9KEY 플레이</label><div class="ctl"><select id="lr2-play9" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div class="row"><label for="lr2-result">결과</label><div class="ctl"><select id="lr2-result" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<h3>LR2 스킨 옵션</h3>
+<div class="row"><label for="lr2-custom-screen">대상 스킨</label><div class="ctl"><select id="lr2-custom-screen"></select></div></div>
+<div class="row"><label for="lr2-custom-item">항목</label><div class="ctl"><select id="lr2-custom-item" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div class="row"><label for="lr2-custom-value">값</label><div class="ctl"><select id="lr2-custom-value" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div id="lr2-status" class="hint"></div>
+<h3>SevenMania 기본 스킨</h3>
 <div id="skin-state" class="hint">기본 화면 사용 중</div>
 <div id="skin-path" class="hint"></div>
-<div class="actions"><button id="skin-load">스킨 불러오기...</button><button id="skin-clear">기본 화면으로 복원</button></div>
-<h3>판정과 콤보</h3>
-<div class="row"><label for="judgement-y">판정 텍스트 위치</label><div class="ctl"><input id="judgement-y" type="range" min="-256" max="256" step="1" /><div class="range-value" id="judgement-y-value"></div></div></div>
+<div class="hint">LR2 스킨을 지정하지 않은 화면이나 로드에 실패한 화면에 적용됩니다. SevenMania 런처에서 바꿀 수 있습니다.</div>
 </div>
 
 <div id="page-other" style="display:none"><h2>시스템</h2>

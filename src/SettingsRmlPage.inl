@@ -32,17 +32,19 @@ std::vector<std::pair<std::string,std::string>> rmlSettingsOptions(int command) 
     if (id == ID_FPS) {for (size_t i=0;i<frameRateValues.size();++i) add(frameRateValues[i],frameRateLabels[i]);if(gTargetFps>0&&std::find(frameRateValues.begin(),frameRateValues.end(),gTargetFps)==frameRateValues.end())add(gTargetFps,L"사용자 설정: "+std::to_wstring(gTargetFps)+L" FPS");}
     else if(id==ID_SKIN_JUDGEMENT_MODE||id==ID_SKIN_COMBO_MODE){add(-1,L"스킨 설정");add(0,L"폰트");add(1,L"이미지");}
     else if (id == ID_SPEED) for(int i=2;i<=40;++i) add(i,number(i/4.0,2)+L"x");
+    else if (id == ID_HI_SPEED_FIX) { int i=0; for(auto s:{L"끔",L"시작 BPM",L"최대 BPM",L"주 BPM",L"최소 BPM",L"일정 (BPM 변화 무시)"}) add(i++,s); }
+    else if (id == ID_SELECT_FPS) { add(60,L"60 FPS"); add(120,L"120 FPS"); }
     else if (id == ID_BGA_DARKNESS) for(int i=0;i<=100;i+=10) add(i,std::to_wstring(i)+L"%");
-    else if (id == ID_NOTE_HEIGHT) for(int i=4;i<=32;i+=2) add(i,std::to_wstring(i)+L" px");
+    else if (id == ID_NOTE_HEIGHT) add(36,L"36 px");
     else if (id == ID_JUDGEMENT_PROFILE) { int i=0; for(auto s:{L"BASIC",L"EASY",L"NORMAL",L"HARD"}) add(i++,s); }
     else if (id == ID_GROOVE_GAUGE) { int i=0; for(auto s:{L"NORMAL",L"EASY",L"HARD"}) add(i++,s); }
     else if(id==ID_INTRO_ENABLE){add(0,L"Off");add(1,L"On");}
-    else if(id==ID_INTRO_DURATION){for(int ms=800;ms<=1500;ms+=100)add(ms,std::to_wstring(ms)+L" ms");}
     else if(id==ID_PREVIEW_START){add(0,L"즉시 자동 시작");add(1,L"프리뷰 자동 시작");add(2,L"수동 시작");}
     else if(id==ID_TIMING_HINT){add(0,L"PGREAT 미만");add(1,L"GREAT 미만");add(2,L"GOOD 미만");add(3,L"없음");}
     else if (id == ID_ACCURACY_LIMIT) { for(int i=0;i<int(accuracyLimitLabels.size());++i)add(i,accuracyLimitLabels[i]); }
     else if (id == ID_BROWSE_BACKGROUND) { int i=0; for(auto s:{L"단색",L"BGA",L"타이틀 이미지",L"사용자 이미지"}) add(i++,s); }
     else if (id == ID_SCREEN_MODE) { add(0,L"창화면");add(1,L"보더리스 창화면");add(2,L"전체화면"); }
+    else if (id == ID_LR2_ASPECT) { add(0,L"비율 유지 (레터박스)");add(1,L"화면 채우기 (스트레치)"); }
     else if (id == ID_RESOLUTION) {
         add(0,L"자동 (창 / 모니터 기본 크기)");
         for(size_t i=0;i<gResolutionOptions.size();++i) add(int(i+1),std::to_wstring(gResolutionOptions[i].width)+L" × "+std::to_wstring(gResolutionOptions[i].height));
@@ -51,7 +53,7 @@ std::vector<std::pair<std::string,std::string>> rmlSettingsOptions(int command) 
     else if (id == ID_SOUND_BUFFER) for(int frames:SOUND_BUFFER_OPTIONS) add(frames,std::to_wstring(frames)+L" frames");
     else if (id == ID_AUDIO_OUTPUT_MODE) { add(0,L"WASAPI 공유 모드");add(1,L"WASAPI 독점 모드"); }
     else if (id == ID_LOW_LATENCY) { add(0,L"끔");add(1,L"NVIDIA Reflex"); }
-    else if (id>=ID_COLOR_BASE && id<ID_COLOR_BASE+8) for(int i=0;i<int(gPalette.size());++i) add(i,gPalette[i].name);
+    else if (id>=ID_COLOR_BASE && id<ID_COLOR_BASE+8) for(int color : noteColors(id-ID_COLOR_BASE)) add(color,gPalette[color].name);
     return options;
 }
 void refreshAllNativeSettings() {
@@ -91,22 +93,21 @@ void syncRmlSettingsState(const std::wstring& status = L"") {
     gRmlSettingsPage.setEnabled("bind-keys",!gCapturingBindings);
     gRmlSettingsPage.setEnabled("cancel-keys",gCapturingBindings);
     gRmlSettingsPage.setText("game-preview",gSettingsPreviewShowing?"플레이 화면 미리보기 끄기":"플레이 화면 미리보기 켜기");
-    gRmlSettingsPage.setText("background-name",gCustomBackgroundName.empty()?"선택된 이미지 없음":settingsUtf8(gCustomBackgroundName));
     gRmlSettingsPage.setText("resource-state", gShowResourceUsage ? "켜짐" : "꺼짐");
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     gRmlSettingsPage.setText("skin-state",settingsUtf8(skinSummary()));
     gRmlSettingsPage.setText("skin-path",settingsUtf8(gSkinSource.wstring()));
-    gRmlSettingsPage.setEnabled("skin-clear",true);
 #else
     gRmlSettingsPage.setText("skin-state","이 빌드에서는 외부 스킨을 지원하지 않습니다.");
-    gRmlSettingsPage.setEnabled("skin-load",false);gRmlSettingsPage.setEnabled("skin-clear",false);gRmlSettingsPage.setEnabled("skin-judgement-mode",false);gRmlSettingsPage.setEnabled("skin-combo-mode",false);
 #endif
+    syncLr2SkinSettings();
+    const auto folderText=[](const std::filesystem::path& folder,const char* fallback){
+        if(folder.empty())return std::string(fallback);std::error_code ec;
+        return settingsUtf8(folder.wstring()+(std::filesystem::is_directory(folder,ec)?L"":L" [찾을 수 없음]"));};
+    gRmlSettingsPage.setText("system-sound-folder",folderText(gSystemSoundFolders.sound,"기본 효과음"));
+    gRmlSettingsPage.setText("system-bgm-folder",folderText(gSystemSoundFolders.bgm,"기본 선곡 음악"));
+    for(auto id:{"system-sound-pick","system-sound-clear","system-bgm-pick","system-bgm-clear"})gRmlSettingsPage.setEnabled(id,!gPlaying&&!gLoading);
     gRmlSettingsPage.setText("settings-status", status.empty() ? "변경사항이 자동으로 저장됩니다." : settingsUtf8(status));
-}
-void runSettingsImagePicker(const std::function<void(HWND)>& picker) {
-    picker(gSettingsWindow);
-    syncRmlSettingsState();
-    if(gRmlSettingsPageActive) { SetFocus(gRmlSettingsPage.window()); gRmlSettingsPage.focus("browse-image"); }
 }
 void hideRmlSettingsPage() {
     if (gRmlSettingsPage.window()) ShowWindow(gRmlSettingsPage.window(), SW_HIDE);
@@ -132,6 +133,7 @@ bool showRmlSettingsPage() {
                         return;
                     }
                 }
+                if(handleLr2SkinSetting(id,value))return;
                 if(id=="key-mode"){if(gCapturingBindings)cancelKeyBindingCapture();try{gBindingMode=std::clamp(std::stoi(value),0,4);}catch(...){}syncRmlSettingsState();return;}
                 if(id.starts_with("library-")) {
                     if(id=="library-sources"){try{gLibrarySourceSelection=std::stoull(value);}catch(...){}PostMessageW(gWindow,WM_LIBRARY_ACTION,7,0);return;}
@@ -153,15 +155,12 @@ bool showRmlSettingsPage() {
                 }
                 if(id=="graphics-fps"&&value=="-2"){return;}
                 if (id == "settings-close") { PostMessageW(gSettingsWindow, WM_CLOSE, 0, 0); return; }
+                for(const auto& [name,action]:{std::pair{"system-sound-pick",RML_ACTION_PICK_SOUND_FOLDER},{"system-sound-clear",RML_ACTION_CLEAR_SOUND_FOLDER},
+                        {"system-bgm-pick",RML_ACTION_PICK_BGM_FOLDER},{"system-bgm-clear",RML_ACTION_CLEAR_BGM_FOLDER}})
+                    if(id==name){PostMessageW(gSettingsWindow,WM_RML_SETTINGS_ACTION,action,0);return;}
                 if (id == "controller-settings") { PostMessageW(gSettingsWindow, WM_RML_SETTINGS_ACTION, ID_CONTROLLER_SETTINGS, 0); return; }
-#ifdef BMS_ENABLE_SKIN_BINDINGS
-                if(id=="skin-load"||id=="skin-clear") {
-                    PostMessageW(gSettingsWindow,WM_RML_SETTINGS_ACTION,id=="skin-load"?ID_SKIN_LOAD:ID_SKIN_CLEAR,0);return;
-                }
-#endif
                 for(const auto& [name,action]:{std::pair{"bind-keys",ID_BIND},{"cancel-keys",IDCANCEL},{"reset-keys",ID_RESET_KEYS},{"game-preview",1},{"settings-help",ID_HELP}})
                     if(id==name) { PostMessageW(gSettingsWindow,WM_RML_SETTINGS_ACTION,action,0);return; }
-                if (id == "browse-image") { PostMessageW(gSettingsWindow,WM_RML_SETTINGS_PICK_IMAGE,0,0); return; }
                 if (id == "native-fallback") { PostMessageW(gSettingsWindow, WM_RML_SETTINGS_FALLBACK, 1, 0); return; }
                 for(size_t i=0;i<rmlPageNames.size();++i)
                     if(id==std::string("native-")+rmlPageNames[i]) { PostMessageW(gSettingsWindow,WM_RML_SETTINGS_NAVIGATE,i,1); return; }

@@ -5,7 +5,7 @@
 #include <algorithm>
 
 namespace sevenmania::skin::detail {
-void imageInfo(SkinResource& resource,const Limits& limits) {
+void imageInfo(SkinResource& resource,const Limits& limits,bool allowBmp) {
     const auto& data=*resource.bytes;
     const auto ext=resource.path.substr(resource.path.find_last_of('.'));
     resource.width=resource.height=0;
@@ -23,7 +23,8 @@ void imageInfo(SkinResource& resource,const Limits& limits) {
         }
         return;
     }
-    if(ext!=".png"&&ext!=".jpg"&&ext!=".jpeg")fail(ErrorCode::UnsupportedResource,resource.path,"Unsupported resource format");
+    const bool bmp=allowBmp&&ext==".bmp";
+    if(ext!=".png"&&ext!=".jpg"&&ext!=".jpeg"&&!bmp)fail(ErrorCode::UnsupportedResource,resource.path,"Unsupported resource format");
     const auto checkSize=[&](std::uint32_t w,std::uint32_t h){
         if(!w||!h||w>limits.imageDimension||h>limits.imageDimension||std::uint64_t(w)*h>limits.imagePixels)
             fail(ErrorCode::LimitExceeded,resource.path,"Image dimensions/pixel count exceed limit");
@@ -35,7 +36,7 @@ void imageInfo(SkinResource& resource,const Limits& limits) {
         const auto be32=[&](std::size_t p){return std::uint32_t(data[p])<<24|std::uint32_t(data[p+1])<<16|std::uint32_t(data[p+2])<<8|data[p+3];};
         if(be32(8)!=13)fail(ErrorCode::InvalidImage,resource.path,"Invalid PNG IHDR size");
         checkSize(be32(16),be32(20));
-    } else {
+    } else if(!bmp) {
         if(data.size()<4||data[0]!=255||data[1]!=216)fail(ErrorCode::InvalidImage,resource.path,"Invalid JPEG signature");
         std::size_t p=2;bool found=false;
         while(p<data.size()) {
@@ -64,16 +65,16 @@ void imageInfo(SkinResource& resource,const Limits& limits) {
     check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)));
     check(factory->CreateStream(&stream));
     check(stream->InitializeFromMemory(const_cast<BYTE*>(data.data()),static_cast<DWORD>(data.size())));
-    const GUID expected=ext==".png"?GUID_ContainerFormatPng:GUID_ContainerFormatJpeg;
+    const GUID expected=bmp?GUID_ContainerFormatBmp:ext==".png"?GUID_ContainerFormatPng:GUID_ContainerFormatJpeg;
     check(factory->CreateDecoder(expected,nullptr,&decoder));
     check(decoder->Initialize(stream.Get(),WICDecodeMetadataCacheOnDemand));
     GUID format{};check(decoder->GetContainerFormat(&format));
-    if(ext==".png"?format!=GUID_ContainerFormatPng:format!=GUID_ContainerFormatJpeg)
+    if(format!=expected)
         fail(ErrorCode::InvalidImage,resource.path,"Image extension does not match encoded format");
     UINT count{};check(decoder->GetFrameCount(&count));
     if(count!=1)fail(ErrorCode::InvalidImage,resource.path,"Only a single image frame is supported");
     check(decoder->GetFrame(0,&frame));check(frame->GetSize(&resource.width,&resource.height));
     checkSize(resource.width,resource.height);
-    resource.kind=ext==".png"?ResourceKind::Png:ResourceKind::Jpeg;
+    resource.kind=bmp?ResourceKind::Bmp:ext==".png"?ResourceKind::Png:ResourceKind::Jpeg;
 }
 }

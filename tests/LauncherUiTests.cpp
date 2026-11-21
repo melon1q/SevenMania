@@ -17,6 +17,28 @@ int wmain(int argc,wchar_t** argv){if(argc!=3)return 2;HANDLE child{};DWORD chil
     initial=sevenmania::readStartupSettings(config);sources.initialize(base/L"Songs",config);originalRoots=sources.roots;require(sources.roots.empty(),"launcher automatically registered Songs");
     INITCOMMONCONTROLSEX init{sizeof(init),ICC_TAB_CLASSES};InitCommonControlsEx(&init);WNDCLASSW cls{};cls.lpfnWndProc=proc;cls.hInstance=GetModuleHandleW(nullptr);cls.lpszClassName=L"LauncherTest";RegisterClassW(&cls);
     window=CreateWindowExW(0,cls.lpszClassName,L"Launcher test",WS_OVERLAPPEDWINDOW,0,0,950,700,nullptr,nullptr,cls.hInstance,nullptr);require(window,"launcher native window failed");
+    const auto skinRoot=base/L"사용자 스킨";
+    const auto effectRoot=skinRoot/L"HitEffects";
+    std::filesystem::create_directories(effectRoot);
+    const auto externalSkin=skinRoot/L"테스트.semaskin";
+    std::filesystem::copy_file(base/L"Assets/Skins/DefaultSkin/DefaultReference.semaskin",externalSkin);
+    for(const auto* name:{L"10.png",L"2.png"})
+        std::filesystem::copy_file(base/L"Assets/hit-splash.png",effectRoot/name);
+    {std::ofstream invalid(effectRoot/L"1.png");invalid<<"broken";}
+    SetWindowTextW(GetDlgItem(window,60),externalSkin.c_str());
+    refreshLauncherHitEffects();
+    require(SendMessageW(hitEffectChoice,CB_GETCOUNT,0,0)==3 &&
+        SendMessageW(hitEffectChoice,CB_GETITEMDATA,1,0)==2 &&
+        SendMessageW(hitEffectChoice,CB_GETITEMDATA,2,0)==10,"Launcher hit effect list incorrect");
+    select(hitEffectChoice,2);
+    selectSkinChoice(GetDlgItem(window,70),L"0",L"1");
+    selectSkinChoice(GetDlgItem(window,71),L"-1",L"1");
+    selectSkinChoice(GetDlgItem(window,100),L"3",L"4");
+    require(save()&&skinPathDecode(sevenmania::iniText(config,L"Skin",L"PackagePath"))==externalSkin.wstring() &&
+        sevenmania::iniText(config,L"Skin",L"JudgementMode")==L"0" &&
+        sevenmania::iniText(config,L"Skin",L"ComboMode")==L"-1" &&
+        sevenmania::iniText(config,L"Skin",L"HitEffect")==L"10" &&
+        sevenmania::iniText(config,L"NoteColors",L"Lane0")==L"3","Launcher did not save skin settings");
     wchar_t emptyLabel[128]{};SendMessageW(rootList,LB_GETTEXT,0,reinterpret_cast<LPARAM>(emptyLabel));require(std::wstring(emptyLabel)==L"(없음)","launcher empty default label missing");
     select(fpsChoice,0);select(modeChoice,0);select(resolutionChoice,0);SendMessageW(bgaCheck,BM_SETCHECK,BST_UNCHECKED,0);select(bufferChoice,4);
     SendMessageW(window,WM_COMMAND,41,0);auto read=sevenmania::readStartupSettings(config);require(read.fps==60&&read.brightness==0&&read.buffer==512,"GUI changes not persisted to engine schema");

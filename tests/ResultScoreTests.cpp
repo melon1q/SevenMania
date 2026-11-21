@@ -19,6 +19,13 @@ int main() {
         score.apply(TimingJudgement::Good); require(score.value() == 23'000, "good award");
         score.apply(TimingJudgement::Bad); score.apply(TimingJudgement::Poor);
         require(score.value() == 23'000, "bad and poor must neither earn nor deduct score");
+        require(score.exScore()==3,"EX score gives PGreat two points and Great one");
+        score.reset(2);
+        score.apply(TimingJudgement::Great,1);
+        require(score.exScore()==0,"fractional EX is deferred");
+        score.apply(TimingJudgement::Great,1);
+        score.apply(TimingJudgement::PGreat,8);
+        require(score.exScore()==3,"long-note fractions carry and extra units cannot increase EX");
         for (int count : {1, 3, 7, 997, 4097}) {
             score.reset(count);
             for (int i = 0; i < count; ++i) score.apply(TimingJudgement::PGreat);

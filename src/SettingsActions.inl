@@ -8,6 +8,8 @@ int readSettingValue(int id) {
     switch (id) {
     case ID_FPS: return gTargetFps;
     case ID_SPEED: return int(std::lround(gNoteSpeed * 4));
+    case ID_HI_SPEED_FIX: return int(gHiSpeedFix);
+    case ID_SELECT_FPS: return gSelectFrameClock.fps();
     case ID_SKIN_JUDGEMENT_MODE:return gSkinJudgementMode;
     case ID_SKIN_COMBO_MODE:return gSkinComboMode;
     case ID_JUDGE_POSITION: return gJudgeLineOffset;
@@ -18,11 +20,11 @@ int readSettingValue(int id) {
     case ID_GEAR_POSITION: return gGearPosition;
     case ID_COMPOSITION: return gCompositionEnabled;
     case ID_DIRECT_COMPOSITION: return gDirectCompositionEnabled;
+    case ID_LR2_ASPECT: return gLr2Stretch;
     case ID_JUDGEMENT_PROFILE: return int(gJudgementProfile);
-    case ID_NOTE_HEIGHT: return gNoteHeight;
+    case ID_NOTE_HEIGHT: return kFixedNoteHeight;
     case ID_GROOVE_GAUGE: return int(gGrooveGaugeMode);
     case ID_INTRO_ENABLE: return gIntroEnabled;
-    case ID_INTRO_DURATION: return gIntroDuration;
     case ID_PREVIEW_START: return gPreviewStartMode;
     case ID_TIMING_HINT: return gTimingHintCondition;
     case ID_ACCURACY_LIMIT: return int(gAccuracyLimit);
@@ -63,11 +65,18 @@ bool applySettingValue(int id, int value, std::wstring& error) {
         gVolumes[id - ID_VOLUME_BASE] = value;
         gAudio.setVolumes(gVolumes[0], gVolumes[1], gVolumes[2], gVolumes[3]); return true;
     }
-    if (id >= ID_COLOR_BASE && id < ID_COLOR_BASE + 8) { gLaneColors[id - ID_COLOR_BASE] = value; return true; }
+    if (id >= ID_COLOR_BASE && id < ID_COLOR_BASE + 8) {
+        const auto colors = noteColors(id - ID_COLOR_BASE);
+        if (value != colors[0] && value != colors[1]) return false;
+        gLaneColors[id - ID_COLOR_BASE] = value;
+        return true;
+    }
     if (id >= ID_SEPARATOR_BASE && id < ID_SEPARATOR_BASE + 7) { gLaneSeparators[id - ID_SEPARATOR_BASE] = value != 0; return true; }
     switch (id) {
     case ID_FPS: gTargetFps = value; gFramePacer.reset(value); break;
     case ID_SPEED: gNoteSpeed = value / 4.0; break;
+    case ID_HI_SPEED_FIX: gHiSpeedFix = static_cast<bms::HiSpeedFix>(value); break;
+    case ID_SELECT_FPS: gSelectFrameClock.setFps(value); break;
     case ID_SKIN_JUDGEMENT_MODE:case ID_SKIN_COMBO_MODE:
         value=1;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -77,11 +86,10 @@ bool applySettingValue(int id, int value, std::wstring& error) {
     case ID_JUDGEMENT_PROFILE: gJudgementProfile = JudgementProfile::Normal; break;
     case ID_GROOVE_GAUGE: gGrooveGaugeMode = static_cast<GrooveGaugeMode>(value); break;
     case ID_INTRO_ENABLE:gIntroEnabled=value;break;
-    case ID_INTRO_DURATION:gIntroDuration=value;break;
     case ID_PREVIEW_START: gPreviewStartMode=std::clamp(value,0,2);break;
     case ID_TIMING_HINT: gTimingHintCondition=value;gTimingHint=0;break;
     case ID_ACCURACY_LIMIT: gAccuracyLimit=static_cast<AccuracyLimit>(value);clearAccuracyRestart();break;
-    case ID_NOTE_HEIGHT: gNoteHeight = value; break;
+    case ID_NOTE_HEIGHT: gNoteHeight = ui(kFixedNoteHeight); break;   // fixed (FHD size, scaled), not a setting
     case ID_GEAR_POSITION:
 #ifdef BMS_ENABLE_SKIN_BINDINGS
         if((gGearPosition==0&&value==2)||(gGearPosition==2&&value==0)){const int choice=MessageBoxW(gSettingsWindow,L"주변 UI 사물의 위치를 좌우 반전해 배치할까요?",L"기어 배치 전환",MB_YESNOCANCEL|MB_ICONQUESTION);if(choice==IDCANCEL)return false;gSkinMirrorUi=choice==IDYES;}
@@ -131,6 +139,14 @@ bool applySettingValue(int id, int value, std::wstring& error) {
         break;
     case ID_NOTE_SUBPIXEL: gNoteSubpixel = value != 0; break;
     case ID_NOTE_ANTIALIAS: gNoteAntialias = value != 0; break;
+    case ID_LR2_ASPECT:
+        if(value!=0&&value!=1)return false;
+        gLr2Stretch=value==1;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+        for(auto* scene:{gLr2SelectScene.get(),gLr2DecideScene.get(),gLr2PlayScene.get(),gLr2ResultScene.get()})
+            if(scene)scene->setStretch(gLr2Stretch);
+#endif
+        break;
     case ID_LOW_LATENCY:
         gReflexRequested = value != 0;
         if (!gReflexRequested) gCompositionPresenter.lowLatency().request(latency::Mode::Off);
@@ -173,6 +189,7 @@ HWND settingControl(int id) {
     case ID_BGA_DARKNESS: return gBgaDarknessChoice; case ID_LANE_COVER: return gLaneCoverSlider;
     case ID_SCREEN_MODE: return gScreenModeChoice; case ID_GEAR_POSITION: return gGearChoice;
     case ID_COMPOSITION: return gCompositionChoice; case ID_DIRECT_COMPOSITION: return gDirectCompositionChoice;
+    case ID_LR2_ASPECT: return gLr2AspectChoice;
     case ID_JUDGEMENT_PROFILE: return gJudgementChoice; case ID_NOTE_HEIGHT: return gNoteHeightChoice;
     case ID_GROOVE_GAUGE: return gGrooveGaugeChoice; case ID_SOUND_BUFFER: return gSoundBufferChoice;
     case ID_AUDIO_OUTPUT_MODE: return gAudioOutputModeChoice;
@@ -232,11 +249,12 @@ void refreshSettingControls(int id) {
     else if (_wcsicmp(type, L"Button") == 0) SendMessageW(control, BM_SETCHECK, value ? BST_CHECKED : BST_UNCHECKED, 0);
     else {
         int option = value;
+        if (id >= ID_COLOR_BASE && id < ID_COLOR_BASE + 8) option = value == noteColors(id - ID_COLOR_BASE)[1] ? 1 : 0;
         if (id == ID_FPS) option = frameRateIndex(value);
         if (id == ID_SPEED) option = value - 2;
         if(id==ID_SKIN_JUDGEMENT_MODE||id==ID_SKIN_COMBO_MODE)option=value+1;
         if (id == ID_BGA_DARKNESS) option = value / 10;
-        if (id == ID_NOTE_HEIGHT) option = (value - 4) / 2;
+        if (id == ID_NOTE_HEIGHT) option = 0;
         if (id == ID_SCREEN_MODE) option = 2 - value;
         if (id == ID_SOUND_BUFFER) option = int(std::find(SOUND_BUFFER_OPTIONS.begin(), SOUND_BUFFER_OPTIONS.end(), value) - SOUND_BUFFER_OPTIONS.begin());
         SendMessageW(control, CB_SETCURSEL, option, 0);

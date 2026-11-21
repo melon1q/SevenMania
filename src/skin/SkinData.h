@@ -19,6 +19,7 @@ enum class BindingId : std::uint8_t {
     SongSubtitle,
     SummarySpeed, SummaryGauge, SummaryAccuracy, SummaryVolume,
     SelectKeyMode,
+    PlayKeyGuide,
     Count, Invalid=255
 };
 struct BindingDefinition { BindingId id; std::string_view name; BindingType type; unsigned screens; };

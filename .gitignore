@@ -31,3 +31,11 @@
 
 # Local font experiment and sample package
 /BmsPlayer-NeoDunggeunmo/
+
+# 작업 산출물·보관 폴더 (소스 아님)
+/Validation/
+/PerformanceSamples/
+/GitHub-Upload/
+/.vs/
+/dist-trial/
+/구버전 파일/

@@ -82,6 +82,19 @@ inline double chartTotal(const Chart& chart,size_t notes) {
     const double n=static_cast<double>(notes);
     return std::max(260.0,7.605*n/(0.01*n+6.5));
 }
+// LR2oraja's default TOTAL differs from SevenMania's existing default. Keep
+// BMSON's original percentage separate so its already-resolved value is never
+// treated as a percentage a second time.
+inline double lr2orajaChartTotal(const Chart& chart,size_t notes) {
+    const double n=static_cast<double>(notes);
+    const double standard=160.0+(n+std::clamp(n-400.0,0.0,200.0))*.16;
+    if(chart.bmson && chart.bmsonRelativeTotal>0 && std::isfinite(chart.bmsonRelativeTotal)) {
+        const double total=standard*(chart.bmsonRelativeTotal/100.0);
+        return std::isfinite(total)&&total>0?total:standard;
+    }
+    if(chart.total>0 && std::isfinite(chart.total))return chart.total;
+    return standard;
+}
 inline const HiddenNote* hiddenAt(const Chart& chart,int lane,double time) {
     const HiddenNote* last=nullptr;
     for(const auto& n:chart.invisible) {if(n.timeSeconds>time)break;if(n.lane==lane)last=&n;}
@@ -97,10 +110,14 @@ inline LaneLayout chartLayout(const Chart& chart,int x,int width,int scratch) {
 }
 // Key / scratch lane widths of the play field: DP charts use narrower lanes so both sides fit.
 // Every screen that lays out lanes (gameplay, loading preview, skin gear anchor) must use these.
+// `scale` is the window/design (1920x1080) scale: widths are authored at FHD and scale with the window.
 struct DeckWidths { int key; int scratch; };
-inline DeckWidths chartDeckWidths(const Chart& chart) {
+inline DeckWidths chartDeckWidths(const Chart& chart,double scale=1.0) {
     const bool dual=chart.mode==ChartMode::TenKey || chart.mode==ChartMode::FourteenKey;
-    return dual?DeckWidths{std::max(28,LaneLayout::defaultKeyWidth*2/3),68}:DeckWidths{LaneLayout::defaultKeyWidth,LaneLayout::defaultScratchWidth};
+    const DeckWidths design=dual?DeckWidths{std::max(28,LaneLayout::defaultKeyWidth*2/3),68}:DeckWidths{LaneLayout::defaultKeyWidth,LaneLayout::defaultScratchWidth};
+    if(scale==1.0)return design;
+    const auto scaled=[scale](int pixels){return std::max(1,static_cast<int>(std::lround(pixels*scale)));};
+    return {scaled(design.key),scaled(design.scratch)};
 }
 inline int chartLanes(const Chart& chart) {
     switch(chart.mode) {

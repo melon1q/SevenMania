@@ -4,14 +4,15 @@ class SongIntroOverlay {
  HDC dc_{};HBITMAP bitmap_{};HGDIOBJ old_{};void* pixels_{};
  Microsoft::WRL::ComPtr<ID2D1Bitmap> gpu_;
  Microsoft::WRL::ComPtr<ID2D1RenderTarget> owner_;
- std::chrono::steady_clock::time_point started_{};double duration_=1.1;
+ std::chrono::steady_clock::time_point started_{};double duration_=2.0;
  int x_{},y_{},w_{},h_{};
 public:
+ static constexpr int kFixedMilliseconds=2000; // fixed intro length (ms)
  ~SongIntroOverlay(){reset();}
  void reset(){gpu_.Reset();owner_.Reset();if(dc_){SelectObject(dc_,old_);DeleteObject(bitmap_);DeleteDC(dc_);}dc_=nullptr;bitmap_=nullptr;pixels_=nullptr;started_={};}
  static double opacity(double age,double duration){return age<0||age>=duration?0:std::min(1.0,(duration-age)/.2);}
  void prepare(const bms::Chart& chart,RECT area,int milliseconds,ID2D1RenderTarget* target){
-  reset();w_=area.right-area.left;h_=area.bottom-area.top;x_=area.left;y_=area.top;duration_=std::clamp(milliseconds,800,1500)/1000.;
+  reset();w_=area.right-area.left;h_=area.bottom-area.top;x_=area.left;y_=area.top;duration_=kFixedMilliseconds/1000.;(void)milliseconds;
   if(w_<180||h_<150)return;
   dc_=CreateCompatibleDC(nullptr);BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=w_;info.bmiHeader.biHeight=-h_;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;
   bitmap_=CreateDIBSection(dc_,&info,DIB_RGB_COLORS,&pixels_,nullptr,0);if(!bitmap_){DeleteDC(dc_);dc_=nullptr;return;}old_=SelectObject(dc_,bitmap_);
@@ -25,8 +26,12 @@ public:
   SelectObject(dc_,previous);DeleteObject(font);GdiFlush();auto p=static_cast<uint32_t*>(pixels_);for(size_t i=0;i<size_t(w_)*h_;++i)p[i]|=0xff000000;
   owner_=target;if(target)target->CreateBitmap(D2D1::SizeU(w_,h_),pixels_,w_*4,D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)),&gpu_);
  }
- void start(){started_=std::chrono::steady_clock::now();}
- bool active()const{return started_!=std::chrono::steady_clock::time_point{}&&std::chrono::duration<double>(std::chrono::steady_clock::now()-started_).count()<duration_;}
+ void start(int milliseconds=kFixedMilliseconds){duration_=milliseconds/1000.;started_=std::chrono::steady_clock::now();}
+ // End the intro no later than milliseconds after it started.
+ void shorten(double milliseconds){duration_=std::min(duration_,milliseconds/1000.);}
+ double elapsedMilliseconds()const{return started_==std::chrono::steady_clock::time_point{}?-1:
+     std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started_).count();}
+ bool active()const{const auto elapsed=elapsedMilliseconds();return elapsed>=0&&elapsed<duration_*1000;}
  double alpha()const{return started_==std::chrono::steady_clock::time_point{}?0:opacity(std::chrono::duration<double>(std::chrono::steady_clock::now()-started_).count(),duration_);}
  void draw(HDC target){const auto a=alpha();if(a>0)AlphaBlend(target,x_,y_,w_,h_,dc_,0,0,w_,h_,{AC_SRC_OVER,0,BYTE(a*255),AC_SRC_ALPHA});}
  void draw(ID2D1RenderTarget* target){const auto a=alpha();if(a<=0||!target||!pixels_)return;

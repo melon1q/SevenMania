@@ -4,22 +4,31 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 // One preloaded six-frame sprite, reused by all hits. No per-frame GDI objects,
 // image decoding or unbounded particle allocations.
 class PlayFeedback {
     static constexpr int spriteWidth = 128, spriteHeight = 128;
-    static constexpr int spriteFrameCount = 6;
+public:
+    static constexpr int defaultSpriteFrames = 6, maxSpriteFrames = 32;
+private:
     struct Splash { int lane{}; double born = -1; };
     std::array<Splash, 64> splashes_{};
-    std::array<std::array<uint32_t, spriteWidth * spriteHeight>, spriteFrameCount> sprites_{};
+    std::vector<std::array<uint32_t, spriteWidth * spriteHeight>> sprites_;
+    int frames_ = defaultSpriteFrames;
     size_t next_{};
     unsigned combo_{};
     unsigned maxCombo_{};
+    uint64_t spriteRevision_{};
     int keys_=7,players_=1;bool popn_{};
 public:
     void configure(const LaneLayout& layout){keys_=layout.keys;players_=layout.players;popn_=layout.popn;}
-    PlayFeedback() {
+    PlayFeedback() { useDefaultSprites(); }
+    void useDefaultSprites() {
+        ++spriteRevision_;
+        frames_ = defaultSpriteFrames;
+        sprites_.assign(static_cast<size_t>(frames_), {});
         for (int y = 0; y < spriteHeight; ++y) for (int x = 0; x < spriteWidth; ++x) {
             const double nx = (x + 0.5 - spriteWidth / 2.0) / (spriteWidth / 2.0);
             const double ny = (y + 0.5 - spriteHeight / 2.0) / (spriteHeight / 2.0);
@@ -34,10 +43,14 @@ public:
             for (auto& sprite : sprites_) sprite[static_cast<size_t>(y) * spriteWidth + x] = color;
         }
     }
-    bool setSpriteSheet(int width, int height, const uint32_t* pixels) {
-        if (!pixels || width <= 0 || height <= 0 || width % spriteFrameCount != 0) return false;
-        const int frameWidth = width / spriteFrameCount;
-        for (int frame = 0; frame < spriteFrameCount; ++frame) {
+    // "frames" sprites laid out side by side; the width must divide evenly.
+    bool setSpriteSheet(int width, int height, const uint32_t* pixels, int frames = defaultSpriteFrames) {
+        if (!pixels || width <= 0 || height <= 0 || frames < 1 || frames > maxSpriteFrames || width % frames != 0) return false;
+        ++spriteRevision_;
+        frames_ = frames;
+        sprites_.assign(static_cast<size_t>(frames), {});
+        const int frameWidth = width / frames;
+        for (int frame = 0; frame < frames; ++frame) {
             for (int y = 0; y < spriteHeight; ++y) {
                 const int sourceY = y * height / spriteHeight;
                 for (int x = 0; x < spriteWidth; ++x) {
@@ -85,9 +98,9 @@ public:
             const int extent = std::max(1, static_cast<int>(std::lround(layout.width(splash.lane) * 1.20 * size)));
             const int left = layout.left(splash.lane) + (layout.width(splash.lane) - 2) / 2 - extent / 2;
             const int top = judgeY + 1 - extent / 2;
-            const size_t frame = std::min<size_t>(spriteFrameCount - 1, static_cast<size_t>(age / 0.18 * spriteFrameCount));
+            const size_t frame = std::min<size_t>(frames_ - 1, static_cast<size_t>(age / 0.18 * frames_));
             draw(sprites_[frame].data(), spriteWidth, spriteHeight, left, top, extent, extent,
-                (1ull << 63) | frame, static_cast<float>(opacity(age)));
+                (1ull << 63) | (spriteRevision_ << 6) | frame, static_cast<float>(opacity(age)));
         }
     }
     void draw(uint32_t* pixels, int width, int height, int fieldX, int laneWidth, int judgeY, double time, int scratchWidth = 0) const {
@@ -102,8 +115,8 @@ public:
             const int left = layout.left(splash.lane) + (layout.width(splash.lane) - 2) / 2 - targetWidth / 2;
             const int top = judgeY + 1 - targetHeight / 2;
             const unsigned fade = static_cast<unsigned>(255 * opacity(age));
-            const size_t frameIndex = std::min<size_t>(spriteFrameCount - 1,
-                static_cast<size_t>(age / 0.18 * spriteFrameCount));
+            const size_t frameIndex = std::min<size_t>(frames_ - 1,
+                static_cast<size_t>(age / 0.18 * frames_));
             const auto& sprite = sprites_[frameIndex];
             for (int y = std::max(0, top); y < std::min(height, top + targetHeight); ++y) {
                 const int sy = (y - top) * spriteHeight / targetHeight;

@@ -1,20 +1,22 @@
 ﻿// In-window summary; shares the existing settings controller and persistence.
 bool gSummaryVisible=false;int gSummaryRow=0;std::wstring gSummaryError;
 constexpr int summaryCommands[]{ID_SPEED,ID_GROOVE_GAUGE,ID_ACCURACY_LIMIT,ID_VOLUME_BASE};
-RECT summaryBounds(){int w=std::min(560,gWindowWidth-24),h=std::min(380,gWindowHeight-24);return {(gWindowWidth-w)/2,(gWindowHeight-h)/2,(gWindowWidth+w)/2,(gWindowHeight+h)/2};}
-// Use the same contain transform for drawing and hit testing.
+RECT summaryBounds(){int w=std::min(ui(560),gWindowWidth-24),h=std::min(ui(380),gWindowHeight-24);return {(gWindowWidth-w)/2,(gWindowHeight-h)/2,(gWindowWidth+w)/2,(gWindowHeight+h)/2};}
+// Use the renderer's scale and anchors for drawing and hit testing.
 RECT summaryElement(const char* id,RECT fallback){
 #ifdef BMS_ENABLE_SKIN_BINDINGS
  using namespace sevenmania::skin;
  if(const auto* layout=gSkinApplication.screenLayout(ScreenKind::SettingsSummary)){
-  const double scale=std::min(double(gWindowWidth)/layout->resolution.width,double(gWindowHeight)/layout->resolution.height);
-  const double ox=(gWindowWidth-layout->resolution.width*scale)/2,oy=(gWindowHeight-layout->resolution.height*scale)/2;
-  for(const auto& e:layout->elements)if(e.id==id&&e.visible)return {LONG(ox+e.x*scale),LONG(oy+e.y*scale),LONG(ox+(e.x+e.width)*scale),LONG(oy+(e.y+e.height)*scale)};
+  const auto view=bms::ui::viewport(gWindowWidth,gWindowHeight,layout->resolution.width,layout->resolution.height);
+  const auto anchors=computeAnchors(layout->elements,layout->resolution);
+  for(size_t i=0;i<layout->elements.size();++i){const auto& e=layout->elements[i];if(e.id!=id||!e.visible)continue;
+   const auto r=bms::ui::mapRect(view,{e.x,e.y,e.width,e.height},anchors[i]);
+   return {LONG(std::lround(r.x)),LONG(std::lround(r.y)),LONG(std::lround(r.x+r.width)),LONG(std::lround(r.y+r.height))};}
  }
 #endif
  return fallback;
 }
-RECT summaryRowBounds(int i){auto r=summaryBounds();return summaryElement(("summary-row-"+std::to_string(i)).c_str(),{r.left+16,r.top+64+i*48,r.right-16,r.top+108+i*48});}
+RECT summaryRowBounds(int i){auto r=summaryBounds();return summaryElement(("summary-row-"+std::to_string(i)).c_str(),{r.left+ui(16),r.top+ui(64+i*48),r.right-ui(16),r.top+ui(108+i*48)});}
 void toggleSummary(){gSummaryVisible=!gSummaryVisible;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
  if(gSummaryVisible)gSkinApplication.enterScreen(sevenmania::skin::ScreenKind::SettingsSummary);

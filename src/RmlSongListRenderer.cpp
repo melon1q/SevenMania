@@ -344,7 +344,7 @@ bool RmlSongListRenderer::enabled() const noexcept { return !failed_; }
 bool RmlSongListRenderer::needsAnimation() const noexcept { return impl_ && impl_->titleOverflow > 0; }
 
 bool RmlSongListRenderer::paint(HDC dc, int width, int height, const std::vector<SongListVisualRow>& rows,
-    double textSeconds, float trackTop, float guideTop, int rowHeight) {
+    double textSeconds, float trackTop, float guideTop, int rowHeight, float density) {
     if (failed_ || !dc || width <= 0 || height <= 0 || width > 16384 || height > 16384) return false;
     if (impl_ && !impl_->runtime->ownsThread()) return false;
     try {
@@ -354,7 +354,11 @@ bool RmlSongListRenderer::paint(HDC dc, int width, int height, const std::vector
         }
         const bool resized = width != impl_->width || height != impl_->height;
         if (resized) impl_->resize(width, height);
-        impl_->render(rows, textSeconds, resized || !sameRowsMarkup(rows, impl_->rows), trackTop, guideTop, rowHeight);
+        // song-list.rcss sizes are FHD design units (dp); density is the game window scale.
+        const float ratio = std::isfinite(density) && density > 0 ? density : 1.0f;
+        const bool rescaled = impl_->context->GetDensityIndependentPixelRatio() != ratio;
+        if (rescaled) impl_->context->SetDensityIndependentPixelRatio(ratio);
+        impl_->render(rows, textSeconds, resized || rescaled || !sameRowsMarkup(rows, impl_->rows), trackTop, guideTop, rowHeight);
         const BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
 #ifdef BMS_PERF_DIAGNOSTICS
         const auto blendStarted = std::chrono::steady_clock::now();
@@ -382,7 +386,7 @@ struct RmlSongListRenderer::Impl {};
 RmlSongListRenderer::RmlSongListRenderer() = default;
 RmlSongListRenderer::~RmlSongListRenderer() = default;
 bool RmlSongListRenderer::enabled() const noexcept { return false; }
-bool RmlSongListRenderer::paint(HDC, int, int, const std::vector<SongListVisualRow>&, double, float, float, int) { return false; }
+bool RmlSongListRenderer::paint(HDC, int, int, const std::vector<SongListVisualRow>&, double, float, float, int, float) { return false; }
 bool RmlSongListRenderer::needsAnimation() const noexcept { return false; }
 void RmlSongListRenderer::reset() {}
 } // namespace bms::ui

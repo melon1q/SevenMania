@@ -1,4 +1,4 @@
-﻿"""Compare paired Reflex runs. CPU submission proxies cannot approve latency benefit."""
+"""Compare paired Reflex runs. CPU submission proxies cannot approve latency benefit."""
 import argparse
 import csv
 import json

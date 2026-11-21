@@ -1,4 +1,4 @@
-﻿"""Run matched Reflex OFF/ON x 600/1000/1500-ceiling trials; no personal INI changes."""
+"""Run matched Reflex OFF/ON x 600/1000/1500-ceiling trials; no personal INI changes."""
 import argparse,subprocess,sys
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('--label',required=True);p.add_argument('--chart',type=Path);p.add_argument('--duration',type=int,default=8);p.add_argument('--repeats',type=int,default=1);a=p.parse_args()

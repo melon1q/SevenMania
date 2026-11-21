@@ -1,4 +1,4 @@
-﻿"""Upgrade only the first two play gear slots, preserving the rest of a skin."""
+"""Upgrade only the first two play gear slots, preserving the rest of a skin."""
 from pathlib import Path
 import argparse
 import copy

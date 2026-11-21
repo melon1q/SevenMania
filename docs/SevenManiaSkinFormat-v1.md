@@ -150,7 +150,29 @@ Manager는 단일 소유 스레드에서 사용한다. 로딩/등록은 화면 �
 
 별도 `sevenmania_skin_render` 라이브러리의 `SkinRenderer`가 image 요소와 sprite의 첫 프레임을 그린다. text/number는 3차에서 기존 GDI TextRasterCache를 사용해 출력한다. 프레임 변경, 이벤트 바인딩은 실행하지 않는다. `source`를 명시하면 sprite 첫 프레임보다 우선한다.
 
-가상 해상도는 manifest 값을 상속하며, 1차 규격의 화면별 명시적 resolution 재정의도 유지한다. 비율을 유지하는 contain 모드로 중앙 배치하고 가상 화면 밖을 자른다. 실행 창이나 모니터 해상도는 바꾸지 않는다. 전체 이미지 보간은 linear, 명시한 source와 sprite는 인접 프레임의 색 번짐 방지를 위해 nearest-neighbor다. 별도 필터 선택 옵션은 아직 없다.
+가상 해상도는 manifest 값을 상속하며, 1차 규격의 화면별 명시적 resolution 재정의도 유지한다. 실행 창이나 모니터 해상도는 바꾸지 않는다.
+
+### 해상도 독립 배치 (스케일과 앵커)
+
+디자인 좌표는 창 높이를 기준으로 스케일한다(`scale = min(창 높이/디자인 높이, 창 너비/디자인 너비)`). 16:9보다 넓은 화면에서는 높이가 맞고 좌우에 여유 공간이 생긴다. 4:3처럼 좁은 화면에서는 너비가 맞고 위아래에 여유가 생긴다. 이 여유 공간은 요소별 앵커에 따라 나눈다(`src/ResolutionScale.h`, `src/skin/SkinAnchors.h`).
+
+- 명시: `extensions.anchor`에 다음 중 하나를 쓴다.
+  - 문자열: `"left"`, `"center"`, `"right"`, `"stretch"`, `"top"`, `"bottom"` 또는 `"top-left"`, `"bottom-right"` 같은 `세로-가로` 조합
+  - 객체: `{ "x": "left|center|right|stretch", "y": "top|center|bottom|stretch" }`
+- 자동 추론: 명시하지 않으면 다음 순서로 정한다.
+  - 앞선(z가 낮은) 요소 안에 완전히 들어가는 요소는 그 컨테이너의 앵커를 상속한다. 패널과 내용이 함께 움직인다.
+  - 그 밖의 경우 가로는 다음 규칙을 따른다.
+    - 화면 전체 너비는 stretch
+    - 중심이 화면 중앙에서 너비의 1/12 이내면 center
+    - 나머지는 왼쪽 절반이면 left, 오른쪽 절반이면 right
+  - 세로는 전체 높이만 stretch이고 나머지는 center다.
+- stretch: 가로와 세로가 모두 stretch인 배경은 비율을 유지한 채 창을 덮고 넘치는 부분을 자른다. 한 축만 stretch이면 그 축으로만 늘린다. 텍스트는 늘리지 않고 정렬 방향의 가장자리에 붙는다.
+- 플레이 화면에서 `gearLayouts`가 있는 요소는 기어 위치(left/center/right)의 가장자리를 따른다.
+- 네이티브 기어 파츠(`nativeGearPart`, `followGear`)는 엔진이 실제로 그린 덱 폭을 FHD 덱 폭으로 나눈 배율로, 기어 기준점(기어 중심, 판정선 720)을 축으로 스케일한다.
+- 텍스트와 HUD 글리프는 창 배율(0.25 단위)로 래스터화해 고해상도에서도 선명하다.
+- 엔진의 레인 폭, 노트 높이, 키덱과 HUD 좌표, 폰트, RmlUi 곡 목록(`dp`)도 같은 배율을 쓴다.
+- 스크롤 속도(px/s)는 레인 길이를 따라 창 높이/1080으로 스케일한다. 5:4나 4:3처럼 배율이 너비로 제한되는 화면에서도 노트가 판정선까지 오는 시간이 FHD와 같다.
+- 게임 창은 Per-Monitor DPI v2로 실제 픽셀을 사용한다. 설정, 연습, 컨트롤러 같은 고정 크기 대화상자는 DPI 비인식으로 만들어 Windows가 확대한다. 전체 이미지 보간은 linear, 명시한 source와 sprite는 인접 프레임의 색 번짐 방지를 위해 nearest-neighbor다. 별도 필터 선택 옵션은 아직 없다.
 
 동일 준비 작업 안에서 같은 이미지 바이트는 한 번 디코딩한다. 동일 이미지/RGB Tint는 같은 비트맵을 공유한다. Tint alpha와 opacity는 draw 시 곱하며 추가 비트맵을 만들지 않는다. RGB Tint는 준비 시 픽셀에 적용하므로 다른 RGB Tint는 추가 GPU 비트맵을 사용한다. 디코딩 합계와 Tint 변형 GPU 픽셀 합계에 각각 기본 256 MiB 예산을 적용한다. 예산은 드라이버의 실제 메모리 할당량을 뜻하지 않는다.
 

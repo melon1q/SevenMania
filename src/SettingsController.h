@@ -27,6 +27,8 @@ public:
         if(id==1055||id==1056){value=std::clamp(value,-200,200);return true;}
         if(id==1057){value=std::clamp(value,-100,100);return true;}
         if(id==1058)return value>=0&&value<=2;
+        if(id==1290)return value>=0&&value<=5;          // HI-SPEED FIX: off, start, max, main, min, constant.
+        if(id==1291)return value==60||value==120;      // Select screen FPS.
         if(id==1097)return value==0||value==1;
         if(id==1098)return value>=800&&value<=1500;
         if(id==1099)return value>=0&&value<=2;
@@ -34,7 +36,7 @@ public:
         if(id==1050||id==1051)return value>=-1&&value<=1;
         if(id==1053)return value==0||value==1;
         if (id == 1049) return value >= 0 && value <= 4;
-        if (id == 1012) return value==vsyncFps||(value>=0&&value<=1500);
+        if (id == 1012) return validFpsSetting(value);
         if (id == 1013) { value = std::clamp(value, 2, 40); return true; }
         if (id == 1018) { value = std::clamp(value, -4096, 4096); return true; }
         if (id == 1045 || id == 1046) { value = std::clamp(value, -256, 256); return true; }
@@ -42,11 +44,11 @@ public:
         if (id == 1020 || id == 1021 || id == 1022 || (id >= 1030 && id <= 1033) || id == 1037 || id == 1038 || id == 1040) {
             value = std::clamp(value, 0, 100); if (id == 1021) value = (value + 5) / 10 * 10; return true;
         }
-        if (id == 1025 || id == 1273 || id == 1270 || id == 1271 || id == 1272 || id == 1039 || id == 1044 || id == 1047 || (id >= 1200 && id <= 1206))
+        if (id == 1025 || (id >= 1270 && id <= 1274) || id == 1039 || id == 1044 || id == 1047 || (id >= 1200 && id <= 1206))
             return value == 0 || value == 1;
         if (id == 1023 || id == 1024 || id == 1029) return value >= 0 && value <= 2;
         if (id == 1026 || id == 1035) return value >= 0 && value <= 3;
-        if (id == 1027) return value >= 4 && value <= 32 && value % 2 == 0;
+        if (id == 1027) return value == 36;   // the note height is fixed to the sheet cell height
         if (id == 1034) return value == 32 || value == 64 || value == 128 || value == 256 || value == 512 || value == 1024;
         if (id >= 1100 && id <= 1107) return value >= 0 && value < 10;
         if (id == 1048) return value >= 0; // Backend checks the current resolution enumeration.
@@ -73,7 +75,7 @@ public:
     void clearPending() { pending_.clear(); }
     std::map<int, int> snapshot() const {
         std::map<int, int> values;
-        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1054,1055,1056,1057,1058,1096,1097,1098,1099,1270,1271,1272,1273}) values[id] = read_(id);
+        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1054,1055,1056,1057,1058,1096,1097,1098,1099,1290,1291,1270,1271,1272,1273,1274}) values[id] = read_(id);
         for (const auto& range : {std::pair{1030,1033}, std::pair{1100,1107}, std::pair{1200,1206}})
             for (int id = range.first; id <= range.second; ++id) values[id] = read_(id);
         return values;

@@ -1,4 +1,4 @@
-﻿"""Render the measured study summary; run after all profiling processes stop."""
+"""Render the measured study summary; run after all profiling processes stop."""
 import argparse, csv, json, os, pathlib, statistics
 
 p=argparse.ArgumentParser();p.add_argument('summary');p.add_argument('traces');p.add_argument('output');args=p.parse_args()

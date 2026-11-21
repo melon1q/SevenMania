@@ -1,4 +1,4 @@
-﻿"""Real player/message/audio/paint comparison. Writes only isolated diagnostic outputs."""
+"""Real player/message/audio/paint comparison. Writes only isolated diagnostic outputs."""
 import argparse,configparser,hashlib,json,os,subprocess,zipfile
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]

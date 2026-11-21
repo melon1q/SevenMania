@@ -190,7 +190,7 @@ bool AudioEngine::prepare(const bms::Chart& chart, std::wstring& error, const st
     nextBgm_ = 0;
     triggeredSlices_.clear();
     size_t decodedBytes = 0;
-    constexpr size_t totalLimit = 512ull * 1024ull * 1024ull;
+    constexpr size_t totalLimit = kChartDecodeLimitBytes;
     BMS_TRACE_ZONE("Audio prepare");
     std::unordered_map<std::wstring, std::shared_ptr<AudioData>> decodedFiles;
     for (const auto& [id, path] : chart.samples) {
@@ -212,7 +212,7 @@ bool AudioEngine::prepare(const bms::Chart& chart, std::wstring& error, const st
         }
         const size_t nextBytes = audio->pcm.size() * sizeof(int16_t);
         if (nextBytes > totalLimit - decodedBytes) {
-            error = L"채보의 디코딩 음원이 전체 메모리 한도(512MB)를 넘었습니다.";
+            error = L"채보의 디코딩 음원이 전체 메모리 한도(" + std::to_wstring(totalLimit / (1024ull * 1024ull)) + L"MB)를 넘었습니다.";
             return false;
         }
         decodedBytes += nextBytes;

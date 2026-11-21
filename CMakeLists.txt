@@ -10,7 +10,7 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-add_compile_options(/utf-8 /W4 /permissive- /EHsc /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX)
+add_compile_options(/utf-8 /W4 /permissive- /bigobj /EHsc /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX)
 
 # Song imports retain nested source directories and add temporary copy names.
 # Opt all executables (including integration tests) into Windows long paths.
@@ -138,6 +138,10 @@ target_include_directories(BmsFrameTests PRIVATE src)
 target_link_libraries(BmsFrameTests PRIVATE winmm)
 add_test(NAME BmsFrameTests COMMAND BmsFrameTests)
 
+add_executable(BmsSystemSoundTests tests/SystemSoundTests.cpp)
+target_include_directories(BmsSystemSoundTests PRIVATE src)
+add_test(NAME BmsSystemSoundTests COMMAND BmsSystemSoundTests)
+
 add_executable(BmsLatestEffectTests tests/LatestEffectTests.cpp)
 target_include_directories(BmsLatestEffectTests PRIVATE src)
 add_test(NAME BmsLatestEffectTests COMMAND BmsLatestEffectTests)
@@ -149,6 +153,14 @@ add_test(NAME BmsLongNoteTests COMMAND BmsLongNoteTests)
 add_executable(BmsJudgementTests tests/JudgementTests.cpp)
 target_include_directories(BmsJudgementTests PRIVATE src)
 add_test(NAME BmsJudgementTests COMMAND BmsJudgementTests)
+
+add_executable(BmsPlayOutcomeTests tests/PlayOutcomeTests.cpp)
+target_include_directories(BmsPlayOutcomeTests PRIVATE src)
+add_test(NAME BmsPlayOutcomeTests COMMAND BmsPlayOutcomeTests)
+
+add_executable(BmsAutoPlayTests tests/AutoPlayTests.cpp)
+target_include_directories(BmsAutoPlayTests PRIVATE src)
+add_test(NAME BmsAutoPlayTests COMMAND BmsAutoPlayTests)
 
 add_executable(BmsTimingCalibrationTests tests/TimingCalibrationTests.cpp)
 target_include_directories(BmsTimingCalibrationTests PRIVATE src)
@@ -286,6 +298,9 @@ bms_attach_song_list_ui(SevenManiaSkinApplicationTests)
 add_test(NAME SevenManiaSkinApplicationTests COMMAND SevenManiaSkinApplicationTests
     "${CMAKE_SOURCE_DIR}/tests/fixtures/skins" "${CMAKE_BINARY_DIR}/Validation/SkinApplication")
 set_tests_properties(SevenManiaSkinApplicationTests PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+add_test(NAME SevenManiaNoteImageTests COMMAND SevenManiaSkinApplicationTests
+    "${CMAKE_SOURCE_DIR}/tests/fixtures/skins" "${CMAKE_BINARY_DIR}/Validation/NoteImages" --note-images)
+set_tests_properties(SevenManiaNoteImageTests PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 if(BMS_ENABLE_RMLUI AND BMS_ENABLE_RMLUI_SONG_LIST)
     add_executable(BmsRmlSongListTests tests/RmlSongListTests.cpp)
@@ -321,6 +336,13 @@ if(BMS_ENABLE_RMLUI AND BMS_ENABLE_RMLUI_SETTINGS)
     bms_attach_song_list_ui(BmsSettingsPhase6Tests)
     add_test(NAME BmsSettingsPhase6Tests COMMAND BmsSettingsPhase6Tests "${CMAKE_SOURCE_DIR}/tests/fixtures/SettingsPhase0.ini" "${CMAKE_BINARY_DIR}/Validation/SettingsPhase6")
     set_tests_properties(BmsSettingsPhase6Tests PROPERTIES TIMEOUT 90 RUN_SERIAL TRUE)
+    add_executable(SevenManiaLr2SkinSettingsTests tests/Lr2SkinSettingsTests.cpp src/AudioEngine.cpp src/SystemResources.cpp src/app.rc)
+    target_compile_definitions(SevenManiaLr2SkinSettingsTests PRIVATE BMS_ENABLE_SKIN_BINDINGS)
+    target_link_libraries(SevenManiaLr2SkinSettingsTests PRIVATE sevenmania_skin_render bms_core bms_song_selection
+        comctl32 comdlg32 shell32 shlwapi winmm mfplat mfreadwrite mfuuid ole32 gdiplus psapi pdh d3d11 d2d1 windowscodecs)
+    bms_attach_song_list_ui(SevenManiaLr2SkinSettingsTests)
+    add_test(NAME SevenManiaLr2SkinSettingsTests COMMAND SevenManiaLr2SkinSettingsTests "${CMAKE_SOURCE_DIR}/tests/fixtures/SettingsPhase0.ini" "${CMAKE_BINARY_DIR}/Validation/Lr2SkinSettings")
+    set_tests_properties(SevenManiaLr2SkinSettingsTests PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
     add_executable(BmsRmlSettingsHostTests tests/RmlSettingsHostTests.cpp)
     target_link_libraries(BmsRmlSettingsHostTests PRIVATE gdiplus)
     bms_attach_song_list_ui(BmsRmlSettingsHostTests)
@@ -399,7 +421,7 @@ set_tests_properties(SevenManiaSkinHudImageTests PROPERTIES TIMEOUT 120 RUN_SERI
 
 add_executable(SevenManiaDefaultHudImageTests tests/DefaultHudImageTests.cpp src/app.rc)
 target_link_libraries(SevenManiaDefaultHudImageTests PRIVATE sevenmania_skin_render d3d11 d2d1 windowscodecs ole32 comdlg32)
-add_test(NAME SevenManiaDefaultHudImageTests COMMAND SevenManiaDefaultHudImageTests "${CMAKE_SOURCE_DIR}/Assets/Skins/DefaultSkin/DefaultReference.semaskin" "${CMAKE_BINARY_DIR}/Validation/DefaultHudImages")
+add_test(NAME SevenManiaDefaultHudImageTests COMMAND SevenManiaDefaultHudImageTests "${CMAKE_SOURCE_DIR}/Assets/Skins/DefaultReference.semaskin" "${CMAKE_BINARY_DIR}/Validation/DefaultHudImages")
 set_tests_properties(SevenManiaDefaultHudImageTests PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 # Isolated diagnostic build: probes never run in the default player.
@@ -479,3 +501,20 @@ if(WIN32)
         endforeach()
     endforeach()
 endif()
+
+add_executable(SevenManiaGaugeCompatibilityTests tests/GaugeCompatibilityTests.cpp)
+target_include_directories(SevenManiaGaugeCompatibilityTests PRIVATE src)
+add_test(NAME SevenManiaGaugeCompatibilityTests COMMAND SevenManiaGaugeCompatibilityTests)
+
+add_executable(SevenManiaIndependentGaugeTests tests/IndependentGaugeTests.cpp)
+target_include_directories(SevenManiaIndependentGaugeTests PRIVATE src)
+add_test(NAME SevenManiaIndependentGaugeTests COMMAND SevenManiaIndependentGaugeTests)
+add_executable(SevenManiaIndependentGaugeShiftTests tests/IndependentGaugeShiftTests.cpp)
+target_include_directories(SevenManiaIndependentGaugeShiftTests PRIVATE src)
+add_test(NAME SevenManiaIndependentGaugeShiftTests COMMAND SevenManiaIndependentGaugeShiftTests)
+add_executable(SevenManiaIndependentGaugeOracleTests tests/IndependentGaugeOracleTests.cpp)
+target_include_directories(SevenManiaIndependentGaugeOracleTests PRIVATE src)
+add_test(NAME SevenManiaIndependentGaugeOracleTests COMMAND SevenManiaIndependentGaugeOracleTests
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/beatoraja-gauge-4307353.csv)
+add_test(NAME SevenManiaLR2orajaGaugeOracleTests COMMAND SevenManiaIndependentGaugeOracleTests
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/lr2oraja-gauge-c1c8e4e.csv)

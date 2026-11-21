@@ -64,7 +64,7 @@ template<class Check> void asyncPlaybackIntegration(const std::filesystem::path&
     };
     for(const auto& path:cases){run(path,false,0);if(extended)run(path,true,0);}
     if(extended){gPreviewStartMode=1;run(normal,false,0);gPreviewStartMode=2;run(normal,false,0);gPreviewStartMode=0;for(int repeat=0;repeat<2;++repeat){run(cases[3],true,0);run(cases[3],false,0);}
-        const auto invalid=write(L"async-invalid.bms","#PLAYER 2\n#BPM 120\n#00121:01\n");run(invalid,false,-1);run(cases[3],false,1);run(normal,false,0);run(cases[3],false,2);run(normal,false,0);run(normal,false,0);
+        const auto invalid=write(L"async-invalid.bms","#PLAYER 1\n#BPM 120\n#LNTYPE 9\n#00111:01\n");run(invalid,false,-1);run(cases[3],false,1);run(normal,false,0);run(cases[3],false,2);run(normal,false,0);run(normal,false,0);
         // Same ownership order as WM_DESTROY: cancel, join, then free media.
         gLoadResult.index=0;gCharts[0].path=cases[3];gLoadCancelled=false;gLoading=true;gPlaybackLoad.begin();gPlaybackLoadStarted=PlaybackLoadJob::Clock::now();beginPlaybackLoadWorker(cases[3],1280,720,gPractice);gLoadCancelled=true;if(gLoadWorker.joinable())gLoadWorker.join();check(gPlaybackJob.complete(),"shutdown worker not retired");}
     gLoadCancelled=false;gLoading=false;gPlaying=false;gPlaybackLoad.reset();gPlaybackJob.active=false;gPlaybackJob.releaseChart();gAudio.releaseSong();gBgaRaster.reset();gBgaVideos.reset();gVideoBga.reset();gCharts.clear();gActiveChartIndex=-1;gCompositionPresenter.reset();

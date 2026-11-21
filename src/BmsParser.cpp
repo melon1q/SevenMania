@@ -587,8 +587,11 @@ ParseResult BmsParser::parse(const std::filesystem::path& path) const {
         if(speed<0) chart.nonMonotonicScroll=true;
         if(chart.scroll.back().timeSeconds==time) chart.scroll.back()=event; else chart.scroll.push_back(event);
     };
+    std::size_t nextMeasure=0;
     for (const auto& o : timeline) {
         if(o.channel<0) continue;
+        while(nextMeasure<=static_cast<std::size_t>(maxMeasure)&&measureStart[nextMeasure]<=o.beat)
+            chart.measureTimes.push_back(seconds+(measureStart[nextMeasure++]-previousBeat)*60.0/bpm);
         seconds += (o.beat - previousBeat) * 60.0 / bpm;
         previousBeat = o.beat;
         if (o.channel == 3) {
@@ -649,6 +652,8 @@ ParseResult BmsParser::parse(const std::filesystem::path& path) const {
             }
         }
     }
+    while(nextMeasure<=static_cast<std::size_t>(maxMeasure))
+        chart.measureTimes.push_back(seconds+(measureStart[nextMeasure++]-previousBeat)*60.0/bpm);
     chart.durationSeconds = seconds;
 
     if (hasLnObj) {

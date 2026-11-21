@@ -17,9 +17,13 @@ int wmain(int argc,wchar_t** argv) {
         {auto synchronized=*loaded.package;synchronizeSelectionSlots(synchronized);
         const auto& select=synchronized.screens.at(ScreenKind::Select).elements;
         const auto find=[&](const char* id)->const SkinElement&{return *std::find_if(select.begin(),select.end(),[&](const auto& e){return e.id==id;});};
-        require(find("slot-0").x<find("slot-2").x&&find("slot-2").x<find("slot-1").x,"Selection speed/gauge/judgement order differs from play");
-        require(find("slot-0").resource=="hi-speed-slot"&&find("slot-2").resource=="gauge-mode-slot","Selection images do not match gameplay");
-        require(find("slot-value-2").x==find("slot-2").x&&find("slot-value-1").x==find("slot-1").x,"Selection text detached from icon");
+        const auto has=[&](const char* id){return std::any_of(select.begin(),select.end(),[&](const auto& e){return e.id==id;});};
+        // The shipped selection area may omit the judgement slot; order what exists.
+        require(find("slot-0").x<find("slot-2").x&&(!has("slot-1")||find("slot-2").x<find("slot-1").x),"Selection speed/gauge/judgement order differs from play");
+        {const auto& playElements=synchronized.screens.at(ScreenKind::Play).elements;
+        const auto gear=[&](const char* id){return std::find_if(playElements.begin(),playElements.end(),[&](const auto& e){return e.id==id;})->resource;};
+        require(find("slot-0").resource==gear("gear-icon-0")&&find("slot-2").resource==gear("gear-icon-1"),"Selection images do not match gameplay");}
+        require(find("slot-value-2").x==find("slot-2").x&&(!has("slot-1")||find("slot-value-1").x==find("slot-1").x),"Selection text detached from icon");
         auto& editable=synchronized.screens.at(ScreenKind::Select).elements;
         auto style=std::find_if(editable.begin(),editable.end(),[](const auto& e){return e.id=="slot-value-0";});
         style->textStyle.fontSize=37;style->textStyle.font="Michroma";style->textStyle.align=TextAlign::Right;style->tint={12,34,56,255};style->opacity=.6;
@@ -59,7 +63,9 @@ int wmain(int argc,wchar_t** argv) {
         require(rejected&&document.elements()[index][L"resource"].str()==after[L"resource"].str(),"Failed replacement changed document");
         document.screen="select";
         for(const auto* slot:{L"slot-0",L"slot-1",L"slot-2"}){
-            const auto at=std::find_if(document.elements().begin(),document.elements().end(),[&](const auto& e){return e[L"id"].str()==slot;});require(at!=document.elements().end(),"Selection slot missing");
+            const auto at=std::find_if(document.elements().begin(),document.elements().end(),[&](const auto& e){return e[L"id"].str()==slot;});
+            if(at==document.elements().end()&&std::wstring(slot)==L"slot-1")continue; // optional judgement slot
+            require(at!=document.elements().end(),"Selection slot missing");
             const auto slotIndex=size_t(at-document.elements().begin());const auto geometry=*at;
             document.replaceImage(slotIndex,replacement);
             const auto& updated=document.elements()[slotIndex];

@@ -1,4 +1,4 @@
-﻿"""Aggregate bounded in-memory captures after playback. CPU timings are not GPU execution."""
+"""Aggregate bounded in-memory captures after playback. CPU timings are not GPU execution."""
 import csv,json,statistics,argparse
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('directory');a=p.parse_args();directory=Path(a.directory)

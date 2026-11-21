@@ -28,6 +28,10 @@ int main() {
         const auto snapshot = controller.snapshot(); require(snapshot.at(1012) == 144 && snapshot.at(1013) == 11, "snapshot differs from actual state");
         for(int condition=0;condition<4;++condition)require(controller.set(1052,condition).applied&&controller.snapshot().at(1052)==condition,"timing hint condition failed");
         require(!controller.set(1052,-1).applied&&!controller.set(1052,4).applied,"invalid timing hint condition accepted");
+        for(int fix=0;fix<=5;++fix)require(controller.set(1290,fix).applied&&controller.snapshot().at(1290)==fix,"HI-SPEED FIX mode failed");
+        require(!controller.set(1290,-1).applied&&!controller.set(1290,6).applied,"invalid HI-SPEED FIX accepted");
+        require(controller.set(1291,60).applied&&controller.set(1291,120).applied&&controller.snapshot().at(1291)==120,"select FPS failed");
+        require(!controller.set(1291,144).applied&&!controller.set(1291,0).applied,"select FPS other than 60/120 accepted");
         std::cout << "Settings controller: units, validation, summary mapping, failures, persistence and deferred commands passed.\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

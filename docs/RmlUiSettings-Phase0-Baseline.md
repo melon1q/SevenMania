@@ -33,7 +33,7 @@
 | --- | --- | --- | --- |
 | BGA 밝기 `1021` | Display/Brightness, BGADarkness | 밝기 0–100, UI 10단위. 구형 Darkness 기본 50에서 밝기 역산; 10단위 반올림 | `gBgaBackplateDirty`; 요약 `1261` |
 | 노트 배속 `1013` | Display/SpeedSteps | 기본 4=1.00x; 정수 1단위=0.25x; 읽기/표시 0.50–10.00x | 요약 `1262`, 곡 선택 속도 조작과 같은 값 |
-| 노트 높이 `1027` | Gameplay/NoteHeight | 기본 12; 4–32의 짝수로 보정 | 노트 렌더링에 사용 |
+| 노트 높이 `1027` | 저장하지 않음 | 36px 고정(런처의 선택 항목 제거). 레인 폭은 `LaneLayout` 기본값(스크래치 108 / 흰 건반 60 / 파란 건반 48) | 노트 렌더링에 사용 |
 | 판정 `1026` | Gameplay/JudgementProfile | 기본 2=NORMAL; BASIC/EASY/NORMAL/HARD=0–3 | 요약 `1263` |
 | 게이지 `1029` | Gameplay/GrooveGaugeMode | 기본 0=NORMAL; NORMAL/EASY/HARD=0–2 | 요약 `1265` |
 | 판정/콤보 텍스트 Y 위치 `1046` | Gameplay/JudgementTextYOffset | 기본 0; -256–256px | 현재 표시 라벨은 판정/콤보를 함께 언급하지만 변경 값은 JudgementTextYOffset |

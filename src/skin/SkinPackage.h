@@ -13,7 +13,7 @@
 namespace sevenmania::skin {
 enum class ScreenKind { Select, Play, Result, SongInformation, SongIntro, SettingsSummary };
 enum class ElementKind { Image, Text, Number, Sprite, Box };
-enum class ResourceKind { Png, Jpeg, Font, AnimationData };
+enum class ResourceKind { Png, Jpeg, Font, AnimationData, Bmp, Dds };
 enum class ErrorCode {
     Io, InvalidZip, UnsafePath, LimitExceeded, InvalidJson, InvalidManifest,
     UnsupportedVersion, MissingFile, UnsupportedResource, InvalidImage,
@@ -89,6 +89,7 @@ struct SkinPackage {
     SkinManifest manifest;
     std::map<std::string, SkinResource> resources;
     std::map<ScreenKind, SkinScreen> screens;
+    std::shared_ptr<const Bytes> hitSplash;
 };
 struct Limits {
     std::uint64_t archiveBytes = 64ull << 20, totalBytes = 128ull << 20;

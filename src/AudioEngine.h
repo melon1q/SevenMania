@@ -20,6 +20,11 @@
 
 class AudioEngine {
 public:
+    // Per-chart budget for pre-decoded keysound PCM. Keysound-heavy charts (e.g. ~750 one-second
+    // OGG slices) legitimately exceed 512MB once decoded to 16-bit stereo, so x64 builds allow 2GB.
+    static constexpr size_t kChartDecodeLimitBytes =
+        (sizeof(void*) >= 8 ? 2048ull : 512ull) * 1024ull * 1024ull;
+
     AudioEngine() = default;
     ~AudioEngine();
     AudioEngine(const AudioEngine&) = delete;
@@ -28,6 +33,9 @@ public:
     bool prepare(const bms::Chart& chart, std::wstring& error, const std::atomic_bool* cancelled = nullptr,
         bool tolerateDecodeFailures = false, size_t* decodeFailureCount = nullptr);
     bool loadEffect(const std::wstring& effectId, const std::filesystem::path& path, std::wstring& error);
+    // Call only while output is stopped: the render thread reads the effect bank without a lock.
+    void unloadEffect(const std::wstring& effectId) { if (!running_) effects_.erase(effectId); }
+    bool hasEffect(const std::wstring& effectId) const { return effects_.count(effectId) != 0; }
     void loadDiagnosticBeep();
     bool start(std::wstring& error);
     bool startAt(double seconds, std::wstring& error, double playbackRate = 1.0);

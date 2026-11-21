@@ -9,6 +9,11 @@ void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
 struct FramePacerTestAccess {
+    static void verifyUncapped(){
+        FramePacer p;p.reset(uncappedFps);p.alignToVblank(std::chrono::steady_clock::now(),std::chrono::nanoseconds(4'166'667),std::chrono::microseconds(500));
+        for(int i=0;i<1000;++i){require(p.due(),"uncapped pacer was not immediately due");p.advance();require(!p.vblankAligned(),"uncapped pacer aligned to vblank");}
+        require(!p.pollBeforeDeadline(),"uncapped pacer polled");
+    }
     static void verifyExpensiveCappedFrame(int fps){
         FramePacer p;p.reset(fps);p.frameStarted_=std::chrono::steady_clock::now()-std::chrono::milliseconds(3);p.deadline_=p.frameStarted_;p.advance();require(p.due(),"Over-budget capped frame skipped another grid slot");
         p.advance();require(!p.due(),"Capped frame bypassed minimum start interval");
@@ -54,6 +59,7 @@ int main() {
     try {
         FramePacerTestAccess::verifyExpensiveUnlimitedFrame();
         FramePacerTestAccess::verifyVblankAlignment();
+        FramePacerTestAccess::verifyUncapped();
         for(int fps:{600,1000})FramePacerTestAccess::verifyExpensiveCappedFrame(fps);
         AudioPositionClock clock;
         require(clock.update(0.0, 10.0) == 0.0, "clock started before audio output");

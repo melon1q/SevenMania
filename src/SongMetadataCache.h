@@ -32,7 +32,7 @@ class SongMetadataCache {
         return directory_/(std::to_wstring(h)+L".meta");
     }
     void transfer(std::iostream& f,Chart& c,bool w,bool validate=true){
-        uint64_t magic=0x534D434143480003ull,seed=seed_,size=(w||validate)?std::filesystem::file_size(c.path):0;
+        uint64_t magic=0x534D434143480004ull,seed=seed_,size=(w||validate)?std::filesystem::file_size(c.path):0;
         int64_t time=(w||validate)?std::filesystem::last_write_time(c.path).time_since_epoch().count():0;
         int64_t parent=(w||validate)?std::filesystem::last_write_time(c.path.parent_path()).time_since_epoch().count():0;
         const auto expectedMagic=magic,expectedSeed=seed_,expectedSize=size;

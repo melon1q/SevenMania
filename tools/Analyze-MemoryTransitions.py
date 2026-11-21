@@ -1,4 +1,4 @@
-﻿"""Summarize the real-player transition probe. All sizes are bytes in raw CSV."""
+"""Summarize the real-player transition probe. All sizes are bytes in raw CSV."""
 import argparse,csv,json,statistics
 from pathlib import Path
 METRICS=('private_bytes','working_set_bytes','peak_working_set_bytes','handles','gdi','user','threads','audio_bytes','video_readers')

@@ -7,6 +7,7 @@
 #include "HudTextStyle.h"
 #include "FontPolicy.h"
 #include "SkinHudImages.h"
+#include "SkinAnchors.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -25,9 +26,11 @@ void check(HRESULT hr,const std::string& path,const char* message) {
 D2D1_RECT_F rect(const SkinRect& r) noexcept {
     return D2D1::RectF(float(r.x),float(r.y),float(r.x+r.width),float(r.y+r.height));
 }
-Bytes decode(IWICImagingFactory* factory,const SkinResource& r) {
+}
+Bytes detail::decodeImage(IWICImagingFactory* factory,const SkinResource& r,bool* hasAlpha) {
     if(std::uint64_t(r.width)*r.height*4>std::numeric_limits<UINT>::max())
         detail::fail(ErrorCode::LimitExceeded,r.path,"Pixel buffer exceeds WIC addressable size");
+    if(hasAlpha)*hasAlpha=false;
     if(r.kind==ResourceKind::Png) {
         // WIC can tolerate damaged PNG chunks; reject their CRC/bounds first.
         const auto& b=*r.bytes;
@@ -39,18 +42,40 @@ Bytes decode(IWICImagingFactory* factory,const SkinResource& r) {
             if(count>b.size()-at-12)detail::fail(ErrorCode::InvalidImage,r.path,"PNG chunk exceeds resource");
             if(crc32(0,b.data()+at+4,count+4)!=u32(at+8+count))detail::fail(ErrorCode::InvalidImage,r.path,"PNG chunk CRC mismatch");
             const auto type=u32(at+4);at+=std::size_t(count)+12;
+            if(hasAlpha&&type==0x74524e53)*hasAlpha=true; // PNG tRNS
             if(type==0x49444154)data=true;
             if(type==0x49454e44) {end=count==0&&at==b.size();break;}
         }
         if(!end||!data)detail::fail(ErrorCode::InvalidImage,r.path,"Missing PNG image data/end");
+        if(hasAlpha)*hasAlpha=*hasAlpha||b[25]==4||b[25]==6;
     }
     ComPtr<IWICStream> stream;ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;ComPtr<IWICFormatConverter> converter;
     check(factory->CreateStream(&stream),r.path,"Cannot create image stream");
     check(stream->InitializeFromMemory(const_cast<BYTE*>(r.bytes->data()),static_cast<DWORD>(r.bytes->size())),r.path,"Cannot open image bytes");
-    check(factory->CreateDecoder(r.kind==ResourceKind::Png?GUID_ContainerFormatPng:GUID_ContainerFormatJpeg,nullptr,&decoder),r.path,"Cannot create image decoder");
+    const auto& format=r.kind==ResourceKind::Dds?GUID_ContainerFormatDds:r.kind==ResourceKind::Bmp?GUID_ContainerFormatBmp:
+        r.kind==ResourceKind::Png?GUID_ContainerFormatPng:GUID_ContainerFormatJpeg;
+    check(factory->CreateDecoder(format,nullptr,&decoder),r.path,"Cannot create image decoder");
     check(decoder->Initialize(stream.Get(),WICDecodeMetadataCacheOnDemand),r.path,"Cannot decode image");
     check(decoder->GetFrame(0,&frame),r.path,"Cannot read image frame");
+    if(hasAlpha&&r.kind==ResourceKind::Bmp) {
+        WICPixelFormatGUID pixelFormat{};
+        ComPtr<IWICComponentInfo> component;
+        ComPtr<IWICPixelFormatInfo2> info;
+        BOOL alpha{};
+        check(frame->GetPixelFormat(&pixelFormat),r.path,"Cannot read BMP pixel format");
+        check(factory->CreateComponentInfo(pixelFormat,&component),r.path,"Cannot inspect BMP pixel format");
+        check(component.As(&info),r.path,"Cannot inspect BMP transparency");
+        check(info->SupportsTransparency(&alpha),r.path,"Cannot read BMP alpha support");
+        if(pixelFormat==GUID_WICPixelFormat1bppIndexed||pixelFormat==GUID_WICPixelFormat2bppIndexed||
+           pixelFormat==GUID_WICPixelFormat4bppIndexed||pixelFormat==GUID_WICPixelFormat8bppIndexed) {
+            ComPtr<IWICPalette> palette;
+            check(factory->CreatePalette(&palette),r.path,"Cannot create BMP palette");
+            check(frame->CopyPalette(palette.Get()),r.path,"Cannot read BMP palette");
+            check(palette->HasAlpha(&alpha),r.path,"Cannot read BMP palette transparency");
+        }
+        *hasAlpha=alpha!=FALSE;
+    }
     UINT w{},h{};check(frame->GetSize(&w,&h),r.path,"Cannot read image dimensions");
     if(w!=r.width||h!=r.height)detail::fail(ErrorCode::InvalidImage,r.path,"Image dimensions changed");
     check(factory->CreateFormatConverter(&converter),r.path,"Cannot create pixel converter");
@@ -59,6 +84,11 @@ Bytes decode(IWICImagingFactory* factory,const SkinResource& r) {
     check(converter->CopyPixels(nullptr,w*4,static_cast<UINT>(pixels.size()),pixels.data()),r.path,"Invalid image pixel data");
     return pixels;
 }
+void detail::verifyRenderableImage(const SkinResource& resource) {
+    ComPtr<IWICImagingFactory> factory;
+    check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),
+        resource.path,"Cannot create WIC factory");
+    (void)decodeImage(factory.Get(),resource);
 }
 struct SkinRenderer::Impl {
     EmbeddedHudFont bundledFonts;
@@ -71,9 +101,12 @@ struct SkinRenderer::Impl {
         CompiledBinding binding;std::string display;std::wstring wide;std::shared_ptr<Font> font;
         std::vector<AnimationTrack> animations;bool text{},initialized{};
         COLORREF displayColor{};int rainbowPhase=-1;double overflow{};std::chrono::steady_clock::time_point marqueeStart{};std::uint64_t bitmapBytes{};
+        bms::ui::Anchors anchors;bool gearLayouts{};
     };
     ComPtr<ID2D1RenderTarget> target;
     Resolution resolution;
+    // Text and HUD glyphs are rasterized at this multiple of their design size (window scale, quarter steps).
+    double rasterDensity=1;
     SkinGearState gear;
     std::array<bool,3> legacySlotsCovered{};
     std::array<std::array<double,4>,3> legacyPanelBounds{};
@@ -129,6 +162,7 @@ struct SkinRenderer::Impl {
             HUD_SCOPE_IF(GaugeUpdate,layer.element.binding=="play.gauge");
             const auto& e=layer.element;
             SkinBindingResolver::resolve(e,layer.binding,snapshot,scratch);
+            if(e.binding=="play.keyGuide")scratch=e.text;   // key guides keep their own text (the lane's key name below)
             if(gear.active&&e.id=="gear-speed-reference"){char value[64];std::snprintf(value,sizeof(value),"%.2fx",gear.speed);scratch=value;}
             else if(gear.active&&gear.keyLabels&&e.id.starts_with("gear-key-guide-")){const int lane=gearGuideLane(e.id,gear.mode);if(lane>=0&&lane<16)scratch=(*gear.keyLabels)[static_cast<size_t>(lane)];}
             const bool rainbow=e.binding=="play.judgementCombo"&&judgementRainbow&&!scratch.empty();
@@ -174,11 +208,14 @@ struct SkinRenderer::Impl {
                         layer.bitmap=std::move(next);
                     }
                     stats.bitmapBytes=stats.bitmapBytes-layer.bitmapBytes+bytes;layer.bitmapBytes=bytes;++stats.textUploads;HUD_COUNT(TextUploads);if(e.binding=="play.judgementCombo")HUD_COUNT(HudTextUploads);
-                    layer.overflow=screen==ScreenKind::Select&&e.binding=="song.title"&&e.textStyle.clip?std::max(0.0,double(w-16)-e.width):0;
+                    // The raster is `raster` times the design size; place it in design units. The 8px raster
+                    // padding keeps its design-unit position so glyphs land where they did at 1:1.
+                    const double r=rasterDensity,dw=w/r,dh=h/r,pad=8-8/r;
+                    layer.overflow=screen==ScreenKind::Select&&e.binding=="song.title"&&e.textStyle.clip?std::max(0.0,(w-16)/r-e.width):0;
                     layer.marqueeStart=std::chrono::steady_clock::now();
-                    const double dx=layer.overflow>0?0:e.textStyle.align==TextAlign::Left?0:e.textStyle.align==TextAlign::Center?(e.width-(w-16))/2:e.width-(w-16);
-                    const double dy=e.textStyle.verticalAlign==TextVerticalAlign::Top?0:e.textStyle.verticalAlign==TextVerticalAlign::Center?(e.height-(h-16))/2:e.height-(h-16);
-                    layer.destination={e.x+dx,e.y+dy,double(w),double(h)};
+                    const double dx=layer.overflow>0?0:e.textStyle.align==TextAlign::Left?0:e.textStyle.align==TextAlign::Center?(e.width-(w-16)/r)/2:e.width-(w-16)/r;
+                    const double dy=e.textStyle.verticalAlign==TextVerticalAlign::Top?0:e.textStyle.verticalAlign==TextVerticalAlign::Center?(e.height-(h-16)/r)/2:e.height-(h-16)/r;
+                    layer.destination={e.x+dx+pad,e.y+dy+pad,dw,dh};
                     layer.source=D2D1::RectF(0,0,float(w),float(h));return true;
                 };
                 const auto color=e.binding=="play.judgementCombo"?(rainbow?RGB(0,0,1):RGB(0,0,0)):displayColor;
@@ -216,6 +253,11 @@ std::optional<SkinError> SkinRenderer::prepare(std::shared_ptr<const SkinPackage
         if(!package->screens.contains(screen))detail::fail(ErrorCode::NotFound,"renderer","Skin does not support this screen");
         auto next=std::make_unique<Impl>();next->target=target;
         const auto& layout=package->screens.at(screen);next->resolution=layout.resolution;next->screen=screen;next->scratch.reserve(16384);
+        {const auto size=target->GetSize();next->rasterDensity=bms::ui::rasterScale(bms::ui::viewport(size.width,size.height,layout.resolution.width,layout.resolution.height).scale);
+         // Keep the largest glyph inside the bounded 512px text raster.
+         unsigned largest=1;for(const auto& e:layout.elements)largest=std::max(largest,e.textStyle.fontSize);
+         next->rasterDensity=std::min(next->rasterDensity,std::max(0.5,std::floor(400.0/largest*4)/4));}
+        const auto anchors=computeAnchors(layout.elements,layout.resolution);
         const HRESULT initialized=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
         check(initialized==RPC_E_CHANGED_MODE?S_OK:initialized,"renderer","Cannot initialize image apartment");
         struct Apartment {bool own;~Apartment(){if(own)CoUninitialize();}} apartment{SUCCEEDED(initialized)};
@@ -230,9 +272,10 @@ std::optional<SkinError> SkinRenderer::prepare(std::shared_ptr<const SkinPackage
             auto found=std::find_if(decoded.begin(),decoded.end(),[&](const auto& d){return d.encoded==r.bytes||*d.encoded==*r.bytes;});
             if(found!=decoded.end())return found->pixels;
             const auto bytes=std::uint64_t(r.width)*r.height*4;if(bytes>limits_.totalDecodedImageBytes-decodedBytes)detail::fail(ErrorCode::LimitExceeded,r.path,"Decoded image budget exceeded");
-            auto pixels=decode(factory.Get(),r);decodedBytes+=bytes;decoded.push_back({r.bytes,std::move(pixels)});++next->stats.decodedImages;return decoded.back().pixels;
+            auto pixels=detail::decodeImage(factory.Get(),r);decodedBytes+=bytes;decoded.push_back({r.bytes,std::move(pixels)});++next->stats.decodedImages;return decoded.back().pixels;
         };
-        for(auto e:layout.elements) {
+        for(std::size_t elementIndex=0;elementIndex<layout.elements.size();++elementIndex) {
+            auto e=layout.elements[elementIndex];
             if(screen==ScreenKind::Play&&e.id=="play-bga-viewport")continue;
             if(screen==ScreenKind::Play&&e.binding!="play.judgementCombo"&&(e.kind==ElementKind::Text||e.kind==ElementKind::Number)){
                 const auto& center=e.extensions[L"gearLayouts"][L"center"];
@@ -245,7 +288,7 @@ std::optional<SkinError> SkinRenderer::prepare(std::shared_ptr<const SkinPackage
             if((!e.visible||e.opacity==0||e.tint.a==0)&&e.extensions[L"gearModes"].type!=bms::JsonValue::Type::Object) {++next->stats.skippedLayers;continue;}
             if(e.binding=="play.judgementCombo"&&e.hud.images()){
                 Impl::Layer layer;layer.element=e;layer.destination={e.x,e.y,e.width,e.height};layer.hud=std::make_unique<HudImageAtlas>();
-                layer.hud->prepare(*package,e,target,getPixels,limits_,next->stats,next->diagnostics);next->layers.push_back(std::move(layer));++next->stats.imageLayers;continue;
+                layer.hud->prepare(*package,e,target,getPixels,limits_,next->stats,next->diagnostics,next->rasterDensity);next->layers.push_back(std::move(layer));++next->stats.imageLayers;continue;
             }
             if(isText) {
                 if(!next->bundledFonts.load())detail::fail(ErrorCode::UnsupportedResource,"fonts","Cannot register bundled fonts");
@@ -261,12 +304,13 @@ std::optional<SkinError> SkinRenderer::prepare(std::shared_ptr<const SkinPackage
                         next->memoryFonts.push_back(std::move(font));
                     }
                 }
-                const auto key=std::tuple{e.textStyle.font,e.resource,e.textStyle.fontSize};
+                const unsigned physicalSize=std::max(1u,unsigned(std::lround(e.textStyle.fontSize*next->rasterDensity)));
+                const auto key=std::tuple{e.textStyle.font,e.resource,physicalSize};
                 if(!next->fonts.contains(key)) {
                     auto font=std::make_shared<Impl::Font>();
                     const bool oxaniumBold=e.textStyle.font=="Oxanium Bold";
                     const auto family=detail::wide(oxaniumBold?"Oxanium":e.textStyle.font,e.id);
-                    font->handle=CreateFontW(-static_cast<int>(e.textStyle.fontSize),0,0,0,oxaniumBold?FW_BOLD:FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+                    font->handle=CreateFontW(-static_cast<int>(physicalSize),0,0,0,oxaniumBold?FW_BOLD:FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
                         OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,ANTIALIASED_QUALITY,DEFAULT_PITCH|FF_DONTCARE,family.c_str());
                     if(!font->handle)detail::fail(ErrorCode::AllocationFailed,e.id,"Cannot create GDI font");
                     next->fonts.emplace(key,std::move(font));
@@ -331,6 +375,9 @@ std::optional<SkinError> SkinRenderer::prepare(std::shared_ptr<const SkinPackage
             next->layers.push_back(std::move(layer));++next->stats.imageLayers;
         }
         for(auto& layer:next->layers){
+            for(std::size_t i=0;i<layout.elements.size();++i)if(layout.elements[i].id==layer.element.id){layer.anchors=anchors[i];break;}
+            layer.gearLayouts=layer.element.extensions[L"gearLayouts"].type==bms::JsonValue::Type::Object;
+            if(layer.element.binding=="play.judgementCombo")layer.anchors={bms::ui::Anchor::Center,bms::ui::Anchor::Center};
             layer.animations=parseAnimations(layer.element.extensions);
             const auto& e=layer.element;
             if(e.cornerRadius>0&&layer.bitmap&&(e.kind==ElementKind::Image||e.kind==ElementKind::Box)){
@@ -366,11 +413,27 @@ bool SkinRenderer::draw(float width,float height,bool foregroundOnly,bool skipFo
     const auto size=impl_->target->GetSize();
     if(width>size.width||height>size.height)return false;
     auto* t=impl_->target.Get();D2D1_MATRIX_3X2_F old{};t->GetTransform(&old);
-    const float vw=float(impl_->resolution.width),vh=float(impl_->resolution.height);
-    const float scale=std::min(width/vw,height/vh),ox=(width-vw*scale)*0.5f,oy=(height-vh*scale)*0.5f;
-    const auto base=D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(ox,oy);
+    // Height-based scale; leftover window space is distributed by each layer's anchors (ResolutionScale.h).
+    const auto view=bms::ui::viewport(width,height,impl_->resolution.width,impl_->resolution.height);
+    const float scale=float(view.scale);
+    // Design -> window transform of one layer, plus the window clip a cover-stretched layer needs.
+    const auto layerBase=[&](const Impl::Layer& layer,bms::ui::Anchors anchors,std::optional<D2D1_RECT_F>& cover){
+        using bms::ui::Anchor;
+        if(anchors.x!=Anchor::Stretch&&anchors.y!=Anchor::Stretch)
+            return D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(float(bms::ui::anchorOffset(anchors.x,view.extraX)),float(bms::ui::anchorOffset(anchors.y,view.extraY)));
+        const auto& e=layer.element;const bms::ui::Rect design{e.x,e.y,std::max(1e-6,e.width),std::max(1e-6,e.height)};
+        const auto mapped=bms::ui::mapRect(view,design,anchors);
+        const double sx=mapped.width/design.width,sy=mapped.height/design.height;
+        if(anchors.x==Anchor::Stretch&&anchors.y==Anchor::Stretch){
+            // Full-screen art keeps its aspect: cover the stretched rectangle and clip the overflow.
+            const double u=std::max(sx,sy);cover=D2D1::RectF(float(mapped.x),float(mapped.y),float(mapped.x+mapped.width),float(mapped.y+mapped.height));
+            return D2D1::Matrix3x2F::Translation(float(-(design.x+design.width/2)),float(-(design.y+design.height/2)))*D2D1::Matrix3x2F::Scale(float(u),float(u))*
+                D2D1::Matrix3x2F::Translation(float(mapped.x+mapped.width/2),float(mapped.y+mapped.height/2));
+        }
+        return D2D1::Matrix3x2F::Translation(float(-design.x),float(-design.y))*D2D1::Matrix3x2F::Scale(float(sx),float(sy))*D2D1::Matrix3x2F::Translation(float(mapped.x),float(mapped.y));
+    };
     t->SetTransform(D2D1::Matrix3x2F::Identity());
-    t->PushAxisAlignedClip(D2D1::RectF(ox,oy,ox+vw*scale,oy+vh*scale),D2D1_ANTIALIAS_MODE_ALIASED);
+    t->PushAxisAlignedClip(D2D1::RectF(0,0,width,height),D2D1_ANTIALIAS_MODE_ALIASED);
     impl_->stats.hudDrawCalls=0;
     for(const auto& layer:impl_->layers) {
         const auto& e=layer.element;
@@ -387,35 +450,51 @@ bool SkinRenderer::draw(float width,float height,bool foregroundOnly,bool skipFo
         const bool hasModeGeometry=gearModeActive&&modeGeometry.type==bms::JsonValue::Type::Object;
         const bool shown=hasModeGeometry&&modeGeometry[L"visible"].type==bms::JsonValue::Type::Boolean?modeGeometry[L"visible"].boolean:(e.visible&&e.opacity>0&&e.tint.a>0);
         if(!shown)continue;
+        // Elements bound to play.keyGuide are only shown until the song starts.
+        if(impl_->screen==ScreenKind::Play&&e.binding=="play.keyGuide"&&!impl_->gear.keyGuide)continue;
         if(impl_->screen==ScreenKind::Play&&!impl_->gear.active&&impl_->gear.suppressNativeGear&&e.extensions[L"nativeGearPart"].boolean)continue;
-        t->SetTransform(base);
+        // Play elements that move with the gear follow the gear's screen edge; mirrored UI swaps edges.
+        auto anchors=layer.anchors;
+        if(impl_->screen==ScreenKind::Play&&impl_->gear.active){
+            if(layer.gearLayouts)anchors.x=impl_->gear.position==0?bms::ui::Anchor::Start:impl_->gear.position==2?bms::ui::Anchor::End:bms::ui::Anchor::Center;
+            else if(impl_->gear.mirrorUi)anchors.x=bms::ui::mirrored(anchors.x);
+        }
+        std::optional<D2D1_RECT_F> cover;
+        const auto base=layerBase(layer,anchors,cover);
         HUD_SCOPE_IF(HudLayer,foreground);
         if(impl_->screen==ScreenKind::Play&&!layer.hud&&!layer.fillMask&&(e.extensions[L"nativeGearPart"].boolean||e.extensions[L"followGear"].boolean)&&impl_->gear.active){
             const auto& gear=impl_->gear;
             auto d=layer.destination;const auto& layout=e.extensions[L"gearLayouts"][gear.position==0?L"left":gear.position==2?L"right":L"center"];
             if(layout.type==bms::JsonValue::Type::Object){d.x+=layout[L"x"].num(e.x)-e.x;d.y+=layout[L"y"].num(e.y)-e.y;}
             if(hasModeGeometry){d.x+=modeGeometry[L"x"].num(e.x)-e.x;d.y+=modeGeometry[L"y"].num(e.y)-e.y;if(e.width>0)d.width*=modeGeometry[L"width"].num(e.width)/e.width;if(e.height>0)d.height*=modeGeometry[L"height"].num(e.height)/e.height;}
-            if(!e.extensions[L"nativeGearPart"].boolean&&e.extensions[L"followGear"].boolean){const auto& center=e.extensions[L"gearLayouts"][L"center"];d.x=layer.destination.x+center[L"x"].num(e.x)-e.x;d.y=layer.destination.y+center[L"y"].num(e.y)-e.y;if(hasModeGeometry){d.x+=modeGeometry[L"x"].num(e.x)-e.x;d.y+=modeGeometry[L"y"].num(e.y)-e.y;}d.x+=gear.centerX-960;d.y+=gear.lineY-720;t->SetTransform(D2D1::Matrix3x2F::Identity());drawBitmap(d,float(e.opacity*e.tint.a/255.0),D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);continue;}
-            const double centers[]={342,960,1578};d.x+=gear.centerX-(layout.type==bms::JsonValue::Type::Object?centers[gear.position]:960);d.y+=gear.lineY-720;
+            // The gear is authored around a reference point (gear centre, judgement line 720) and scales with
+            // the engine deck about the engine's gear anchor.
+            const double gearScale=gear.scale>0&&std::isfinite(gear.scale)?gear.scale:1.0;
+            const auto gearTransform=[&](double referenceX){return D2D1::Matrix3x2F::Translation(float(-referenceX),-720.f)*D2D1::Matrix3x2F::Scale(float(gearScale),float(gearScale))*D2D1::Matrix3x2F::Translation(float(gear.centerX),float(gear.lineY));};
+            if(!e.extensions[L"nativeGearPart"].boolean&&e.extensions[L"followGear"].boolean){const auto& center=e.extensions[L"gearLayouts"][L"center"];d.x=layer.destination.x+center[L"x"].num(e.x)-e.x;d.y=layer.destination.y+center[L"y"].num(e.y)-e.y;if(hasModeGeometry){d.x+=modeGeometry[L"x"].num(e.x)-e.x;d.y+=modeGeometry[L"y"].num(e.y)-e.y;}t->SetTransform(gearTransform(960));drawBitmap(d,float(e.opacity*e.tint.a/255.0),D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);continue;}
+            const double centers[]={342,960,1578};const double referenceX=layout.type==bms::JsonValue::Type::Object?centers[gear.position]:960;
             float opacity=float(e.opacity*e.tint.a/255.0);
             if(e.id=="gear-gauge-fill-reference")d.width=(hasModeGeometry?modeGeometry[L"fullWidth"].num(556-8):556-8)*std::clamp(gear.gauge,0.0,100.0)/100;
             if(e.id.starts_with("gear-key-")&&!e.id.starts_with("gear-key-guide-")){const int lane=gearKeyLane(e.id,gear.mode);if(lane>=0&&lane<16&&gear.pressed[static_cast<size_t>(lane)])opacity*=.6f;}
             const auto local=(e.id=="gear-scratch-disc"||e.id=="gear-scratch-disc-p2")?D2D1::Matrix3x2F::Rotation(float(gear.rotation),D2D1::Point2F(float(d.x+d.width/2),float(d.y+d.height/2))):D2D1::Matrix3x2F::Identity();
-            t->SetTransform(local);drawBitmap(d,opacity,D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);continue;
+            // Nearest keeps 1:1 pixel art crisp; any other scale needs filtering.
+            t->SetTransform(local*gearTransform(referenceX));drawBitmap(d,opacity,std::abs(gearScale-1)<.01?D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR:D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);continue;
         }
         double ax=0,ay=0,as=1,ar=e.rotation,ao=e.opacity;
         if(impl_->screen==ScreenKind::Play&&impl_->gear.active&&!layer.hud){const auto& layout=e.extensions[L"gearLayouts"][(impl_->gear.mirrorUi?2-impl_->gear.position:impl_->gear.position)==0?L"left":(impl_->gear.mirrorUi?2-impl_->gear.position:impl_->gear.position)==2?L"right":L"center"];if(layout.type==bms::JsonValue::Type::Object){ax=layout[L"x"].num(e.x)-e.x;ay=layout[L"y"].num(e.y)-e.y;}if(hasModeGeometry){ax+=modeGeometry[L"x"].num(e.x)-e.x;ay+=modeGeometry[L"y"].num(e.y)-e.y;}if(impl_->gear.mirrorUi)ax=impl_->resolution.width-(e.x+ax)-e.width-e.x;}
 
-        if(impl_->screen==ScreenKind::Play&&e.binding=="play.judgementCombo"){if(impl_->anchorWidth>0&&impl_->anchorHeight>0){const double scale=std::min(impl_->anchorWidth/impl_->resolution.width,impl_->anchorHeight/impl_->resolution.height);const double ox=(impl_->anchorWidth-impl_->resolution.width*scale)/2,oy=(impl_->anchorHeight-impl_->resolution.height*scale)/2;ax=layer.hud?(impl_->anchorX-ox)/scale-impl_->resolution.width/2:(impl_->anchorX-ox)/scale-e.width/2-e.x;ay=(impl_->anchorY-oy)/scale-impl_->resolution.height*2.0/3+impl_->judgementOffset;}else {ax=layer.hud?0:(impl_->resolution.width-e.width)/2-e.x;ay=impl_->judgementOffset;}}const double now=impl_->animNow();
+        if(impl_->screen==ScreenKind::Play&&e.binding=="play.judgementCombo"){if(impl_->anchorWidth>0&&impl_->anchorHeight>0){const auto anchorView=bms::ui::viewport(impl_->anchorWidth,impl_->anchorHeight,impl_->resolution.width,impl_->resolution.height);const double anchorScale=anchorView.scale;const double ox=bms::ui::anchorOffset(anchors.x,anchorView.extraX),oy=bms::ui::anchorOffset(anchors.y,anchorView.extraY);ax=layer.hud?(impl_->anchorX-ox)/anchorScale-impl_->resolution.width/2:(impl_->anchorX-ox)/anchorScale-e.width/2-e.x;ay=(impl_->anchorY-oy)/anchorScale-impl_->resolution.height*2.0/3+impl_->judgementOffset;}else {ax=layer.hud?0:(impl_->resolution.width-e.width)/2-e.x;ay=impl_->judgementOffset;}}const double now=impl_->animNow();
         { HUD_SCOPE_IF(Animations,foreground);
         for(const auto& track:layer.animations)if((e.binding!="play.judgementCombo"||layer.hud)&&track.running(now)){double value=track.sample(now);if(track.property=="x")ax=value-e.x;else if(track.property=="y")ay=value-e.y;else if(track.property=="scale")as=value;else if(track.property=="rotation")ar=value;else if(track.property=="opacity")ao=value;}
 
         }
         if(e.binding=="play.judgementCombo"&&!layer.hud)as=std::min(impl_->gear.judgementScale,e.width/std::max(1.0,layer.destination.width));
+        if(cover)t->PushAxisAlignedClip(*cover,D2D1_ANTIALIAS_MODE_ALIASED);
+        t->SetTransform(base);
         if(e.clip)t->PushAxisAlignedClip(rect(*e.clip),D2D1_ANTIALIAS_MODE_ALIASED);
         if((layer.text||layer.hud)&&e.textStyle.clip){const double clipScale=e.binding=="play.judgementCombo"?1:as;t->PushAxisAlignedClip(rect({e.x+ax+e.width*(1-clipScale)/2,e.y+ay+e.height*(1-clipScale)/2,e.width*clipScale,e.height*clipScale}),D2D1_ANTIALIAS_MODE_ALIASED);}
         t->SetTransform(D2D1::Matrix3x2F::Scale(float(as),float(as),D2D1::Point2F(float(e.x+e.width/2),float(e.y+e.height/2)))*D2D1::Matrix3x2F::Rotation(float(std::remainder(ar,360.0)),D2D1::Point2F(float(e.x+e.width/2),float(e.y+e.height/2)))*D2D1::Matrix3x2F::Translation(float(ax),float(ay))*base);
-        if(layer.hud){impl_->stats.hudDrawCalls+=layer.hud->draw(t,e,float(ao*e.tint.a/255.0));if(e.textStyle.clip)t->PopAxisAlignedClip();if(e.clip)t->PopAxisAlignedClip();continue;}
+        if(layer.hud){impl_->stats.hudDrawCalls+=layer.hud->draw(t,e,float(ao*e.tint.a/255.0));if(e.textStyle.clip)t->PopAxisAlignedClip();if(e.clip)t->PopAxisAlignedClip();if(cover)t->PopAxisAlignedClip();continue;}
         auto destination=layer.destination;
         if(layer.overflow>0)destination.x-=bms::ui::textMarqueeOffset(layer.overflow,std::chrono::duration<double>(std::chrono::steady_clock::now()-layer.marqueeStart).count());
         { HUD_SCOPE_IF(HudBitmapGroup,foreground);if(foreground)HUD_BITMAP(layer.bitmap.Get(),1);
@@ -431,6 +510,7 @@ bool SkinRenderer::draw(float width,float height,bool foregroundOnly,bool skipFo
         }
         if((layer.text||layer.hud)&&e.textStyle.clip)t->PopAxisAlignedClip();
         if(e.clip)t->PopAxisAlignedClip();
+        if(cover)t->PopAxisAlignedClip();
     }
     t->PopAxisAlignedClip();t->SetTransform(old);return true;
 }

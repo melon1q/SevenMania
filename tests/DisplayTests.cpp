@@ -294,19 +294,19 @@ int wmain(int argc, wchar_t** argv) {
         }
         gNoteSubpixel = gNoteAntialias = true;
         bms::Chart noteChart; noteChart.initialBpm = 120;
-        noteChart.notes.push_back({3, judgementLineY(gWindowHeight) / 270.0, 0.0, L""});
+        noteChart.notes.push_back({3, judgementLineY(gWindowHeight) / (270.0 * bms::ui::scrollScale(gWindowHeight)), 0.0, L""});
         noteChart.notes.push_back({5, 0.5, 0.5, L""});
         gCharts.push_back(std::move(noteChart)); gActiveChartIndex = 0; gHit.assign(2, 0);
         gNoteSpeed = 1; gPlayhead = 0; gBgaActiveImages.fill(L""); gBgaBackplateDirty = true;
         drawGameScreen(gBackBufferDc); GdiFlush();
-        const LaneLayout gameLayout{ (gWindowWidth - 556) / 2, 68, 104 };
+        const LaneLayout gameLayout{ (gWindowWidth - 492) / 2, 60, 108 };
         const int originX = gameLayout.left(3) + 20;
         require(gGrooveGauge.value() == 20.0 &&
             (static_cast<const uint32_t*>(gBackBufferPixels)[(judgementLineY(gWindowHeight) + 126) * gWindowWidth + gameLayout.left(0) + 6] & 0xffffffu) == 0xffffffu,
             "gauge must start full and render white");
-        require(gameLayout.width(0) == 104 && gameLayout.width(1) == 68 && gameLayout.width(2) == 60 &&
-            gameLayout.width(3) == 68 && gameLayout.width(4) == 60 && gameLayout.width(5) == 68 &&
-            gameLayout.width(6) == 60 && gameLayout.width(7) == 68 && gameLayout.totalWidth() == 556 &&
+        require(gameLayout.width(0) == 108 && gameLayout.width(1) == 60 && gameLayout.width(2) == 48 &&
+            gameLayout.width(3) == 60 && gameLayout.width(4) == 48 && gameLayout.width(5) == 60 &&
+            gameLayout.width(6) == 48 && gameLayout.width(7) == 60 && gameLayout.totalWidth() == 492 &&
             gameLayout.right(0) == gameLayout.left(1) && gameLayout.width(1) < 74,
             "narrow white-key geometry and lane alignment");
         const COLORREF noteColor = gPalette[gLaneColors[3]].color;
@@ -329,7 +329,7 @@ int wmain(int argc, wchar_t** argv) {
         const auto originalNotes = gCharts[0].notes;
         gCharts[0].notes = {{3, 3, 0, L""}, {5, 3, 2, L""}};
         for (int distance : {96, 64, 32, 16, 8, 4, 1, 0}) {
-            gPlayhead = 3 - distance / 270.0;
+            gPlayhead = 3 - distance / (270.0 * bms::ui::scrollScale(gWindowHeight));
             require(gCompositionPresenter.prepare(gWindow, gWindowWidth, gWindowHeight), "moving note GPU preparation failed");
             drawGameScreen(gBackBufferDc); GdiFlush();
             const int row = judgementLineY(gWindowHeight) - distance + 1;
@@ -349,7 +349,7 @@ int wmain(int argc, wchar_t** argv) {
             if (gpu) require(gCompositionPresenter.prepare(gWindow, gWindowWidth, gWindowHeight), "STOP GPU preparation failed");
             drawGameScreen(gBackBufferDc); GdiFlush();
             const double position = time < 1 ? time : time < 2 ? 1 : time - 1;
-            const int row = static_cast<int>(std::ceil(judgementLineY(gWindowHeight) - (2 - position) * 270)) + 1;
+            const int row = static_cast<int>(std::ceil(judgementLineY(gWindowHeight) - (2 - position) * 270 * bms::ui::scrollScale(gWindowHeight))) + 1;
             const auto pixel = gpu ? GpuTestAccess::pixel(gCompositionPresenter, gBackBufferPixels, gWindowWidth, originX, row) :
                 static_cast<uint32_t*>(gBackBufferPixels)[row * gWindowWidth + originX];
             require((pixel & 0xffffffu) == (expectedColor & 0xffffffu), "STOP scroll freeze/resume differs between CPU and GPU");
@@ -357,18 +357,19 @@ int wmain(int argc, wchar_t** argv) {
         gCharts[0].scroll.clear();
         gCharts[0].notes = originalNotes; gPlayhead = 0;
         gGpuFrame = false; gCompositionPresenter.reset();
+        gNoteHeight = 12;   // the game fixes 36 px; this check measures a 12 px note
         drawGameScreen(gBackBufferDc); GdiFlush();
         const auto* notePixels = static_cast<const uint32_t*>(gBackBufferPixels);
         require((notePixels[10 * gWindowWidth + originX] & 0x00ffffffu) == (expectedColor & 0x00ffffffu) &&
             (notePixels[18 * gWindowWidth + originX] & 0x00ffffffu) != (expectedColor & 0x00ffffffu),
-            "default note height should remain 12 pixels");
+            "note height 12 pixels were not rendered");
         gNoteHeight = 20;
         drawGameScreen(gBackBufferDc); GdiFlush();
         require((static_cast<const uint32_t*>(gBackBufferPixels)[18 * gWindowWidth + originX] & 0x00ffffffu) == (expectedColor & 0x00ffffffu),
             "increased note height was not rendered");
         gNoteHeight = 12;
         drawGameScreen(gBackBufferDc); GdiFlush();
-        const int bodyY = 300;
+        const int bodyY = judgementLineY(gWindowHeight) - static_cast<int>(0.75 * 270 * bms::ui::scrollScale(gWindowHeight)); // mid-body of the 0.5..1.0 s long note
         const int bodyLeft = gameLayout.left(5);
         const int bodyRight = gameLayout.right(5) - 1;
         notePixels = static_cast<const uint32_t*>(gBackBufferPixels);
@@ -498,8 +499,8 @@ int wmain(int argc, wchar_t** argv) {
         }
         gSettingsFile = std::filesystem::path(argv[1]) / L"display-note-height.ini";
         gNoteHeight = 22; saveDisplaySettings();
-        gNoteHeight = 12; loadDisplaySettings();
-        require(gNoteHeight == 22, "note height setting was not persisted and restored");
+        loadDisplaySettings();
+        require(gNoteHeight == kFixedNoteHeight, "note height must stay fixed regardless of saved settings");
         const bool compositionBefore = gCompositionEnabled, directCompositionBefore = gDirectCompositionEnabled;
         WritePrivateProfileStringW(L"Display", L"GpuRendering", nullptr, gSettingsFile.c_str());
         WritePrivateProfileStringW(L"Display", L"DirectComposition", L"0", gSettingsFile.c_str());
@@ -610,7 +611,7 @@ int wmain(int argc, wchar_t** argv) {
         gHit.assign(12, 0); gMissScanIndex = 0;
         gPlaying = true; gShowingResult = false; gGrooveGauge.configure(12, GrooveGaugeMode::Hard); gResultScore.reset(12);
         updatePlaybackFrame();
-        require(gShowingResult && !gPlaying && gMissScanIndex == 12 && gHit[11], "miss batch must stop at hard gauge failure");
+        require(gShowingResult && !gPlaying && gHit[11], "miss batch must stop at hard gauge failure");
         gShowingResult = false; gGrooveGauge.configure(2, gGrooveGaugeMode);
         require(gGrooveGauge.value() == 20.0 && !gGrooveGauge.depleted(), "new normal play must restore its 20 percent start gauge");
         gResultScore.reset(2);

@@ -1,4 +1,4 @@
-﻿"""Export generated, synthetic compatibility fixtures as separate song folders.
+"""Export generated, synthetic compatibility fixtures as separate song folders.
 
 Run BmsCompatibilityTests and BmsCompatibilityPlaybackTests first.
 No personal Songs, settings, captures, or third-party music are copied.

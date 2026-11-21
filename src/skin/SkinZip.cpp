@@ -31,7 +31,7 @@ class Zip {
         const auto& p=e.path;
         if(e.directory) return;
         const auto ext=p.substr(p.find_last_of('.')==std::string::npos?p.size():p.find_last_of('.'));
-        const bool valid = p=="manifest.json" || (p.starts_with("licenses/")&&ext==".txt") ||
+        const bool valid = p=="manifest.json" || p=="assets/hit-splash.png" || (p.starts_with("licenses/")&&ext==".txt") ||
             (p.starts_with("screens/")&&ext==".json") || (p.starts_with("animations/")&&ext==".json") ||
             ((p.starts_with("assets/images/")||p.starts_with("assets/sprites/")) && (ext==".png"||ext==".jpg"||ext==".jpeg")) ||
             (p.starts_with("assets/fonts/")&&(ext==".ttf"||ext==".otf"));

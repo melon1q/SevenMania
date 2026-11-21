@@ -35,6 +35,12 @@ int wmain(int argc,wchar_t** argv) {
         struct Apartment {~Apartment(){CoUninitialize();}} apartment;
         const auto output=std::filesystem::path(argv[2]);std::filesystem::create_directories(output);
         auto loaded=SkinLoader{}.load(argv[1]);require(bool(loaded),"render fixture load failed");
+        const auto authored=loaded.package;
+        {   // The layer fixture checks contain geometry: pin every element to the centre anchor.
+            auto centered=std::make_shared<SkinPackage>(*loaded.package);
+            for(auto& [kind,screen]:centered->screens){(void)kind;for(auto& e:screen.elements){e.extensions.type=bms::JsonValue::Type::Object;auto& a=e.extensions.object[L"anchor"];a.type=bms::JsonValue::Type::String;a.string=L"center";}}
+            loaded.package=std::move(centered);
+        }
         bool hardware=false,preview=false;
         for(int i=3;i<argc;++i) {
             const std::wstring option=argv[i];
@@ -44,11 +50,23 @@ int wmain(int argc,wchar_t** argv) {
         }
         const auto driver=hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP;
         if(preview) {
+            loaded.package=authored;
             for(const auto& [screen,layout]:loaded.package->screens) {
                 (void)layout;Surface surface(1920,1080,driver);SkinRenderer renderer;
                 auto error=renderer.prepare(loaded.package,screen,surface.target.Get());
                 if(error)throw std::runtime_error(error->path+": "+error->message);
                 save(output/(std::string(screenName(screen))+".png"),surface.render(renderer),1920,1080);
+                // The same screen at other window sizes (height-based scale, edge anchors) for visual review.
+                for(const auto size:{Resolution{1280,720},Resolution{2560,1080},Resolution{1440,1080},Resolution{2560,1440}}) {
+                    Surface other(size.width,size.height,driver);SkinRenderer scaled;
+                    if(auto failed=scaled.prepare(loaded.package,screen,other.target.Get()))throw std::runtime_error(failed->path+": "+failed->message);
+                    if(screen==ScreenKind::Play){
+                        const double s=std::min(size.width/1920.0,size.height/1080.0);
+                        SkinGearState state;state.active=true;state.centerX=size.width/2.0;state.lineY=std::lround(size.height*2.0/3.0);state.scale=s;state.speed=2;scaled.setGearState(state);
+                        scaled.setJudgementAnchor(state.centerX,state.lineY,size.width,size.height);(void)scaled.update(nullptr);
+                    }
+                    save(output/(std::string(screenName(screen))+"-"+std::to_string(size.width)+"x"+std::to_string(size.height)+".png"),other.render(scaled),size.width,size.height);
+                }
                 if(screen==ScreenKind::Play){
                     const auto panel=std::find_if(layout.elements.begin(),layout.elements.end(),[](const auto& e){return e.id=="gear-panel";});
                     if(panel!=layout.elements.end()) {
@@ -116,6 +134,44 @@ int wmain(int argc,wchar_t** argv) {
             require(!test.update(&provider.snapshot())&&!test.scrolling(),"short title scrolls");
             provider.beginFrame(ScreenKind::Select);provider.set(BindingId::ChartLevelText,std::string("12"));provider.set(BindingId::ChartDifficultyColor,std::int64_t(RGB(96,165,250)));provider.endFrame();require(!test.update(&provider.snapshot()),"Level blue update failed");const auto blue=testSurface.render(test);
             provider.beginFrame(ScreenKind::Select);provider.set(BindingId::ChartLevelText,std::string("12"));provider.set(BindingId::ChartDifficultyColor,std::int64_t(RGB(251,146,60)));provider.endFrame();require(!test.update(&provider.snapshot()),"Level orange update failed");require(testSurface.render(test)!=blue,"Same level did not change difficulty color");
+        }
+        {   // Height-based scale with edge anchors on a wider-than-design surface (scale 1, 160px extra).
+            SkinPackage model=*authored;
+            SkinScreen result;result.kind=ScreenKind::Result;result.resolution={320,180};
+            const auto box=[](const char* id,double x,double y,double w,double h,SkinTint tint){SkinElement e;e.id=id;e.kind=ElementKind::Box;e.x=x;e.y=y;e.width=w;e.height=h;e.tint=tint;return e;};
+            result.elements.push_back(box("full",0,0,320,180,{10,10,10,255}));
+            result.elements.push_back(box("left",0,60,40,40,{255,0,0,255}));
+            result.elements.push_back(box("middle",140,60,40,40,{0,255,0,255}));
+            result.elements.push_back(box("right",280,60,40,40,{0,0,255,255}));
+            result.elements.push_back(box("panel",200,120,120,60,{255,255,0,255}));
+            result.elements.push_back(box("inside",210,130,30,30,{255,0,255,255}));   // contained: follows the panel
+            model.screens[ScreenKind::Result]=result;
+            Surface wide(480,180,driver);SkinRenderer anchored;
+            require(!anchored.prepare(std::make_shared<const SkinPackage>(model),ScreenKind::Result,wide.target.Get()),"anchor prepare failed");
+            const auto pixels=wide.render(anchored);
+            const auto at=[&](unsigned x,unsigned y,int r,int g,int b){const auto i=(std::size_t(y)*480+x)*4;const bool ok=std::abs(int(pixels[i+2])-r)<=2&&std::abs(int(pixels[i+1])-g)<=2&&std::abs(int(pixels[i])-b)<=2;
+                if(!ok)std::cerr<<"anchor at "<<x<<","<<y<<": RGB "<<int(pixels[i+2])<<","<<int(pixels[i+1])<<","<<int(pixels[i])<<"\n";require(ok,"anchored pixel mismatch");};
+            at(20,80,255,0,0);at(240,80,0,255,0);at(460,80,0,0,255);   // left edge, centre, right edge
+            at(100,80,10,10,10);at(380,80,10,10,10);at(2,2,10,10,10);at(477,110,10,10,10);   // stretched background fills the window
+            at(380,170,255,255,0);at(380,145,255,0,255);   // panel and its child anchored right together
+            save(output/L"anchors-480x180.png",pixels,480,180);
+        }
+        {   // Native gear parts scale about the engine's gear anchor.
+            SkinPackage model=*authored;
+            SkinScreen play;play.kind=ScreenKind::Play;play.resolution={1920,1080};
+            SkinElement part;part.id="gear-test-part";part.kind=ElementKind::Box;part.x=900;part.y=700;part.width=120;part.height=40;part.tint={0,255,0,255};
+            part.extensions.type=bms::JsonValue::Type::Object;part.extensions.object[L"nativeGearPart"].type=bms::JsonValue::Type::Boolean;part.extensions.object[L"nativeGearPart"].boolean=true;
+            play.elements.push_back(part);
+            model.screens[ScreenKind::Play]=play;
+            if(std::find(model.manifest.supportedScreens.begin(),model.manifest.supportedScreens.end(),ScreenKind::Play)==model.manifest.supportedScreens.end())model.manifest.supportedScreens.push_back(ScreenKind::Play);
+            Surface half(960,540,driver);SkinRenderer gearRenderer;
+            require(!gearRenderer.prepare(std::make_shared<const SkinPackage>(model),ScreenKind::Play,half.target.Get()),"gear prepare failed");
+            SkinGearState state;state.active=true;state.centerX=400;state.lineY=360;state.scale=.5;gearRenderer.setGearState(state);
+            const auto pixels=half.render(gearRenderer);
+            const auto green=[&](unsigned x,unsigned y){const auto i=(std::size_t(y)*960+x)*4;return pixels[i+1]>200&&pixels[i+2]<40;};
+            // (900-960)*.5+400 = 370 .. 430, (700-720)*.5+360 = 350 .. 370
+            require(green(372,352)&&green(428,368)&&!green(366,360)&&!green(434,360)&&!green(400,346)&&!green(400,374),"gear part not scaled about its anchor");
+            save(output/L"gear-scale-960x540.png",pixels,960,540);
         }
         Surface surface(320,180,driver);SkinRenderer renderer;
         for(int i=0;i<100;++i) {

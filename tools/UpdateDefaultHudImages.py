@@ -1,4 +1,4 @@
-﻿"""Bake static HUD PNGs and patch the existing default skin without rebuilding its layout.
+"""Bake static HUD PNGs and patch the existing default skin without rebuilding its layout.
 
 Authoring dependency: Pillow (also used by CreateHudImageTestSkin.py).
 The game/build only needs the checked-in PNGs and .semaskin, not Python/Pillow.

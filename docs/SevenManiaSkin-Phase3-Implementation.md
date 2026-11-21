@@ -65,6 +65,7 @@ provider.snapshot()의 const 참조는 다음 갱신 전까지 현재 시점의 
 | play.gauge | double | play | GrooveGauge.value(), 0~100 |
 | play.judgement | string | play | 현재 표시 유효 시간 안의 gJudgementText, 만료 시 결측 |
 | play.paused | bool | play | gPaused |
+| play.keyGuide | bool | play | 곡을 불러오는 동안과 재생이 시작되기 전까지 true. 이 바인딩이 붙은 요소는 재생이 시작되면 사라진다(기본 스킨의 `gear-key-guide-*`). 텍스트 요소는 레인의 키 이름을 그대로 표시한다 |
 | result.score | int64 | result | 같은 ResultScore의 최종 값 |
 | result.rank | string | result | ResultScore.rank() |
 | result.clearType | string | result | PRACTICE / FAILED / CLEAR / NO CLEAR, 기존 UI 의미 |

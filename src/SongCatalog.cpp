@@ -1,4 +1,11 @@
 #include "SongCatalog.h"
+#include "SongLibrary.h"
+
+#include <cerrno>
+#include <cstdio>
+#include <cwchar>
+#include <fcntl.h>
+#include <io.h>
 
 #include <charconv>
 #include <cmath>
@@ -135,6 +142,59 @@ std::string serializeSongCatalog(const std::vector<Chart>& charts,
     }
     output += "]}";
     return output;
+}
+
+namespace {
+bool writeUtf8(FILE* stream, const std::wstring& text) {
+    if (text.empty()) return true;
+    const int length = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
+        static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (length <= 0) return false;
+    std::string utf8(static_cast<size_t>(length), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()),
+        utf8.data(), length, nullptr, nullptr) != length) return false;
+    _setmode(_fileno(stream), _O_BINARY);
+    return std::fwrite(utf8.data(), 1, utf8.size(), stream) == utf8.size() && std::fflush(stream) == 0;
+}
+
+} // namespace
+
+int runCatalogCommand(int argumentCount, wchar_t** arguments) {
+    if (argumentCount < 3) {
+        writeUtf8(stderr, L"사용법: BmsPlayer.exe --catalog <곡 폴더> [--seed <정수>]\n");
+        return 2;
+    }
+
+    const std::filesystem::path folder(arguments[2]);
+    uint64_t seed{};
+    for (int index = 3; index < argumentCount; ++index) {
+        if (std::wcscmp(arguments[index], L"--seed") != 0 || index + 1 >= argumentCount) {
+            writeUtf8(stderr, L"알 수 없는 카탈로그 옵션입니다.\n");
+            return 2;
+        }
+        wchar_t* end{};
+        errno = 0;
+        seed = static_cast<uint64_t>(std::wcstoull(arguments[++index], &end, 10));
+        if (errno == ERANGE || !end || end == arguments[index] || *end != L'\0') {
+            writeUtf8(stderr, L"--seed 값이 올바른 정수가 아닙니다.\n");
+            return 2;
+        }
+    }
+
+    try {
+        const auto charts = bms::scanSongFolder(folder, nullptr, {}, seed);
+        const auto json = bms::serializeSongCatalog(charts, folder, seed);
+        _setmode(_fileno(stdout), _O_BINARY);
+        if (std::fwrite(json.data(), 1, json.size(), stdout) != json.size() || std::fputc('\n', stdout) == EOF ||
+            std::fflush(stdout) != 0) return 3;
+        return 0;
+    } catch (const bms::LibraryError& error) {
+        writeUtf8(stderr, error.message + L"\n");
+        return 1;
+    } catch (...) {
+        writeUtf8(stderr, L"곡 카탈로그를 생성하지 못했습니다.\n");
+        return 1;
+    }
 }
 
 } // namespace bms

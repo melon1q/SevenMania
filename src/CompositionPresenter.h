@@ -11,7 +11,9 @@
 #include <dcomp.h>
 #include <wrl/client.h>
 #include <d2d1.h>
+#include <d2d1_1.h>
 #include <memory>
+#include <optional>
 #include <cstring>
 #include <vector>
 #include <algorithm>
@@ -50,7 +52,7 @@ class CompositionPresenter {
     std::chrono::steady_clock::time_point gpuUsageWindow_{};
     int deckWidth_{}, deckHeight_{};
     bool frameFailed_{}, presentationDeferred_{}, pendingFrame_{};
-    struct Rectangle { D2D1_RECT_F bounds; COLORREF color{}; Ptr<ID2D1Bitmap> sprite; float opacity = 1; bool clipped{};D2D1_RECT_F clip{};bool mask{}; };
+    struct Rectangle { D2D1_RECT_F bounds; COLORREF color{}; Ptr<ID2D1Bitmap> sprite; float opacity = 1; bool clipped{};D2D1_RECT_F clip{};bool mask{}; std::optional<D2D1_RECT_F> source; };
     std::vector<Rectangle> rectangles_;
     struct CachedSprite { uint64_t id{}, used{}; Ptr<ID2D1Bitmap> bitmap; };
     std::vector<CachedSprite> sprites_;
@@ -60,9 +62,12 @@ class CompositionPresenter {
     bool vsync_{};
     bool antialias_ = true;
     bool directComposition_ = true;
+    bool overlayOnly_{};
+    bool modernDrawing_{};
     HWND outputWindow_{};
     using FrameOverlay = void (*)(ID2D1RenderTarget*,int,int);
     FrameOverlay frameOverlay_{}, frameForeground_{},frameIntro_{};
+    std::optional<std::size_t> foregroundBoundary_;
     static LRESULT CALLBACK outputProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_ERASEBKGND) return 1;
@@ -204,11 +209,19 @@ public:
     ID2D1RenderTarget* renderTarget() const noexcept {return drawingTarget_.Get();}
     void setFrameIntro(FrameOverlay overlay) noexcept {frameIntro_=overlay;}
     void setFrameOverlay(FrameOverlay overlay) noexcept {frameOverlay_=overlay;}
-    void setFrameForeground(FrameOverlay overlay) noexcept {frameForeground_=overlay;}
-    CompositionPresenter() { lowLatency_.install(latency::Mode::Reflex, std::make_unique<latency::ReflexBackend>()); }
+    void setFrameForeground(FrameOverlay overlay) noexcept {frameForeground_=overlay;foregroundBoundary_.reset();}
+    void markFrameForegroundBoundary() noexcept {foregroundBoundary_=rectangles_.size();}
+    explicit CompositionPresenter(bool overlayOnly = false) : overlayOnly_(overlayOnly) {
+        if (!overlayOnly_) lowLatency_.install(latency::Mode::Reflex, std::make_unique<latency::ReflexBackend>());
+    }
     ~CompositionPresenter() { reset(); }
     void setVsync(bool enabled) { vsync_ = enabled; }
     void setAntialias(bool enabled) { antialias_ = enabled; }
+    void setModernDrawing(bool enabled) {
+        if(modernDrawing_==enabled)return;
+        reset();
+        modernDrawing_=enabled;
+    }
     // A/B switch (default off): true skips HUD region/overlay uploads whose pixels did not
     // change. Measured on dive_l7 (cap 600, 240Hz) it raised missed intervals, so it is opt-in.
     void setSkipUnchangedUploads(bool enabled) { skipUnchangedUploads_ = enabled; }
@@ -262,6 +275,8 @@ public:
                 &device_, nullptr, &context_);
             if (FAILED(hr)) hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, // no video support: NV12 path stays off
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device_, nullptr, &context_);
+            if (FAILED(hr) && overlayOnly_) hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device_, nullptr, &context_);
             Ptr<IDXGIDevice> dxgi; Ptr<IDXGIAdapter> adapter; Ptr<IDXGIFactory2> factory;
             if (FAILED(hr) || FAILED(device_.As(&dxgi)) || FAILED(dxgi->GetAdapter(&adapter)) ||
                 FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) { fail("device", FAILED(hr) ? hr : E_FAIL); reset(); return false; }
@@ -298,11 +313,27 @@ public:
             texture.Format = desc.Format; texture.SampleDesc.Count = 1;
             texture.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
             Ptr<IDXGISurface> surface;
-            if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, drawingFactory_.GetAddressOf())) ||
-                FAILED(device_->CreateTexture2D(&texture, nullptr, &frame_)) || FAILED(frame_.As(&surface)) ||
-                FAILED(drawingFactory_->CreateDxgiSurfaceRenderTarget(surface.Get(),
+            if (SUCCEEDED(device_->CreateTexture2D(&texture, nullptr, &frame_)) && SUCCEEDED(frame_.As(&surface))) {
+                if (overlayOnly_ || modernDrawing_) {
+                    Ptr<ID2D1Device> drawingDevice;
+                    Ptr<ID2D1DeviceContext> drawingContext;
+                    Ptr<ID2D1Bitmap1> drawingBitmap;
+                    if (SUCCEEDED(D2D1CreateDevice(dxgi.Get(), nullptr, &drawingDevice)) &&
+                        SUCCEEDED(drawingDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &drawingContext)) &&
+                        SUCCEEDED(drawingContext->CreateBitmapFromDxgiSurface(surface.Get(),
+                            D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                                D2D1::PixelFormat(desc.Format, D2D1_ALPHA_MODE_IGNORE), 96, 96), &drawingBitmap))) {
+                        drawingContext->SetDpi(96, 96);
+                        drawingContext->SetTarget(drawingBitmap.Get());
+                        drawingTarget_ = drawingContext;
+                    }
+                } else if (SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, drawingFactory_.GetAddressOf()))) {
+                    drawingFactory_->CreateDxgiSurfaceRenderTarget(surface.Get(),
                     D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96, 96), &drawingTarget_)) ||
+                        D2D1::PixelFormat(desc.Format, D2D1_ALPHA_MODE_IGNORE), 96, 96), &drawingTarget_);
+                }
+            }
+            if (!drawingTarget_ ||
                 FAILED(drawingTarget_->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0), &brush_))) { fail("d2d", E_FAIL); reset(); return false; }
             HUD_COUNT(TargetChanges);
             D3D11_QUERY_DESC queryDesc{};
@@ -388,6 +419,19 @@ public:
     void rectangle(float left, float top, float right, float bottom, COLORREF color, float opacity = 1.0f) {
         if (left < right && top < bottom) rectangles_.push_back({{left, top, right, bottom}, color, {}, std::clamp(opacity, 0.0f, 1.0f)});
     }
+    bool bitmapSprite(ID2D1Bitmap* bitmap, D2D1_RECT_F bounds, float opacity, const RECT* clip = nullptr,
+                      std::optional<D2D1_RECT_F> source = std::nullopt) {
+        if (!bitmap) return false;
+        rectangles_.push_back({bounds, 0, Ptr<ID2D1Bitmap>(bitmap), opacity});
+        rectangles_.back().source=source;
+        if (clip) {
+            auto& rectangle = rectangles_.back();
+            rectangle.clipped = true;
+            rectangle.clip = D2D1::RectF(static_cast<float>(clip->left), static_cast<float>(clip->top),
+                static_cast<float>(clip->right), static_cast<float>(clip->bottom));
+        }
+        return true;
+    }
     bool sprite(const uint32_t* pixels, int width, int height, int left, int top, int drawWidth, int drawHeight,
         uint64_t id, float opacity = 1, bool premultiplied = true, const RECT* clip = nullptr) {
         if (!drawingTarget_ || !pixels || width <= 0 || height <= 0) return false;
@@ -413,10 +457,8 @@ public:
             sprites_.push_back(std::move(entry)); found = std::prev(sprites_.end());
         }
         found->used = ++spriteClock_;
-        rectangles_.push_back({D2D1::RectF(static_cast<float>(left), static_cast<float>(top),
-            static_cast<float>(left + drawWidth), static_cast<float>(top + drawHeight)), 0, found->bitmap, opacity});
-        if(clip && !rectangles_.empty()){auto& rectangle=rectangles_.back();rectangle.clipped=true;rectangle.clip=D2D1::RectF(static_cast<float>(clip->left),static_cast<float>(clip->top),static_cast<float>(clip->right),static_cast<float>(clip->bottom));}
-        return true;
+        return bitmapSprite(found->bitmap.Get(), D2D1::RectF(static_cast<float>(left), static_cast<float>(top),
+            static_cast<float>(left + drawWidth), static_cast<float>(top + drawHeight)), opacity, clip);
     }
     void deck(const uint32_t* pixels, int width, int height, int stride, int left, int top) {
         if (width <= 0 || height <= 0) return;
@@ -444,10 +486,15 @@ public:
         if (ready == WAIT_TIMEOUT) { presentationDeferred_ = true; ++deferredFrames_; }
         return ready != WAIT_TIMEOUT; // present() handles invalid/device-lost state.
     }
+    struct OverlayDraw {
+        void (*draw)(void*, ID2D1RenderTarget*, int, int);
+        void* data;
+    };
     bool present(HWND window, const void* pixels, int width, int height,
-        const uint32_t* foreground = nullptr, int fw = 0, int fh = 0, int foregroundX = 0) {
+        const uint32_t* foreground = nullptr, int fw = 0, int fh = 0, int foregroundX = 0,
+        OverlayDraw overlay = {nullptr, nullptr}) {
         HUD_SCOPE(PresenterTotal);
-        if (!pixels || width <= 0 || height <= 0) return false;
+        if ((!pixels && !overlayOnly_) || width <= 0 || height <= 0) return false;
         if ((!swap_ || width != width_ || height != height_) && !prepare(window, width, height)) return false;
         if (frameFailed_) { fail("frame-resource", deviceStatus()); reset(); return false; }
         presentationDeferred_ = false;
@@ -460,7 +507,7 @@ public:
         if (ready != WAIT_OBJECT_0) { fail("wait", HRESULT_FROM_WIN32(GetLastError())); reset(); return false; }
         hybridReadyPermit_ = true;
         GpuTimingSlot* timing = beginGpuTiming();
-        const bool drawn = drawFrame(pixels, width, foreground, fw, fh, foregroundX);
+        const bool drawn = drawFrame(pixels, width, foreground, fw, fh, foregroundX, overlay);
         finishGpuTiming(timing);
         if (!drawn) { fail("draw", deviceStatus()); reset(); return false; }
         // A full presentation queue is normal, not a lost device. Keep drawing the
@@ -680,14 +727,17 @@ private:
             gpuUsageWindow_ = now;
         }
     }
-    bool drawFrame(const void* pixels, int width, const uint32_t* foreground, int fw, int fh, int foregroundX) {
+    bool drawFrame(const void* pixels, int width, const uint32_t* foreground, int fw, int fh, int foregroundX,
+                   OverlayDraw overlay = {nullptr, nullptr}) {
         if (hybridFrame_) { if (!uploadHybrid(static_cast<const uint32_t*>(pixels), width)) return false; }
-        else { BMS_PERF_SCOPE(uploadMs);HUD_SCOPE(UploadFrame); context_->UpdateSubresource(frame_.Get(), 0, nullptr, pixels, width * 4, 0); uploadedBytes_ += uint64_t(width) * height_ * 4; }
+        else if (!overlayOnly_) { BMS_PERF_SCOPE(uploadMs);HUD_SCOPE(UploadFrame); context_->UpdateSubresource(frame_.Get(), 0, nullptr, pixels, width * 4, 0); uploadedBytes_ += uint64_t(width) * height_ * 4; }
         BMS_PERF_SCOPE(gpuDrawMs);HUD_SCOPE(CompositionDraw);
 #ifdef BMS_HUD_FRAME_PROBE
         hudprobe::recorder.lastBitmap=nullptr;
 #endif
         {HUD_SCOPE(D2DBegin);drawingTarget_->BeginDraw();}
+        if (overlayOnly_) drawingTarget_->Clear(D2D1::ColorF(0, 0, 0));
+        if (overlay.draw) overlay.draw(overlay.data, drawingTarget_.Get(), width_, height_);
         drawingTarget_->SetAntialiasMode(antialias_ ? D2D1_ANTIALIAS_MODE_PER_PRIMITIVE : D2D1_ANTIALIAS_MODE_ALIASED);
         if (hybridFrame_) {
             drawingTarget_->Clear(D2D1::ColorF(0,0,0));
@@ -707,7 +757,9 @@ private:
                     static_cast<float>(region.rect.right), static_cast<float>(region.rect.bottom)), 1, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
         }
         if(frameOverlay_)frameOverlay_(drawingTarget_.Get(),width_,height_);
-        for (const auto& rect : rectangles_) {
+        for (std::size_t i=0;i<rectangles_.size();++i) {
+            if(frameForeground_&&foregroundBoundary_==i)frameForeground_(drawingTarget_.Get(),width_,height_);
+            const auto& rect=rectangles_[i];
             if(rect.clipped)drawingTarget_->PushAxisAlignedClip(rect.clip,D2D1_ANTIALIAS_MODE_ALIASED);
             if (rect.sprite) {
                 if(rect.mask) {
@@ -715,7 +767,9 @@ private:
                     const auto aa=drawingTarget_->GetAntialiasMode();drawingTarget_->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
                     drawingTarget_->FillOpacityMask(rect.sprite.Get(),brush_.Get(),D2D1_OPACITY_MASK_CONTENT_GRAPHICS,&rect.bounds,nullptr);
                     drawingTarget_->SetAntialiasMode(aa);brush_->SetOpacity(1);
-                }else drawingTarget_->DrawBitmap(rect.sprite.Get(), rect.bounds, rect.opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                }else drawingTarget_->DrawBitmap(rect.sprite.Get(), &rect.bounds, rect.opacity,
+                    rect.source?D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR:D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                    rect.source?&*rect.source:nullptr);
                 if(rect.clipped)drawingTarget_->PopAxisAlignedClip();
                 continue;
             }
@@ -726,7 +780,8 @@ private:
             brush_->SetOpacity(1.0f);
             if(rect.clipped)drawingTarget_->PopAxisAlignedClip();
         }
-        if(frameForeground_)frameForeground_(drawingTarget_.Get(),width_,height_);
+        if(frameForeground_&&(!foregroundBoundary_||*foregroundBoundary_>=rectangles_.size()))
+            frameForeground_(drawingTarget_.Get(),width_,height_);
         HRESULT uploaded = S_OK;
         if (foreground && fw > 0 && fh > 0) {
             if (!overlay_ || fw != overlayWidth_ || fh != overlayHeight_) {

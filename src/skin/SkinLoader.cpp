@@ -350,6 +350,16 @@ LoadResult SkinLoader::load(const std::filesystem::path& file) const noexcept {
         // Validate even unused entries; malformed or disguised payloads cannot hide there.
         for(const auto& [path,data]:archive) {
             if(path=="manifest.json")continue;
+            if (path == "assets/hit-splash.png") {
+                SkinResource splash{"", path, {}, data};
+                try {
+                    imageInfo(splash, limits_);
+                    p.hitSplash = data;
+                } catch (const Failure&) {
+                    // Optional feedback art may fall back without invalidating the skin.
+                }
+                continue;
+            }
             if(path.starts_with("licenses/")&&path.ends_with(".txt")){if(data->size()>65536)fail(ErrorCode::LimitExceeded,path,"License text too long");const std::string notice(data->begin(),data->end());if(notice.find('\0')!=std::string::npos)fail(ErrorCode::UnsupportedResource,path,"License must be UTF-8 text");(void)wide(notice,path);continue;}
             if(path.starts_with("screens/")) {
                 const bool listed=std::any_of(p.manifest.supportedScreens.begin(),p.manifest.supportedScreens.end(),[&](auto kind){return path==std::string("screens/")+screenName(kind)+".json";});

@@ -1,3 +1,4 @@
+/* Sizes are 1920x1080 design units (dp); the host sets dp to the game window scale. */
 body {
     margin: 0;
     width: 100%;
@@ -5,17 +6,17 @@ body {
     background-color: transparent;
     font-family: "Bms UI";
     color: #232a33;
-    font-size: 20px;
+    font-size: 20dp;
 }
 #rows { position: absolute; width: 100%; height: 100%; overflow: hidden; }
 #row-track { position: absolute; left: 0; right: 0; top: 0; }
-#selection-guide { position: absolute; left: 4px; right: 4px; background-color: transparent; border-width: 0; }
+#selection-guide { position: absolute; left: 4dp; right: 4dp; background-color: transparent; border-width: 0; }
 .row {
     position: absolute;
-    left: 20px;
-    right: 4px;
+    left: 20dp;
+    right: 4dp;
     box-sizing: border-box;
-    padding: 5px 12px 5px 8px;
+    padding: 5dp 12dp 5dp 8dp;
     border: 1px #7c858f;
     border-radius: 0px;
     display: flex;
@@ -25,31 +26,31 @@ body {
 }
 .row.alternate { background-color: #bcc2c9; decorator: none; }
 .row.selected {
-    left: 4px;
+    left: 4dp;
     background-color: #dce2e8;
     decorator: none;
     border-color: #56a8c7;
     color: #151c24;
 }
-.lamp { width: 3px; height: 70%; margin-right: 8px; background-color: #687480; flex-shrink: 0; }
+.lamp { width: 3dp; height: 70%; margin-right: 8dp; background-color: #687480; flex-shrink: 0; }
 .lamp.clear { background-color: #4ade80; }
 .lamp.played { background-color: #f87171; }
-.level { font-family: Michroma; font-weight: normal; width: 55px; text-align: center; font-size: 24px; flex-shrink: 0; }
-.labels { flex-grow: 1; flex-shrink: 1; min-width: 0; margin-left: 10px; }
-.title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 28px; }
+.level { font-family: Michroma; font-weight: normal; width: 55dp; text-align: center; font-size: 24dp; flex-shrink: 0; }
+.labels { flex-grow: 1; flex-shrink: 1; min-width: 0; margin-left: 10dp; }
+.title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 28dp; }
 .title-text { display: block; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
 .selected .title { text-overflow: clip; }
 .selected .title-text { display: inline-block; overflow: visible; text-overflow: clip; }
 .blocked .title { color: #68717b; }
-.variant { font-size: 12px; color: #485562; margin-left: 10px; flex-shrink: 0; }
-.banner { width: 128px; height: 40px; margin-left: 10px; flex-shrink: 0; }
+.variant { font-size: 12dp; color: #485562; margin-left: 10dp; flex-shrink: 0; }
+.banner { width: 128dp; height: 40dp; margin-left: 10dp; flex-shrink: 0; }
 @media (max-width: 420px) {
-    .banner { width: 96px; height: 30px; margin-left: 6px; }
-    .level { width: 42px; }
-    .labels { margin-left: 6px; }
-    .variant { margin-left: 4px; font-size: 10px; }
+    .banner { width: 96dp; height: 30dp; margin-left: 6dp; }
+    .level { width: 42dp; }
+    .labels { margin-left: 6dp; }
+    .variant { margin-left: 4dp; font-size: 10dp; }
 }
-.empty { margin: 24px 16px; font-size: 18px; color: #8fa8bd; }
+.empty { margin: 24dp 16dp; font-size: 18dp; color: #8fa8bd; }
 
 /* Optional entry classes: old skin/package schemas need no new fields. */
 .row.parent-folder, .row.parent-folder.alternate {
