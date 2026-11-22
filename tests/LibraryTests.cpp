@@ -302,7 +302,7 @@ int wmain(int argc, wchar_t** argv) {
         fs::create_directories(cachedRoot/L"empty-빈폴더");
         bms::SongIndexWorker indexWorker;std::mutex doneMutex;std::condition_variable doneCv;bool done=false;
         indexWorker.start(cachedRoot,[&]{std::lock_guard lock(doneMutex);done=true;doneCv.notify_one();});
-        {std::unique_lock lock(doneMutex);require(doneCv.wait_for(lock,std::chrono::seconds(10),[&]{return done;}),"background index did not finish");}
+        {std::unique_lock doneLock(doneMutex);require(doneCv.wait_for(doneLock,std::chrono::seconds(10),[&]{return done;}),"background index did not finish");}
         auto update=indexWorker.take();require(update&&update->charts.size()==1&&std::find(update->folders.begin(),update->folders.end(),cachedRoot/L"empty-빈폴더")!=update->folders.end(),"background update or empty folder missing");
         indexWorker.cancel();indexWorker.start(cachedRoot,[]{});indexWorker.cancel();require(!indexWorker.take(),"cancelled worker published a stale result");
         bms::ui::SongFolderNavigation navigation;navigation.root(cachedRoot);navigation.build(initial);

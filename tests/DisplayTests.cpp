@@ -225,14 +225,14 @@ int wmain(int argc, wchar_t** argv) {
                 }
             }
             require(fittedText,"combined HUD disappeared while fitting the gear");
-            size_t black=rainbow.size(),white=rainbow.size(),colored=rainbow.size();
+            size_t black=rainbow.size(),whiteAt=rainbow.size(),colored=rainbow.size();
             for(size_t i=0;i<rainbow.size();++i) {
                 const auto rgb=rainbow[i]&0xffffffu;
                 if(rgb==0) black=i;
-                if(rgb==0xffffffu) white=i;
+                if(rgb==0xffffffu) whiteAt=i;
                 if(((rgb>>16)&255)>200 && (rgb&255)<80) colored=i;
             }
-            require(black<rainbow.size() && white<rainbow.size() && colored<rainbow.size(), "HUD lost black outer/white inner/colored body layers");
+            require(black<rainbow.size() && whiteAt<rainbow.size() && colored<rainbow.size(), "HUD lost black outer/white inner/colored body layers");
             auto changed=background;
             TextRasterCache next;
             next.draw(changed.data(),w,h,L"GREAT",bounds,bank,RGB(1,1,2),1.0,
@@ -245,7 +245,7 @@ int wmain(int argc, wchar_t** argv) {
             require(changed==rainbow,"PGREAT changed colors with obsolete animation phase");
             gCompositionPresenter.reset(); require(gCompositionPresenter.prepare(gWindow,w,h), "HUD GPU setup failed");
             require(cache.draw(nullptr,w,h,L"GREAT",bounds,bank,RGB(0,1,2),1.0,renderer,false,queueGpuText), "HUD GPU sprite failed");
-            for(const size_t i : {black,white,colored})
+            for(const size_t i : {black,whiteAt,colored})
                 require((GpuTestAccess::pixel(gCompositionPresenter,background.data(),w,static_cast<int>(i%w),static_cast<int>(i/w))&0xffffffu)==(rainbow[i]&0xffffffu),
                     "CPU and GPU HUD layers differ");
             gCompositionPresenter.reset();

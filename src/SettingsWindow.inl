@@ -117,6 +117,7 @@ std::wstring hudTextYOffsetLabel(int offset) {
 #include "SettingsActions.inl"
 #include "SettingsSummaryOverlay.inl"
 #include "Lr2SkinSettings.inl"
+#include "DifficultyTableSettings.inl"
 #include "SettingsRmlPage.inl"
 
 void openRmlSettingsProbe() {

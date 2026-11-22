@@ -74,6 +74,7 @@ int runPlayer(HINSTANCE instance, int show) {
     gPlayRecordsFile=gSettingsFile.parent_path()/L"BmsPlayer-Test-records.ini";
 #endif
     loadPlayRecords();
+    loadDifficultyTables();
     gSystemResources.initialize();
     Gdiplus::GdiplusStartupInput gdiplusInput;
     if (Gdiplus::GdiplusStartup(&gGdiPlusToken, &gdiplusInput, nullptr) != Gdiplus::Ok) gGdiPlusToken = 0;

@@ -133,6 +133,9 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         else setStatus(L"곡 선택 화면으로 돌아온 뒤 폴더를 드롭하세요.");
         return 0;
     }
+    case WM_TABLES_UPDATED:
+        applyTableResults();
+        return 0;
     case WM_LIBRARY_INDEX: {
         if(gSettingsWindow&&gSongIndexWorker.hasPending()){
             gLibraryIndexStatus=L"라이브러리 확인 완료 · 설정을 닫으면 목록에 반영됩니다.";syncLibrarySettings();return 0;
@@ -703,7 +706,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
-        saveLibraryNavigation();gSongIndexWorker.cancel();
+        saveLibraryNavigation();gSongIndexWorker.cancel();gTableRefresh.stop();
         KillTimer(window,ID_CONTROLLER_POLL);gController.reconnect(nullptr);
 #ifdef BMS_ENABLE_SKIN_BINDINGS
         unloadSkinSelection();

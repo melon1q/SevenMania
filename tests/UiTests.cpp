@@ -166,7 +166,6 @@ int wmain(int argc, wchar_t** argv) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     try {
         require(argc == 3 || argc == 4, "expected player path, validation directory and optional actual song folder or --settings-only");
-        const bool settingsOnly = argc == 4 && std::wstring(argv[3]) == L"--settings-only";
         const std::filesystem::path sourceExe = std::filesystem::absolute(argv[1]), validation = std::filesystem::absolute(argv[2]);
         std::filesystem::create_directories(validation);
         const auto appRoot = validation / (L"ui-app-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
@@ -205,7 +204,7 @@ int wmain(int argc, wchar_t** argv) {
                 MAKELPARAM(int(shortcutX + referenceX * shortcutScale), int(shortcutY + 856 * shortcutScale)));
         };
         // The skin loads asynchronously after startup: click until the first shortcut takes effect (it stops at the first change).
-        const int initialSpeed = GetPrivateProfileIntW(L"Display", L"SpeedSteps", 0, config.c_str());
+        const UINT initialSpeed = GetPrivateProfileIntW(L"Display", L"SpeedSteps", 0, config.c_str());
         waitUntil([&] { clickShortcut(0, true); return GetPrivateProfileIntW(L"Display", L"SpeedSteps", 0, config.c_str()) != initialSpeed; });
         require(GetPrivateProfileIntW(L"Display", L"SpeedSteps", 0, config.c_str()) == 5, "left click did not increase speed shortcut");
         clickShortcut(0, false);

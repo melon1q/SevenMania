@@ -277,6 +277,10 @@ add_executable(BmsKeyModeFilterTests tests/KeyModeFilterTests.cpp)
 target_link_libraries(BmsKeyModeFilterTests PRIVATE bms_core)
 add_test(NAME BmsKeyModeFilterTests COMMAND BmsKeyModeFilterTests)
 
+add_executable(BmsDifficultyTableTests tests/DifficultyTableTests.cpp)
+target_link_libraries(BmsDifficultyTableTests PRIVATE bms_core)
+add_test(NAME BmsDifficultyTableTests COMMAND BmsDifficultyTableTests "${CMAKE_CURRENT_BINARY_DIR}/Validation/DifficultyTable")
+
 add_executable(BmsKeyModeLaneTests tests/KeyModeLaneTests.cpp)
 target_link_libraries(BmsKeyModeLaneTests PRIVATE bms_core)
 add_test(NAME BmsKeyModeLaneTests COMMAND BmsKeyModeLaneTests)

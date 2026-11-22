@@ -25,6 +25,7 @@ bool skinGearForMode(int gearMode);
 #include "KeyModeFilter.h"
 #include "TargetScore.h"
 #include "LaneOption.h"
+#include "DifficultyTableFetch.h"
 #include "KeyProfiles.h"
 #include "KeyLaneMap.h"
 #include "SongCatalog.h"
@@ -1814,10 +1815,12 @@ void refreshSongRow(size_t index) {
 }
 
 bms::ui::SongEntryKind navigationKind(int id);
-// The song list's filters: key mode (Tab, LR2 button 11) and difficulty (LR2 button 10).
+#include "DifficultyTableHost.inl"
+// The song list's filters: key mode (Tab, LR2 button 11), difficulty (LR2 button 10) and, inside a
+// difficulty table level, the charts that level lists.
 bool chartMatchesKeyMode(size_t chartIndex) {
     return chartIndex < gCharts.size() && bms::keyModeFilterMatches(gKeyModeFilter, gCharts[chartIndex].mode) &&
-        bms::difficultyFilterMatches(gDifficultyFilter, gCharts[chartIndex].difficulty);
+        bms::difficultyFilterMatches(gDifficultyFilter, gCharts[chartIndex].difficulty) && chartInTableLevel(gCharts[chartIndex]);
 }
 bool groupMatchesKeyMode(const bms::ui::SongGroup& group) {
     for (const size_t c : group.chartIndices) if (chartMatchesKeyMode(c)) return true;
@@ -1843,16 +1846,31 @@ void rebuildSongRows(int preferred = -1) {
     ListView_DeleteAllItems(gList);
     if(gLibrarySources.configured())gSongFolders.configure(gLibrarySources.navigationRoots(),gLibrarySources.originalFolders);else gSongFolders.root(gCurrentFolder);gSongFolders.build(gCharts);
     if(gLibrarySources.configured())setText(gFolder,gLibrarySources.roots.empty()?L"곡 폴더: (없음)":gSongFolders.isRoot()?L"곡 폴더: ROOT":L"곡 폴더: "+gSongFolders.location().wstring());
+    rebuildTableLevels();
+    const bool inTable=gTableView>=0;
+    if(inTable)setText(gFolder,tableLocationText());
     const auto folderRow=[&](int id,const std::wstring& title){LVITEMW item{};item.mask=LVIF_TEXT|LVIF_PARAM;item.iItem=ListView_GetItemCount(gList);item.pszText=const_cast<wchar_t*>(bms::ui::entryTypeLabel(navigationKind(id)));item.lParam=id;const int row=ListView_InsertItem(gList,&item);ListView_SetItemText(gList,row,1,const_cast<wchar_t*>(title.c_str()));};
-    if(gLibrarySources.configured()?!gLibrarySources.roots.empty():!gCurrentFolder.empty()){if(!gSongFolders.isRoot())folderRow(-1,L"UP");else folderRow(-2,L"ALL SONGS");}
-    for(size_t i=0;i<gSongFolders.folders.size();++i)folderRow(-3-int(i),gSongFolders.folders[i].filename().wstring());
+    if(inTable) {
+        folderRow(-1,L"UP");
+        if(gTableLevel<0) {
+            const auto& loaded=gTables[static_cast<size_t>(gTableView)];
+            for(size_t i=0;i<loaded.levels.size();++i)folderRow(levelRowBase-int(i),tableLevelLabel(loaded,loaded.levels[i]));
+        }
+    } else {
+        if(gLibrarySources.configured()?!gLibrarySources.roots.empty():!gCurrentFolder.empty()){if(!gSongFolders.isRoot())folderRow(-1,L"UP");else folderRow(-2,L"ALL SONGS");}
+        // Difficulty tables sit beside ALL SONGS at the root (not yet downloaded tables are not listed).
+        if(gSongFolders.isRoot())for(size_t i=0;i<gTables.size();++i)if(!gTables[i].table.name.empty())folderRow(tableRowBase-int(i),tableDisplayName(gTables[i]));
+        for(size_t i=0;i<gSongFolders.folders.size();++i)folderRow(-3-int(i),gSongFolders.folders[i].filename().wstring());
+    }
     int selectedRow = -1;
     size_t hiddenCount = 0;
     for (const auto& chart : gCharts) if (!chart.playable) ++hiddenCount;
     const auto& groups = gSongSelection.groups();
     for (size_t i = 0; i < groups.size(); ++i) {
         const auto& group = groups[i];
-        if (group.chartIndices.empty() || !gSongFolders.accepts(gCharts[group.chartIndices.front()].path) || gCharts[group.chartIndices.front()].playable == gShowHiddenCharts) continue;
+        // A table level lists charts from the whole library; a table's level list has no charts.
+        if (inTable && gTableLevel < 0) break;
+        if (group.chartIndices.empty() || (!inTable && !gSongFolders.accepts(gCharts[group.chartIndices.front()].path)) || gCharts[group.chartIndices.front()].playable == gShowHiddenCharts) continue;
         if (!groupMatchesKeyMode(group)) continue;
         normalizeGroupVariantForKeyMode(i);
         if (static_cast<int>(i) == preferred) selectedRow = ListView_GetItemCount(gList);
@@ -1882,7 +1900,12 @@ bool navigateSongFolder(bool back=false) {
     LVITEMW item{};item.mask=LVIF_PARAM;item.iItem=row;
     if(!back&&(row<0||!ListView_GetItem(gList,&item)||item.lParam>=0))return false;
     gSongFolders.remember(std::max(0,row));
-    if(back){if(!gSongFolders.back())return false;}else gSongFolders.enter(int(item.lParam));
+    const int id=back?-1:int(item.lParam);
+    if(gTableView>=0&&id==-1){if(gTableLevel>=0)gTableLevel=-1;else gTableView=-1;} // out of a level, then out of the table
+    else if(id<=levelRowBase){gTableLevel=levelRowBase-id;}
+    else if(id<=tableRowBase){gTableView=tableRowBase-id;gTableLevel=-1;}
+    else if(back){if(!gSongFolders.back())return false;}
+    else gSongFolders.enter(id);
     rebuildSongRows();saveLibraryNavigation();
     triggerSystemSound(back||item.lParam==-1?bms::SystemSound::FolderClose:bms::SystemSound::FolderOpen);
     return true;

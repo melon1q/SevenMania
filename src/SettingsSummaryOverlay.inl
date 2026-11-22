@@ -3,7 +3,7 @@ bool gSummaryVisible=false;int gSummaryRow=0;std::wstring gSummaryError;
 constexpr int summaryCommands[]{ID_SPEED,ID_GROOVE_GAUGE,ID_ACCURACY_LIMIT,ID_VOLUME_BASE};
 RECT summaryBounds(){int w=std::min(ui(560),gWindowWidth-24),h=std::min(ui(380),gWindowHeight-24);return {(gWindowWidth-w)/2,(gWindowHeight-h)/2,(gWindowWidth+w)/2,(gWindowHeight+h)/2};}
 // Use the renderer's scale and anchors for drawing and hit testing.
-RECT summaryElement(const char* id,RECT fallback){
+RECT summaryElement([[maybe_unused]] const char* id,RECT fallback){
 #ifdef BMS_ENABLE_SKIN_BINDINGS
  using namespace sevenmania::skin;
  if(const auto* layout=gSkinApplication.screenLayout(ScreenKind::SettingsSummary)){

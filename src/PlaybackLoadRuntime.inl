@@ -83,8 +83,8 @@ void pollPreparingPlayback(bool automaticStart=true,bool notifyFailure=true){
         // An LR2 play scene on screen starts the song from its own timeline: READY after
         // LOADSTART+LOADEND (or the load, if later), then the song PLAYSTART later.
         bool lr2LeadIn=false,lr2Due=false;
-        double lr2Scene=0,lr2Ready=0;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
+        double lr2Scene=0,lr2Ready=0;
         if(gLr2PlayScene&&!gLr2GpuFailed&&!gLr2Play.leadInFailed&&gLr2Play.leadInAge()>=0) {
             if(gLr2Play.loadedAt<0&&gPlaybackLoad.canStart())gLr2Play.loadedAt=gLr2Play.leadInAge();
             const auto lead=sevenmania::skin::lr2::playLeadIn(gLr2Play.leadInTimes,gLr2Play.leadInAge(),gLr2Play.loadedAt);

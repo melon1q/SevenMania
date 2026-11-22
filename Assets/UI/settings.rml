@@ -138,6 +138,11 @@
 <div class="row"><label for="library-grouping">채보 표시</label><div class="ctl"><select id="library-grouping"></select></div></div>
 <div class="hint">외부 BMS 폴더를 복사 없이 등록합니다. 등록 해제해도 원본 파일은 보존됩니다. Explorer의 폴더 또는 BMS 파일을 곡 선택 화면으로 드롭해도 등록할 수 있습니다. 차분 모아 보기는 같은 폴더의 같은 곡을 SP/DP 구분 없이 묶으며, 곡 선택 후 ← / →로 채보를 변경합니다.</div>
 <div id="library-status" class="hint">대기 중</div>
+<h3>난이도표</h3>
+<div class="row"><label for="table-url">표 주소</label><div class="ctl"><input id="table-url" type="text" value="" /></div></div>
+<div class="actions"><button id="table-add">추가</button><button id="table-remove">선택한 표 제거</button><button id="table-refresh">모두 새로고침</button></div>
+<div class="row"><label for="table-list">등록된 표</label><div class="ctl"><select id="table-list" style="white-space: nowrap; overflow: hidden;"></select></div></div>
+<div id="table-status" class="hint"></div>
 </div>
 
 </div></div><div class="footer"><div id="settings-status">변경사항이 자동으로 저장됩니다.</div><button id="settings-close" class="close-button">닫기 · Esc</button></div></div></body></rml>

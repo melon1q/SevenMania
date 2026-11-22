@@ -102,6 +102,7 @@ void syncRmlSettingsState(const std::wstring& status = L"") {
     gRmlSettingsPage.setText("skin-state","이 빌드에서는 외부 스킨을 지원하지 않습니다.");
 #endif
     syncLr2SkinSettings();
+    syncTableSettings();
     const auto folderText=[](const std::filesystem::path& folder,const char* fallback){
         if(folder.empty())return std::string(fallback);std::error_code ec;
         return settingsUtf8(folder.wstring()+(std::filesystem::is_directory(folder,ec)?L"":L" [찾을 수 없음]"));};
@@ -135,6 +136,7 @@ bool showRmlSettingsPage() {
                     }
                 }
                 if(handleLr2SkinSetting(id,value))return;
+                if(handleTableSetting(id,value))return;
                 if(id=="key-mode"){if(gCapturingBindings)cancelKeyBindingCapture();try{gBindingMode=std::clamp(std::stoi(value),0,4);}catch(...){}syncRmlSettingsState();return;}
                 if(id.starts_with("library-")) {
                     if(id=="library-sources"){try{gLibrarySourceSelection=std::stoull(value);}catch(...){}PostMessageW(gWindow,WM_LIBRARY_ACTION,7,0);return;}

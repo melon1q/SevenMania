@@ -264,6 +264,7 @@ ctest --test-dir Build-Release -C Release --output-on-failure
 
 - [BMS 호환성 감사](BMS-Compatibility-Audit-2026-10-23.md), [BMS 호환성 구현 결과](BMS-Compatibility-Implementation-2026-10-23.md)
 - [Song Library](SongLibrary.md), [Song Library 2](SongLibrary2-2026-11-03.md), [자동 폴더](AutomaticSongFolders-2026-11-03.md)
+- [난이도표](DifficultyTables-2026-11-22.md): 표 등록·새로고침, 곡 선택 화면의 표·레벨 폴더, MD5/SHA-256 대조
 - [선곡·설정](SelectionAndSettings-2026-11-05.md), [플레이 로딩 상태](PlaybackLoadState-Phase2-2026-11-05.md), [비동기 로딩](AsyncPlaybackLoading-Phase3-2026-11-05.md)
 - [프리뷰](PlayPreview-Phase4-2026-11-06.md), [선곡 오디오](SelectionAudio-2026-11-07.md), [효과음 · 음악 폴더](SystemSoundFolders-2026-11-18.md), [BGA 동기화](Random-Bga-Sync.md)
 
