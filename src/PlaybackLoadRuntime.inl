@@ -1,4 +1,6 @@
-﻿// UI-only publication, readiness and diagnostics. No decoder runs in these functions.
+﻿// Defined with PlaybackTransitions.inl, which is included after this file.
+void pausePlayback(bool focusMenu = true);
+// UI-only publication, readiness and diagnostics. No decoder runs in these functions.
 void drawGameScreen(HDC);void drawPlaybackLoadingScreen(HDC);
 bool waitingForLr2Play() {
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -92,6 +94,8 @@ void pollPreparingPlayback(bool automaticStart=true,bool notifyFailure=true){
         const bool due=gPlayPreview.requested||(lr2LeadIn?lr2Due:PlaybackLoadJob::elapsed(j.ready)>=3000);
         if(automaticStart&&!songEntryActive()&&gPlaybackLoad.canStart()&&due){
             const bool started=startPreparedChart(notifyFailure);if(started)j.playing=PlaybackLoadJob::Clock::now();
+            // Focus left during loading or the countdown: the song opens on the pause menu.
+            if(started&&gPauseWhenPlayStarts){gPauseWhenPlayStarts=false;pausePlayback(false);}
 #ifdef BMS_ENABLE_SKIN_BINDINGS
             if(started&&lr2LeadIn){gLr2Play.sceneLead=lr2Scene;gLr2Play.readyLead=lr2Ready;}
 #endif

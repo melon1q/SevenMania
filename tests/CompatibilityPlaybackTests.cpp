@@ -226,9 +226,11 @@ int wmain(int argc,wchar_t** argv){
             check(parsed.chart.playable && parsed.chart.mode==mode,"additional key mode blocked");
             if(mode==bms::ChartMode::PopnNine)check(parsed.chart.mines.size()==2 && parsed.chart.mines[0].lane==0 && parsed.chart.mines[1].lane==8,"PMS mines mapped to wrong key layout");gCharts={parsed.chart};gActiveChartIndex=0;gPlayhead=0;gHit.assign(parsed.chart.notes.size(),false);gHolds.fill(LongNoteHold{});gPressed.fill(false);gMineHit.clear();gJudgementText.clear();gFeedback.reset();gBgaActiveImages.fill(L"");gBgaActiveImages[1]=L"00";gBgaBackplateDirty=true;gBgaRaster.reset();
             const auto layout=bms::chartLayout(parsed.chart,0,68,104);gKeyBeams.configure(layout);gFeedback.configure(layout);gGpuFrame=false;drawGameScreen(gBackBufferDc);snapshot(root/(std::wstring(extension)+L"-cpu.bmp"));
-            const bool dual=mode==bms::ChartMode::TenKey || mode==bms::ChartMode::FourteenKey;
-            const int keyWidth=dual?45:68,scratch=dual?68:104;
-            auto geometry=bms::chartLayout(parsed.chart,0,keyWidth,scratch);geometry.fieldX=(gWindowWidth-geometry.totalWidth())/2;
+            // Same lane widths as the renderer (GameplayRender.inl), so the sample lands on the note in every
+            // mode, PMS included. The empty background between notes differs by one step between the CPU tint
+            // (8-bit fixed point) and the GPU shader, so it is not what this compares.
+            const auto deck=bms::chartDeckWidths(parsed.chart,gUiScale);
+            auto geometry=bms::chartLayout(parsed.chart,0,deck.key,deck.scratch);geometry.fieldX=(gWindowWidth-geometry.totalWidth())/2;
             const int firstLane=parsed.chart.notes.front().lane;
             const int px=(geometry.left(firstLane)+geometry.right(firstLane))/2,py=judgementLineY(gWindowHeight)+5;
             const uint32_t expected=static_cast<uint32_t*>(gBackBufferPixels)[py*gWindowWidth+px]&0xffffffu;

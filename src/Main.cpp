@@ -579,6 +579,9 @@ bool gResultGaugeCleared = true;
 bool gResultGaugeFailed{};
 // Set when the player picks QUIT in the pause menu: the play then ends as a failure.
 bool gPlayAbandoned{};
+// The window lost focus while a play was loading or counting down: the song starts paused,
+// unless focus comes back first (then it starts normally).
+bool gPauseWhenPlayStarts{};
 std::array<int, 8> gLaneColors{ 4, 7, 2, 7, 2, 7, 2, 7 };
 constexpr std::array<int, 2> noteColors(int lane) {
     return lane == 0 ? std::array{3, 4} : std::array{7, 2};
@@ -2284,6 +2287,7 @@ void showBrowseView() {
     gFeedback.reset();
     gGrooveGauge.reset();
     gPlayAbandoned = false;
+    gPauseWhenPlayStarts = false;
     resetFailureEnding();
     gKeyBeams.reset();
     if(gActiveChartIndex>=0 && gActiveChartIndex<static_cast<int>(gCharts.size())) {

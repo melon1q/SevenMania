@@ -403,6 +403,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         break;
     case WM_SETFOCUS:
+        gPauseWhenPlayStarts = false; // back before the song started: start it normally
         if (gPaused && gPauseSelection < gPauseButtons.size() && gPauseButtons[gPauseSelection])
             SetFocus(gPauseButtons[gPauseSelection]);
         else if (!gPlaying && !gShowingResult && (!gLoading || !gLoadResult.playback) && !gSettingsWindow)
@@ -417,6 +418,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (gCapturingBindings && !gSettingsWindow) cancelKeyBindingCapture();
         // A no-input benchmark keeps running in the background (nothing to pause for).
         if (gPlaying && !gPaused && !gNoInputBenchmark) pausePlayback(false);
+        else if (!gPlaying && gPlaybackLoad.preparing() && !gNoInputBenchmark) gPauseWhenPlayStarts = true;
         gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();
         for(int lane=0;lane<16;++lane)releaseLaneInput(lane);
         if (gShowingResult && GetFocus() != gResultNext) {

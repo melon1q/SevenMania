@@ -32,6 +32,16 @@ constexpr PlayOutcome playOutcome(bool gaugeClearConditionMet, bool gaugeDeplete
     return {gaugeClearConditionMet && !failed, failed};
 }
 
+// What the UI does about a lost audio output. A running play is paused where it is (the player resumes
+// on the current default device); a paused play or a fail ending waits; outside play the UI sounds are
+// reopened. Nothing happens while a chart loads, since the loader owns the engine then.
+enum class AudioRecovery { None, PausePlay, RestartUi };
+constexpr AudioRecovery audioRecovery(bool deviceLost, bool playing, bool paused, bool loading, bool failureEnding) noexcept {
+    if (!deviceLost || loading) return AudioRecovery::None;
+    if (playing) return paused || failureEnding ? AudioRecovery::None : AudioRecovery::PausePlay;
+    return AudioRecovery::RestartUi;
+}
+
 // LR2 / beatoraja: an empty gauge or QUIT ends the play on the spot. The song stops, the fail shutters
 // close with playstop, and the result screen then plays fail. A song that simply runs out (cleared or
 // not) plays no playstop; its result plays clear or fail.

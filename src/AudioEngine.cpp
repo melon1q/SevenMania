@@ -455,6 +455,7 @@ bool AudioEngine::startOutput(std::wstring& error, bool effectsOnly, double star
         error = L"WASAPI 오디오 출력을 시작하지 못했습니다."; stop(); return false;
     }
     playbackEpoch_ = std::chrono::steady_clock::now();
+    deviceLost_ = false;
     worker_ = std::thread(&AudioEngine::workerLoop, this);
     return true;
 }
@@ -599,6 +600,16 @@ bool AudioEngine::renderAvailable() {
     return SUCCEEDED(renderClient_->ReleaseBuffer(available, 0));
 }
 
+void AudioEngine::startSongVoice(const std::wstring* sampleId, const AudioData* data, uint64_t frame, bool keySound) {
+    uint64_t stop = noStop;
+    for (auto& voice : voices_) {
+        if (voice.effectSound || voice.sampleId != sampleId) continue;
+        if (voice.startFrame < frame) voice.stopFrame = std::min(voice.stopFrame, frame); // the older sound stops here
+        else if (voice.startFrame > frame) stop = std::min(stop, voice.startFrame);       // a later one stops this
+    }
+    voices_.push_back({ data, frame, keySound, false, sampleId, stop });
+}
+
 void AudioEngine::fillBuffer(int16_t* target, uint32_t frames) {
 #ifdef BMS_PERF_DIAGNOSTICS
     const auto audioStart=perf::Clock::now();
@@ -613,7 +624,9 @@ void AudioEngine::fillBuffer(int16_t* target, uint32_t frames) {
     const auto& songSamples = playbackRate_ == 1.0 ? samples_ : playbackSamples_;
     while (!effectsOnly_ && nextBgm_ < bgm_.size() && bgm_[nextBgm_].frame / playbackRate_ < end) {
         const auto& event = bgm_[nextBgm_++];
-        if (songSamples.contains(event.id) && (!slicedChart_ || triggeredSlices_.insert(event.id).second)) voices_.push_back({ songSamples.at(event.id).get(), static_cast<uint64_t>(std::llround(event.frame / playbackRate_)), false, false });
+        const auto sample = songSamples.find(event.id);
+        if (sample != songSamples.end() && (!slicedChart_ || triggeredSlices_.insert(event.id).second))
+            startSongVoice(&sample->first, sample->second.get(), static_cast<uint64_t>(std::llround(event.frame / playbackRate_)), false);
     }
     {
 #ifdef BMS_PERF_DIAGNOSTICS
@@ -623,7 +636,11 @@ void AudioEngine::fillBuffer(int16_t* target, uint32_t frames) {
 #ifdef BMS_PERF_DIAGNOSTICS
         if(perf::detailed)perf::audioLockNs.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(perf::Clock::now()-lockStart).count(),std::memory_order_relaxed);
 #endif
-        if (!effectsOnly_) for (const auto& id : pendingTriggers_) if (songSamples.contains(id) && (!slicedChart_ || triggeredSlices_.insert(id).second)) voices_.push_back({ songSamples.at(id).get(), start, true, false });
+        if (!effectsOnly_) for (const auto& id : pendingTriggers_) {
+            const auto sample = songSamples.find(id);
+            if (sample != songSamples.end() && (!slicedChart_ || triggeredSlices_.insert(id).second))
+                startSongVoice(&sample->first, sample->second.get(), start, true);
+        }
         pendingTriggers_.clear();
         const auto latestEffect = pendingEffect_.take();
         if (!latestEffect.empty()) {
@@ -642,19 +659,28 @@ void AudioEngine::fillBuffer(int16_t* target, uint32_t frames) {
     for (const auto& voice : voices_) {
         if (!voice.data || voice.startFrame >= end) continue;
         const uint64_t first = std::max(start, voice.startFrame);
-        const uint64_t last = std::min(end, voice.startFrame + voice.data->pcm.size() / channels_);
+        const uint64_t cutEnd = voice.stopFrame == noStop ? noStop : voice.stopFrame + cutFadeFrames;
+        const uint64_t last = std::min({end, voice.startFrame + voice.data->pcm.size() / channels_, cutEnd});
         if (first >= last) continue;
         const auto* source = voice.data->pcm.data() + static_cast<size_t>(first - voice.startFrame) * channels_;
         auto* destination = mixBuffer_.data() + static_cast<size_t>(first - start) * channels_;
-        if (!voice.effectSound && !voice.keySound && musicFadeEndFrame_ > musicFadeStartFrame_ && first < musicFadeEndFrame_) {
+        const bool musicFading = !voice.effectSound && !voice.keySound && musicFadeEndFrame_ > musicFadeStartFrame_ && first < musicFadeEndFrame_;
+        const bool cutting = voice.stopFrame != noStop && last > voice.stopFrame;
+        if (musicFading || cutting) {
+            const float base = voice.effectSound ? effects : voice.keySound ? keys : music;
             const size_t frameCount = static_cast<size_t>(last - first);
             for (size_t frame = 0; frame < frameCount; ++frame) {
                 const uint64_t outputFrame = first + frame;
-                const float progress = outputFrame <= musicFadeStartFrame_ ? 0.0f :
-                    outputFrame >= musicFadeEndFrame_ ? 1.0f :
-                    static_cast<float>(outputFrame - musicFadeStartFrame_) / static_cast<float>(musicFadeEndFrame_ - musicFadeStartFrame_);
-                const float fade = progress * progress * (3.0f - 2.0f * progress);
-                const float gain = music * fade;
+                float gain = base;
+                if (musicFading) {
+                    const float progress = outputFrame <= musicFadeStartFrame_ ? 0.0f :
+                        outputFrame >= musicFadeEndFrame_ ? 1.0f :
+                        static_cast<float>(outputFrame - musicFadeStartFrame_) / static_cast<float>(musicFadeEndFrame_ - musicFadeStartFrame_);
+                    gain *= progress * progress * (3.0f - 2.0f * progress);
+                }
+                // A cut voice ramps linearly to silence instead of stopping on a click.
+                if (cutting && outputFrame >= voice.stopFrame)
+                    gain *= 1.0f - static_cast<float>(outputFrame - voice.stopFrame) / static_cast<float>(cutFadeFrames);
                 destination[frame * channels_] += source[frame * channels_] * gain;
                 destination[frame * channels_ + 1] += source[frame * channels_ + 1] * gain;
             }
@@ -667,7 +693,8 @@ void AudioEngine::fillBuffer(int16_t* target, uint32_t frames) {
     if (target) for (size_t i = 0, count = static_cast<size_t>(frames) * channels_; i < count; ++i)
         target[i] = static_cast<int16_t>(std::clamp(mixBuffer_[i], -32768.0f, 32767.0f));
     voices_.erase(std::remove_if(voices_.begin(), voices_.end(), [end](const Voice& voice) {
-        return !voice.data || voice.startFrame + voice.data->pcm.size() / channels_ <= end;
+        return !voice.data || voice.startFrame + voice.data->pcm.size() / channels_ <= end ||
+            (voice.stopFrame != noStop && voice.stopFrame + cutFadeFrames <= end);
     }), voices_.end());
     nextFrame_ = end;
 }
@@ -689,6 +716,7 @@ void AudioEngine::workerLoop() {
 #ifdef BMS_PERF_DIAGNOSTICS
             ++renderFailures_;
 #endif
+            deviceLost_ = true; // the UI thread pauses the play and reopens the default device
             running_ = false; break;
         }
     }

@@ -79,6 +79,17 @@ public:
         return bytes;
     }
     bool isRunning() const noexcept { return running_.load(); }
+    // The output device went away (unplugged, disabled, driver reset): the render thread stopped and
+    // the next successful start clears this. Set by the render thread, read by the UI thread.
+    bool deviceLost() const noexcept { return deviceLost_.load(); }
+    // UI thread, after deviceLost(): freeze positionSeconds() where the song was, as a pause does,
+    // so the game holds still until the output is opened again (startAt).
+    void holdAfterDeviceLoss() noexcept {
+        if (paused_) return;
+        pausedPositionSeconds_ = positionSeconds();
+        pausedAt_ = std::chrono::steady_clock::now();
+        paused_ = true;
+    }
 
 private:
     friend struct AudioEngineTestAccess;
@@ -88,7 +99,14 @@ private:
     const std::atomic_bool* prepareCancelled_{};
     struct AudioData { std::vector<int16_t> pcm; };
     struct BgmFrame { uint64_t frame{}; std::wstring id; };
-    struct Voice { const AudioData* data{}; uint64_t startFrame{}; bool keySound{}; bool effectSound{}; };
+    // sampleId points at the voice's key in the song sample map (stable while the song is loaded); a new
+    // voice of the same WAV id cuts the older one at its start (LR2 / beatoraja), fading over cutFadeFrames.
+    // It is the id, not the data, that decides: identical files may share one decoded buffer.
+    static constexpr uint64_t noStop = ~uint64_t{};
+    static constexpr uint64_t cutFadeFrames = 64;
+    struct Voice { const AudioData* data{}; uint64_t startFrame{}; bool keySound{}; bool effectSound{};
+        const std::wstring* sampleId{}; uint64_t stopFrame = noStop; };
+    void startSongVoice(const std::wstring* sampleId, const AudioData* data, uint64_t frame, bool keySound);
 
     uint32_t sampleRate_ = 44100;
     bool decodeRateReady_{};
@@ -123,6 +141,7 @@ private:
     std::set<std::wstring> triggeredSlices_;
     std::atomic_bool running_{ false };
     std::atomic_bool paused_{ false };
+    std::atomic_bool deviceLost_{ false };
     std::atomic_bool exclusiveOutputRequested_{ false };
     std::atomic_bool exclusiveModeActive_{ false }, exclusiveModeFallback_{ false };
     mutable std::mutex deviceMutex_;

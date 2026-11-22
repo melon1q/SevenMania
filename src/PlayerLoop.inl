@@ -10,6 +10,7 @@ int runPlayerLoop() {
             latencyFrame = latencyControl.beginFrame();
         }
         gSelectionAudio.tickDecision();
+        pollAudioDevice();
         gLatencyInputPump = latencyFrame;
         {HUD_SCOPE_IF(InputPump,latencyFrame);
         // Bound message processing so continuous input cannot starve a due frame.

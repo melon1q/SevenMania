@@ -33,9 +33,9 @@ void writeChart(const std::filesystem::path& path, const std::string& title, con
     out << "#PLAYER 1\n#TITLE " << title << "\n#ARTIST composer\n#PLAYLEVEL " << level
         << "\n#GENRE TEST GENRE\n#BPM 120\n#WAV01 click.wav\n" << notes;
 }
-bool waitUntil(const std::function<bool()>& condition) {
+bool waitUntil(const std::function<bool()>& condition, ULONGLONG timeoutMs = 5000) {
     const ULONGLONG start = GetTickCount64();
-    while (GetTickCount64() - start < 5000) {
+    while (GetTickCount64() - start < timeoutMs) {
         if (condition()) return true;
         Sleep(10);
     }
@@ -275,11 +275,15 @@ int wmain(int argc, wchar_t** argv) {
             GUITHREADINFO info{ sizeof(info) };
             return GetGUIThreadInfo(appThread, &info) ? info.hwndFocus : nullptr;
         };
-        // The hidden list also means loading; decoder/title fade duration varies.
-        require(waitUntil([&] {
+        // The hidden list also means loading. Focus lost while the play loads or counts down (about
+        // three seconds after the load, or the LR2 skin's lead-in) opens the song on the pause menu,
+        // so this waits for loading, the countdown and the start rather than the usual five seconds.
+        const ULONGLONG focusLostAt = GetTickCount64();
+        if (!waitUntil([&] {
             SendMessageW(app.main, WM_KILLFOCUS, 0, 0);
             return IsWindowVisible(GetDlgItem(app.main, 1251));
-        }), "losing focus did not pause gameplay");
+        }, 20000)) throw std::runtime_error("losing focus did not pause gameplay");
+        std::cout << "Focus loss paused the play after " << (GetTickCount64() - focusLostAt) << " ms\n";
         Sleep(100);
         require(IsWindowVisible(GetDlgItem(app.main, 1251)) &&
             (GetWindowLongPtrW(list, GWL_STYLE) & WS_VISIBLE) == 0, "pause menu disappeared after focus moved away");

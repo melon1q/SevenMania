@@ -26,6 +26,14 @@ int main() {
         const auto quitLow = bms::playOutcome(false, false, true);
         require(!quitLow.cleared && quitLow.failed, "quit fails");
 
+        // Lost audio output: pause a running play, wait while paused or failing, reopen UI sounds elsewhere.
+        using bms::AudioRecovery;
+        require(bms::audioRecovery(false, true, false, false, false) == AudioRecovery::None, "nothing without a loss");
+        require(bms::audioRecovery(true, true, false, false, false) == AudioRecovery::PausePlay, "a running play pauses");
+        require(bms::audioRecovery(true, true, true, false, false) == AudioRecovery::None &&
+            bms::audioRecovery(true, true, false, false, true) == AudioRecovery::None, "a paused play or a fail ending waits");
+        require(bms::audioRecovery(true, false, false, false, false) == AudioRecovery::RestartUi, "select and result reopen UI sounds");
+        require(bms::audioRecovery(true, false, false, true, false) == AudioRecovery::None, "a loading chart owns the engine");
         // playstop belongs to the moment a play fails (empty gauge or QUIT), not to a song that runs out.
         require(bms::playStopsOnFailure(true, false) && bms::playStopsOnFailure(false, true) && bms::playStopsOnFailure(true, true),
             "empty gauge and quit play playstop");

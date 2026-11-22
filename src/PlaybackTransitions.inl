@@ -185,10 +185,16 @@ void continueBenchmarkSeries() {
     gBenchmarkAutoStarting = false;
 }
 
-void pausePlayback(bool focusMenu = true) {
+void showPauseMenu(bool focusMenu);
+void pausePlayback(bool focusMenu) {
     HUD_SCOPE(PauseTransition);
     // The fail ending has already stopped the song; pausing would cut playstop and stall the ending.
     if (!gPlaying || gPaused || gFailureEndingStarted || !gAudio.pause()) return;
+    showPauseMenu(focusMenu);
+}
+
+// The pause state and menu once the song itself is held (paused, or stopped by a lost device).
+void showPauseMenu(bool focusMenu) {
     gPlayhead = heardPlayhead();
     gPaused = true;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -211,8 +217,13 @@ void resumePlayback() {
     prepareSkinForPlayback();
 #endif
     if (!gAudio.resume()) {
-        showBrowseView();
-        return;
+        // The device the song was paused on is gone (or would not restart): open the current default
+        // device at the paused position. If that fails too, stay on the pause menu so QUIT still works.
+        std::wstring error;
+        if (!gAudio.startAt(gAudio.positionSeconds(), error, playbackTimingScale())) {
+            setStatus(L"오디오 장치를 열지 못했습니다. 장치를 연결한 뒤 다시 계속하세요. " + error);
+            return;
+        }
     }
     gPaused = false;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -222,6 +233,25 @@ void resumePlayback() {
     SetFocus(gWindow);
     gFramePacer.reset(gTargetFps);
     InvalidateRect(gWindow, nullptr, TRUE);
+}
+
+// Once per loop: a play whose output device vanished pauses where it was; outside play the UI sounds
+// are reopened, at most once a second while no device answers.
+void pollAudioDevice() {
+    static std::chrono::steady_clock::time_point lastRetry{};
+    switch (bms::audioRecovery(gAudio.deviceLost(), gPlaying, gPaused, gLoading, gFailureEndingStarted)) {
+    case bms::AudioRecovery::PausePlay:
+        gAudio.holdAfterDeviceLoss();
+        showPauseMenu(true);
+        setStatus(L"오디오 장치가 끊겼습니다. 계속하면 지금의 기본 장치로 이어서 재생합니다.");
+        break;
+    case bms::AudioRecovery::RestartUi: {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastRetry >= std::chrono::seconds(1)) { lastRetry = now; startUiEffects(); }
+        break;
+    }
+    default: break;
+    }
 }
 
 // QUIT in the pause menu: a scored play ends like an empty gauge (LR2 skins run their #CLOSE shutters,

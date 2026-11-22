@@ -91,6 +91,37 @@ struct AudioEngineTestAccess {
         const std::array<int16_t, 8> expected{500, -500, 1250, -1250, 2000, -2000, 2750, -2750};
         if (result != expected) throw std::runtime_error("block mixer changed voice timing or category gains");
     }
+    // The same WAV id played again cuts the earlier sound (LR2 / beatoraja), fading it out over a few
+    // frames; a different id, even one sharing the same decoded buffer, keeps sounding.
+    static void verifyRetriggerCut() {
+        AudioEngine mixer;
+        mixer.sampleRate_ = 48000;
+        auto tone = std::make_shared<AudioEngine::AudioData>();
+        tone->pcm.assign(48000 * 2, 1000); // one second of a constant level, both channels
+        mixer.samples_[L"01"] = tone; mixer.samples_[L"02"] = tone;
+        mixer.setVolumes(100, 100, 100, 100);
+        constexpr uint32_t block = 1024;
+        mixer.mixBuffer_.resize(block * 2);
+        std::vector<int16_t> out(block * 2);
+        const auto mix = [&] { mixer.fillBuffer(out.data(), block); };
+        mixer.running_ = true;
+        mixer.trigger(L"01"); mix();                                  // frames 0-1023: one voice at 1000
+        if (out[0] != 1000 || out[2 * (block - 1)] != 1000) throw std::runtime_error("first key sound did not play");
+        mixer.trigger(L"01"); mix();                                  // retrigger at 1024: the first fades out
+        const size_t fade = static_cast<size_t>(AudioEngine::cutFadeFrames);
+        if (out[0] != 2000) throw std::runtime_error("the retriggered sound should start while the old one fades");
+        if (out[2 * fade] != 1000 || out[2 * (block - 1)] != 1000) throw std::runtime_error("the old sound was not cut by the retrigger");
+        if (!(out[2 * (fade / 2)] > 1000 && out[2 * (fade / 2)] < 2000)) throw std::runtime_error("the cut does not fade");
+        if (mixer.voices_.size() != 1) throw std::runtime_error("the cut voice was not removed");
+        mixer.trigger(L"02"); mix();                                  // another id sharing the buffer: both sound
+        if (out[2 * fade] != 2000 || mixer.voices_.size() != 2) throw std::runtime_error("a different WAV id was cut");
+        // A BGM event of the same id later in a block cuts a key sound started earlier in it.
+        mixer.voices_.clear(); mixer.nextFrame_ = 0;
+        mixer.bgm_ = {{500, L"01"}}; mixer.nextBgm_ = 0;
+        mixer.trigger(L"01"); mix();
+        if (out[2 * 400] != 1000 || out[2 * (500 + fade + 10)] != 1000) throw std::runtime_error("BGM retrigger did not cut the key sound");
+        mixer.running_ = false;
+    }
     static void pauseMixer(AudioEngine& audio) {
         audio.running_ = false;
         SetEvent(audio.audioEvent_);
@@ -101,6 +132,11 @@ struct AudioEngineTestAccess {
         audio.worker_ = std::thread(&AudioEngine::workerLoop, &audio);
     }
     static uint64_t nextFrame(const AudioEngine& audio) { return audio.nextFrame_.load(); }
+    // What the render thread does when the device fails: stop rendering and flag the loss.
+    static void loseDevice(AudioEngine& audio) {
+        pauseMixer(audio);
+        audio.deviceLost_ = true;
+    }
 };
 
 // Keysound-heavy charts such as [EBIMAYO]GOODRUSH decode to ~563MB of PCM and must still load on x64.
@@ -186,6 +222,7 @@ int main(int argc, char** argv) {
             if (!audio.prepare(chart, error)) throw std::runtime_error("song reload after release failed");
             AudioEngineTestAccess::verifyMixing();
             AudioEngineTestAccess::verifyPitchPreservingMix();
+            AudioEngineTestAccess::verifyRetriggerCut();
             audio.setVolumes(0, 0, 0, 0);
             for (uint32_t frames : {32u, 64u, 128u, 256u, 512u, 1024u}) {
                 if (!audio.setBufferFrames(frames) || audio.bufferFrames() != frames || !audio.start(error))
@@ -236,6 +273,22 @@ int main(int argc, char** argv) {
                 const double paused = audio.positionSeconds();
                 Sleep(40);
                 if (audio.positionSeconds() != paused || !audio.resume()) throw std::runtime_error("practice pause changed chart position");
+                audio.stop();
+            }
+            {
+                // A lost device: the UI freezes the song where it was, a plain resume fails, and reopening the
+                // default device at that position continues the song and clears the loss.
+                if (!audio.startAt(0.25, error)) throw std::runtime_error("device loss test could not start");
+                Sleep(120);
+                AudioEngineTestAccess::loseDevice(audio);
+                if (!audio.deviceLost() || audio.isRunning()) throw std::runtime_error("device loss was not reported");
+                audio.holdAfterDeviceLoss();
+                const double held = audio.positionSeconds();
+                Sleep(40);
+                if (audio.positionSeconds() != held || held < 0.25) throw std::runtime_error("device loss did not hold the song position");
+                if (audio.resume()) throw std::runtime_error("resume succeeded on a lost device");
+                if (!audio.startAt(held, error) || audio.deviceLost() || std::abs(audio.positionSeconds() - held) > 0.05)
+                    throw std::runtime_error("reopening the device did not continue the song");
                 audio.stop();
             }
             if (audio.startAt(0, error, 0.09) || audio.startAt(0, error, 10.01)) throw std::runtime_error("out-of-range practice rate accepted");
