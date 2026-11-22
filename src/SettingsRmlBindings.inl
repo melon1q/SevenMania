@@ -16,6 +16,7 @@ const std::vector<RmlSettingBinding>& rmlSettingBindings() {
         {"intro-enabled",ID_INTRO_ENABLE,RmlSettingBinding::Select},
         {"game-speed",ID_SPEED,RmlSettingBinding::Select},
         {"game-hs-fix",ID_HI_SPEED_FIX,RmlSettingBinding::Select},
+        {"game-lane-option",ID_LANE_OPTION,RmlSettingBinding::Select},
         {"game-brightness",ID_BGA_DARKNESS,RmlSettingBinding::Range},
         {"game-gauge",ID_GROOVE_GAUGE,RmlSettingBinding::Select},
         {"game-timing-hint",ID_TIMING_HINT,RmlSettingBinding::Select},

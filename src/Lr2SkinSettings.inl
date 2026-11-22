@@ -137,6 +137,16 @@ void applyLr2SkinSettings() {
     gLr2DecideScene.reset();
     if(gWindow)InvalidateRect(gWindow,nullptr,FALSE);
 }
+// CUSTOMOFFSET parts in LR2 order (x, y, w, h, r, a) and the slider range for each.
+struct Lr2OffsetPart {const char* label;int range;};
+constexpr std::array<Lr2OffsetPart,6> lr2OffsetParts{{{"X",640},{"Y",640},{"W",640},{"H",640},{"회전(R)",360},{"투명도(A)",255}}};
+// Settings item "k<offset>.<part>": the part index, or a value past the end when malformed.
+std::size_t lr2OffsetPart(const std::string& item) {
+    const auto dot=item.find('.');
+    if(dot==std::string::npos)return lr2OffsetParts.size();
+    try{return static_cast<std::size_t>(std::stoul(item.substr(dot+1)));}catch(const std::exception&){return lr2OffsetParts.size();}
+}
+
 std::filesystem::path lr2ChoiceStore() {return gSettingsFile.parent_path()/L"lr2-skins.txt";}
 // Header with the user's selections applied, plus the root its file patterns resolve against.
 std::optional<sevenmania::skin::lr2::Document> lr2SkinHeader(const std::filesystem::path& file) {
@@ -195,6 +205,7 @@ void syncLr2SkinSettings(const std::wstring& status=L"") {
     // Options of one assigned skin at a time: screen, then item, then its value.
     Options items,values;
     std::string value="none";
+    bool offsetShown=false;int offsetRange=640,offsetValue=0;
     if(assigned.empty())assigned.emplace_back("none","(지정된 LR2 스킨 없음)");
     else {
         if(std::none_of(assigned.begin(),assigned.end(),[](const auto& entry){return entry.first==std::to_string(gLr2CustomScreen);}))
@@ -205,11 +216,23 @@ void syncLr2SkinSettings(const std::wstring& status=L"") {
             for(std::size_t i=0;i<header.options.size();++i)
                 if(!header.options[i].choices.empty())items.emplace_back("o"+std::to_string(i),"옵션 · "+header.options[i].name);
             for(std::size_t i=0;i<header.files.size();++i)items.emplace_back("f"+std::to_string(i),"파일 · "+header.files[i].name);
+            for(std::size_t i=0;i<header.offsets.size();++i)
+                for(std::size_t part=0;part<lr2OffsetParts.size();++part)
+                    if(header.offsets[i].enabled[part])
+                        items.emplace_back("k"+std::to_string(i)+"."+std::to_string(part),"오프셋 · "+header.offsets[i].name+" · "+lr2OffsetParts[part].label);
             if(std::none_of(items.begin(),items.end(),[](const auto& entry){return entry.first==gLr2CustomItem;}))
                 gLr2CustomItem=items.empty()?std::string{}:items.front().first;
             if(!gLr2CustomItem.empty()) {
                 const auto index=static_cast<std::size_t>(std::stoul(gLr2CustomItem.substr(1)));
-                if(gLr2CustomItem.front()=='o') {
+                if(gLr2CustomItem.front()=='k') {
+                    // An offset part is edited with the slider below; the value list stays empty.
+                    const auto part=lr2OffsetPart(gLr2CustomItem);
+                    if(index<header.offsets.size()&&part<lr2OffsetParts.size()) {
+                        offsetShown=true;
+                        offsetRange=lr2OffsetParts[part].range;
+                        offsetValue=header.offsets[index].values[part];
+                    }
+                } else if(gLr2CustomItem.front()=='o') {
                     const auto& option=header.options[index];
                     for(std::size_t i=0;i<option.choices.size();++i)values.emplace_back(std::to_string(i),option.choices[i]);
                     value=std::to_string(option.selected);
@@ -235,6 +258,15 @@ void syncLr2SkinSettings(const std::wstring& status=L"") {
     gRmlSettingsPage.setOptions("lr2-custom-value",values);
     gRmlSettingsPage.setValue("lr2-custom-value",value);
     gRmlSettingsPage.setEnabled("lr2-custom-value",allowed&&value!="none");
+    gRmlSettingsPage.setVisible("lr2-custom-offset-row",offsetShown);
+    if(offsetShown) {
+        gRmlSettingsPage.setRange("lr2-custom-offset",-offsetRange,offsetRange);
+        gRmlSettingsPage.setValue("lr2-custom-offset",std::to_string(offsetValue));
+        gRmlSettingsPage.setText("lr2-custom-offset-value",std::to_string(offsetValue));
+        gRmlSettingsPage.setEnabled("lr2-custom-offset",allowed);
+    }
+    gRmlSettingsPage.setOptions("lr2-score-graph",{{"1","표시 (옵션 39)"},{"0","숨김 (옵션 38)"}});
+    gRmlSettingsPage.setValue("lr2-score-graph",lr2ScoreGraph()?"1":"0");
     const std::wstring state=!status.empty()?status:gLr2CommandLine?L"명령줄 인자로 지정한 LR2 스킨을 사용 중입니다. 이번 실행에서는 여기서 바꿀 수 없습니다.":
         !gCompositionEnabled?L"LR2 스킨은 GPU 렌더링이 켜져 있어야 표시됩니다.":
         !failures.empty()?L"불러올 수 없는 스킨이 있습니다. 해당 화면은 SevenMania 스킨으로 표시됩니다."+failures:
@@ -253,6 +285,8 @@ bool handleLr2SkinSetting(const std::string& id,const std::string& value) {
         return true;
     }
     if(id=="lr2-custom-item"){gLr2CustomItem=value=="none"?std::string{}:value;syncLr2SkinSettings();return true;}
+    // A user setting rather than a skin file, so it may change during play too (read when the next play loads).
+    if(id=="lr2-score-graph"){lr2ScoreGraph(value=="1");syncLr2SkinSettings();return true;}
     if(gLr2CommandLine){syncLr2SkinSettings();return true;}
     if(gPlaying||gShowingResult||gLoading){syncLr2SkinSettings(L"곡 선택 화면에서 변경하세요.");return true;}
     if(id=="lr2-rescan"){gLr2SkinsScanned=false;syncLr2SkinSettings();return true;}
@@ -276,6 +310,27 @@ bool handleLr2SkinSetting(const std::string& id,const std::string& value) {
         saveLr2SkinSettings();
         applyLr2SkinSettings();
         syncLr2SkinSettings();
+        return true;
+    }
+    if(id=="lr2-custom-offset"&&gLr2CustomItem.starts_with("k")&&gLr2CustomScreen>=0&&gLr2CustomScreen<static_cast<int>(lr2ScreenSlotCount)) {
+        const auto& file=*slots[static_cast<std::size_t>(gLr2CustomScreen)].file;
+        const auto document=file.empty()?std::nullopt:lr2SkinHeader(file);
+        bool saved=false;
+        try {
+            const auto item=static_cast<std::size_t>(std::stoul(gLr2CustomItem.substr(1)));
+            const auto part=lr2OffsetPart(gLr2CustomItem);
+            if(document&&item<document->header.offsets.size()&&part<lr2OffsetParts.size()) {
+                const auto& offset=document->header.offsets[item];
+                const int range=lr2OffsetParts[part].range;
+                auto choices=lr2SkinChoices(file);
+                auto& values=choices.offsets.try_emplace(offset.name,offset.values).first->second;
+                values[part]=std::clamp(std::stoi(value),-range,range);
+                saved=sevenmania::skin::lr2::saveSkinChoices(lr2ChoiceStore(),file,choices);
+            }
+        } catch(const std::exception&) {
+        }
+        if(saved)applyLr2SkinSettings();
+        syncLr2SkinSettings(saved?L"":L"스킨 오프셋을 저장하지 못했습니다.");
         return true;
     }
     if(id=="lr2-custom-value"&&value!="none"&&!gLr2CustomItem.empty()&&gLr2CustomScreen>=0&&gLr2CustomScreen<static_cast<int>(lr2ScreenSlotCount)) {

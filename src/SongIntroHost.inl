@@ -137,10 +137,11 @@ void loadLr2Result() {
   std::copy_n(gLr2Play.gaugeHistory.begin(),gLr2Play.gaugeSamples,stats.gaugeHistory.begin());
  }
  // The record is saved after this, so it still holds the best before this play.
+ stats.targetExScore=currentTargetExScore(std::nullopt,stats.noteCount);
  if(const auto* record=playRecordForChart(static_cast<std::size_t>(gActiveChartIndex));record&&record->played) {
   stats.bestMaxCombo=static_cast<int>(record->maxCombo);
   if(record->bestExScore&&*record->bestExScore<=2LL*stats.noteCount)stats.bestExScore=record->bestExScore;
-  stats.targetExScore=stats.bestExScore.value_or(0);
+  stats.targetExScore=currentTargetExScore(stats.bestExScore,stats.noteCount);
   stats.bestPoints=record->bestAccuracyScore/5;
   state.played=true;
   state.bestExScore=stats.bestExScore;

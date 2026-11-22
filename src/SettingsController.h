@@ -29,6 +29,7 @@ public:
         if(id==1058)return value>=0&&value<=2;
         if(id==1290)return value>=0&&value<=5;          // HI-SPEED FIX: off, start, max, main, min, constant.
         if(id==1291)return value==60||value==120;      // Select screen FPS.
+        if(id==1295)return value>=0&&value<=3;          // 1P lane option: off, mirror, random, S-random.
         if(id==1097)return value==0||value==1;
         if(id==1098)return value>=800&&value<=1500;
         if(id==1099)return value>=0&&value<=2;
@@ -75,7 +76,7 @@ public:
     void clearPending() { pending_.clear(); }
     std::map<int, int> snapshot() const {
         std::map<int, int> values;
-        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1054,1055,1056,1057,1058,1096,1097,1098,1099,1290,1291,1270,1271,1272,1273,1274}) values[id] = read_(id);
+        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1054,1055,1056,1057,1058,1096,1097,1098,1099,1290,1291,1295,1270,1271,1272,1273,1274}) values[id] = read_(id);
         for (const auto& range : {std::pair{1030,1033}, std::pair{1100,1107}, std::pair{1200,1206}})
             for (int id = range.first; id <= range.second; ++id) values[id] = read_(id);
         return values;

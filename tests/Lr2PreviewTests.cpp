@@ -842,12 +842,16 @@ int wmain(int argc,wchar_t** argv) try {
         "#SRC_BARGRAPH,0,0,2,0,1,1,1,1,0,0,77,0\n#DST_BARGRAPH,0,0,400,400,10,10,0,255,255,255,255\n"
         // Shown while no panel is open and the cursor is in the 10x20 strip 10 px into the picture.
         "#SRC_ONMOUSE,0,0,2,0,1,1,1,1,0,0,-1,10,0,10,20\n#DST_ONMOUSE,0,0,500,400,40,20,0,255,255,255,255\n"
-        "#SRC_NUMBER,0,1,0,0,10,1,10,1,0,0,47,0,2\n#DST_NUMBER,0,0,550,100,10,10,0,255,255,255,255\n";
+        "#SRC_NUMBER,0,1,0,0,10,1,10,1,0,0,47,0,2\n#DST_NUMBER,0,0,550,100,10,10,0,255,255,255,255\n"
+        // Input waits 400 ms; the skin's cursor sits 100 px right of and 350 px above the hot spot.
+        "#STARTINPUT,400\n"
+        "#SRC_MOUSECURSOR,0,0,2,0,1,1,1,1,0,0\n#DST_MOUSECURSOR,0,0,100,-350,6,6,0,255,255,255,255\n";
     auto barDocument=parse(barPath,selectOptions);
     PreviewScene barScene;
     require(barDocument&&barScene.load(*barDocument.document,barDocument.diagnostics),"bar part scene load");
     require(std::none_of(barDocument.diagnostics.begin(),barDocument.diagnostics.end(),
-        [](const auto& d){return d.message.starts_with("Command preserved");}),"bar parts, graphs and hover layers are understood");
+        [](const auto& d){return d.message.starts_with("Command preserved");}),"bar parts, graphs, hover layers, STARTINPUT and the cursor are understood");
+    require(barScene.startInputMilliseconds()==400&&barScene.hasMouseCursor(),"select STARTINPUT and MOUSECURSOR load");
     require(std::count_if(barDocument.diagnostics.begin(),barDocument.diagnostics.end(),
         [](const auto& d){return d.message=="Unsupported bar graph: 77";})==1,"unknown graph type is reported");
     SelectFrame bars;
@@ -875,9 +879,11 @@ int wmain(int argc,wchar_t** argv) try {
     first.pixel(405,235,0,0,0,"vertical level graph, empty part");
     first.pixel(405,405,0,0,0,"unknown graph is not drawn");
     first.pixel(505,405,0,0,0,"hover layer hidden without the cursor");
+    first.pixel(617,62,0,0,0,"no skin cursor while the mouse is outside");
     first.pixel(565,105,100,0,150,"level number of a sibling difficulty");
     bars.mouseX=515;bars.mouseY=410;bars.scroll=.5f;
     first.render(barScene,0,nullptr,&bars);
+    first.pixel(617,62,255,255,255,"skin cursor drawn at the mouse plus its offset");
     first.pixel(505,405,255,255,255,"hover layer under the cursor");
     first.pixel(110,265,0,255,0,"bar half way from the slot below");
     first.pixel(110,205,0,0,0,"bar has not reached its slot");
@@ -986,7 +992,7 @@ int wmain(int argc,wchar_t** argv) try {
         // Judge timing on a 1-pixel placeholder with two cells, plus-only.
         "#SRC_BUTTON,0,0,0,0,1,1,1,2,0,0,74,1,0,1\n#DST_BUTTON,0,0,100,140,40,20,0,255,255,255,255\n"
         // Random (SevenMania has none), lane cover off/on and the autoplay launcher.
-        "#SRC_BUTTON,0,0,0,0,4,1,2,1,0,0,42,1,0,0\n#DST_BUTTON,0,0,200,100,40,20,0,255,255,255,255\n"
+        "#SRC_BUTTON,0,0,0,0,4,1,2,1,0,0,43,1,0,0\n#DST_BUTTON,0,0,200,100,40,20,0,255,255,255,255\n"
         "#SRC_BUTTON,0,0,0,0,4,1,2,1,0,0,46,1,0,0\n#DST_BUTTON,0,0,200,140,40,20,0,255,255,255,255\n"
         "#SRC_BUTTON,0,0,0,0,4,1,2,1,0,0,16,1,0,0\n#DST_BUTTON,0,0,200,180,40,20,0,255,255,255,255\n"
         // 1P key 1 held, the course editor, score saved and BGA off.
@@ -1049,13 +1055,28 @@ int wmain(int argc,wchar_t** argv) try {
         panelState.optionText(60)==L"7KEYS"&&panelState.optionText(80)==L"SUGGEST"&&panelState.optionText(79)==L"FULLSCREEN",
         "panel labels follow the settings");
     require(panelState.buttonState(50)==2&&panelState.buttonState(46)==1&&panelState.buttonState(72)==0&&
-        panelState.buttonState(75)==1&&panelState.buttonState(42)==0&&panelState.buttonState(260)==0&&
+        panelState.buttonState(75)==1&&panelState.buttonState(42)==0&&panelState.buttonState(43)==0&&panelState.buttonState(260)==0&&
         panelState.buttonState(16)==0&&!panelState.buttonState(200)&&!panelState.buttonState(99),"button cells");
     panelState.hiSpeedFix=5;
     require(panelState.buttonState(55)==5&&panelState.optionText(74)==L"CONSTANT"&&SelectFrame::clickableButton(55),
         "HI-SPEED FIX button and label");
-    require(SelectFrame::clickableButton(57)&&SelectFrame::clickableButton(13)&&!SelectFrame::clickableButton(42)&&
+    require(SelectFrame::clickableButton(57)&&SelectFrame::clickableButton(13)&&!SelectFrame::clickableButton(43)&&
         !SelectFrame::clickableButton(80),"only connected buttons take clicks");
+    {
+        // Difficulty filter (10) and target (76/77, string 1, number 13).
+        SelectFrame target;
+        target.difficultyFilter=3;target.targetKind=1;target.targetRate=80;
+        require(SelectFrame::clickableButton(10)&&SelectFrame::clickableButton(76)&&SelectFrame::clickableButton(77)&&
+            target.buttonState(10)==3&&target.buttonState(76)==0&&target.buttonState(77)==2,
+            "difficulty filter and target buttons (TARGET cell 2 is RANK AAA, after no target and MY BEST)");
+        require(target.optionText(1)==L"RANK AAA"&&target.settingNumber(13)==80&&SelectFrame::isSettingNumber(13),"target name and default rate");
+        target.targetKind=4;
+        require(target.optionText(1)==L"DEFAULT","default target name");
+        // 1P lane option: button 42 and string 63; the 2P side (43, 64) stays OFF.
+        target.laneOption=3;
+        require(SelectFrame::clickableButton(42)&&target.buttonState(42)==3&&target.optionText(63)==L"S-RANDOM"&&
+            target.optionText(64)==L"OFF","lane option button and name");
+    }
     panelState.judgeTiming=-12;panelState.hiSpeed=1.75;
     require(panelState.settingNumber(12)==-12&&panelState.settingNumber(10)==175&&!panelState.settingNumber(11),"setting numbers");
     require(SelectFrame::fixedSlider(16)==.5f&&SelectFrame::fixedSlider(20)==0.f&&!SelectFrame::fixedSlider(17),"fixed sliders");
@@ -1072,6 +1093,9 @@ int wmain(int argc,wchar_t** argv) try {
     panelState.songSelected=true;panelState.clearLamp=4;panelState.bestGauge=1;
     require(*panelState.option(119)&&!*panelState.option(118)&&*panelState.option(126)&&!*panelState.option(127)&&
         *panelState.option(134)&&!*panelState.option(136)&&!*panelState.option(143),"best-play options");
+    panelState.bestLaneOption=1;
+    require(!*panelState.option(126)&&*panelState.option(127)&&!*panelState.option(128),"best clear's lane option (127 MIRROR)");
+    panelState.bestLaneOption=0;
     panelState.bestGauge=-1;
     require(!*panelState.option(118)&&!*panelState.option(119)&&!*panelState.option(121),"unknown best gauge");
     require(*panelState.option(174)&&!*panelState.option(175)&&*panelState.option(196)&&!*panelState.option(197)&&
@@ -1463,8 +1487,17 @@ int wmain(int argc,wchar_t** argv) try {
         decideScene.releaseDevice();
     }
 
+    // Select and play #STARTINPUT: locked from the first frame until the time, never before the scene is drawn.
+    require(sceneInputLocked(400,0)&&sceneInputLocked(400,399.9)&&!sceneInputLocked(400,400)&&
+        !sceneInputLocked(400,-1)&&!sceneInputLocked(0,0),"scene input lock");
+
     // Select numbers 30-37: every record added up.
     {
+        SelectFrame playTime;
+        playTime.totals.playSeconds=3725;
+        require(playTime.totalNumber(17)==1&&playTime.totalNumber(18)==2&&playTime.totalNumber(19)==5&&
+            SelectFrame::isTotalNumber(17)&&SelectFrame::isTotalNumber(19)&&!SelectFrame::isTotalNumber(16)&&!SelectFrame::isTotalNumber(20),
+            "total play time numbers 17-19");
         SelectFrame totals;
         totals.totals={12,9,{1000,200,30,4,5000000000LL}};
         require(totals.totalNumber(30)==12&&totals.totalNumber(31)==9&&totals.totalNumber(32)==3&&totals.totalNumber(33)==1000&&

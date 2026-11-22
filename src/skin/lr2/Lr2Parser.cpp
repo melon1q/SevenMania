@@ -206,9 +206,10 @@ std::filesystem::path detachedThemeFolder(const std::filesystem::path& skin,cons
     return {};
 }
 // Scene words the loader reads in PreviewScene::load: play loading and start timing,
-// the play scratch side and the decide screen's skip time.
+// the play scratch side, the decide screen's skip time and the select / play input lock.
 bool sceneWord(int type,const std::string& name) {
-    if(isPlayScreen(type))return name=="LOADSTART"||name=="LOADEND"||name=="PLAYSTART"||name=="SCRATCHSIDE";
+    if(isPlayScreen(type))return name=="LOADSTART"||name=="LOADEND"||name=="PLAYSTART"||name=="SCRATCHSIDE"||name=="STARTINPUT";
+    if(type==static_cast<int>(ScreenType::Select))return name=="STARTINPUT";
     return type==static_cast<int>(ScreenType::Decide)&&name=="SKIP";
 }
 class Parser {

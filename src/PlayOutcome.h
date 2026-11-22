@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include <cmath>
 
 namespace bms {
 
@@ -28,6 +30,20 @@ struct PlayOutcome {
 constexpr PlayOutcome playOutcome(bool gaugeClearConditionMet, bool gaugeDepleted, bool abandoned) noexcept {
     const bool failed = gaugeDepleted || abandoned;
     return {gaugeClearConditionMet && !failed, failed};
+}
+
+// LR2 / beatoraja: an empty gauge or QUIT ends the play on the spot. The song stops, the fail shutters
+// close with playstop, and the result screen then plays fail. A song that simply runs out (cleared or
+// not) plays no playstop; its result plays clear or fail.
+constexpr bool playStopsOnFailure(bool gaugeDepleted, bool abandoned) noexcept { return gaugeDepleted || abandoned; }
+
+// Only one system sound plays at a time and a new one cuts the old, so the result sound waits for what
+// is left of playstop. Milliseconds to wait (0: play it now), never more than capMs.
+inline int resultSoundDelayMs(double playStopSeconds, double elapsedSeconds, int capMs = 5000) noexcept {
+    if (!std::isfinite(playStopSeconds) || !std::isfinite(elapsedSeconds) || playStopSeconds <= 0) return 0;
+    const double remaining = playStopSeconds - std::max(0.0, elapsedSeconds);
+    if (remaining <= 0) return 0;
+    return static_cast<int>(std::min<double>(capMs, std::ceil(remaining * 1000)));
 }
 
 } // namespace bms

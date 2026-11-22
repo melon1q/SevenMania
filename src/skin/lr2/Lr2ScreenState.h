@@ -16,6 +16,12 @@ constexpr int exScoreRank(long long exScore,long long notes) noexcept {
     return static_cast<int>(tier<1?1:tier>8?8:tier);
 }
 
+// Select and play #STARTINPUT: no key or click counts until the scene has been on screen this long.
+// ageMs is the scene time (negative before the scene is first drawn, which never locks).
+constexpr bool sceneInputLocked(int startInputMs,double ageMs) noexcept {
+    return startInputMs>0&&ageMs>=0&&ageMs<startInputMs;
+}
+
 // Result #STARTINPUT: input (ms before any key counts), rank (when the score update is shown,
 // "ランク表示後") and update (ms after the update before a key leaves, "更新表示後").
 struct ResultInput {int input{},rank{},update{};};

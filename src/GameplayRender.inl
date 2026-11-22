@@ -129,7 +129,7 @@ void drawGameScreen(HDC dc) {
         frame.judgedNotes=0;
         for(const int units:state.counts)frame.judgedNotes+=units/2;
         frame.bestExScore=state.bestExScore;
-        frame.targetExScore=state.bestExScore.value_or(0);
+        frame.targetExScore=currentTargetExScore(state.bestExScore,state.noteCount);
         frame.scoreGraph=state.scoreGraph;
         frame.autoplay=gAutoplay; // Options 32/33 and the skin's SRC_AUTO_* notes.
         gLr2PlayScene->setAutoplay(frame.autoplay);

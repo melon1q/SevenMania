@@ -89,6 +89,7 @@ struct SelectRecord {
 struct SelectTotals {
     long long playCount{},clearCount{};
     std::array<long long,5> judgements{};
+    long long playSeconds{};
 };
 // Event timers of the select, decide and result screens in milliseconds since each began, or -1.
 struct ScreenTimers {
@@ -126,7 +127,7 @@ struct SelectFrame {
     // Totals of every record: 30 plays, 31 clears, 32 failures, 33-37 PG GR GD BD PR. Drawn with or without a song.
     SelectTotals totals;
     std::optional<int> totalNumber(int id) const noexcept;
-    static bool isTotalNumber(int id) noexcept {return id>=30&&id<=37;}
+    static bool isTotalNumber(int id) noexcept {return (id>=17&&id<=19)||(id>=30&&id<=37);}
     // Timer 2: milliseconds since a song was chosen and the screen began to fade out, or -1.
     double fadeoutAge=-1;
     // Fill ratio of a BARGRAPH type, or nothing when the type is not a select-screen graph.
@@ -135,6 +136,11 @@ struct SelectFrame {
     int levelLimit() const noexcept {return keys==5||keys==10?9:keys==9?42:12;}
     double selectionAge{};
     int panel{},keyMode{};
+    // Difficulty filter cell (0 all, 1-5 BEGINNER..INSANE), target kind (0 MY BEST, 1-3 RANK AAA/AA/A,
+    // 4 DEFAULT) and the default target's percent (number 13).
+    int difficultyFilter{},targetKind{},targetRate=50;
+    // 1P lane option (0 OFF, 1 MIRROR, 2 RANDOM, 3 S-RANDOM: button 42, string 63) and the best clear's.
+    int laneOption{},bestLaneOption{};
     float listPosition{};
     bool canScroll{};
     std::array<float,3> volumes{};
@@ -163,7 +169,7 @@ struct SelectFrame {
     std::wstring text(int ref) const;
     // Setting numbers: 10 hi-speed x100, 12 judge timing.
     std::optional<int> settingNumber(int id) const noexcept;
-    static bool isSettingNumber(int id) noexcept {return id==10||id==12;}
+    static bool isSettingNumber(int id) noexcept {return id==10||id==12||id==13;}
     // Sliders of features SevenMania lacks (EQ, effects, pitch), held at their neutral position.
     static std::optional<float> fixedSlider(int id) noexcept;
 };
@@ -197,6 +203,8 @@ public:
     bool hasBga() const noexcept;
     // The skin draws the lane cover itself (play slider 4 or 5), so the player's own cover stays off.
     bool hasLaneCover() const noexcept;
+    // Select MOUSECURSOR: the skin draws the cursor, so the host hides the system one over the window.
+    bool hasMouseCursor() const noexcept;
     int sceneMilliseconds() const noexcept;
     int startInputMilliseconds() const noexcept;
     // Result #STARTINPUT with its rank and update times.

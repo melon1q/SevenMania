@@ -1,6 +1,8 @@
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if(summaryInput(message,wParam,lParam,window))return 0;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
+    if(lr2SelectInputLocked(message))return 0;
+    if(message==WM_SETCURSOR&&lr2SelectSetCursor(lParam))return TRUE;
     if(lr2SelectInput(window,message,wParam,lParam))return 0;
 #endif
     switch (message) {
@@ -316,6 +318,9 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if(summaryInput(message,wParam,lParam,window))return 0;
     if (handleBrowseShortcut(message, wParam, lParam)) return 0;
         if (gLoading) {
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+            if (lr2PlayInputLocked()) return 0;
+#endif
             if (wParam == VK_ESCAPE) { gLoadCancelled = true; setStatus(L"불러오기를 취소하고 있습니다..."); }
             else if (wParam == VK_RETURN && (lParam & (1LL << 30)) == 0 && skipSongEntry()) InvalidateRect(window, nullptr, FALSE);
             return 0;
@@ -430,6 +435,12 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_ERASEBKGND: return 1;
     case WM_TIMER:
         if(wParam==ID_CONTROLLER_POLL){pollControllerInput();return 0;}
+        if(wParam==ID_RESULT_SOUND) {
+            KillTimer(window,ID_RESULT_SOUND);
+            if(gShowingResult&&gPendingResultSound!=bms::SystemSound::Count)triggerSystemSound(gPendingResultSound);
+            gPendingResultSound=bms::SystemSound::Count;
+            return 0;
+        }
 #ifdef BMS_ENABLE_SKIN_BINDINGS
         if(wParam==ID_SKIN_RETRY){retrySkinSelection();return 0;}
         if(wParam==ID_SKIN_ANIMATION){if(!gPlaying)InvalidateRect(window,nullptr,FALSE);return 0;}

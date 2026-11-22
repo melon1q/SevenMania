@@ -53,6 +53,12 @@ public:
     bool fellBackFromWasapiExclusive() const noexcept { return exclusiveModeFallback_.load(std::memory_order_relaxed); }
     void trigger(const std::wstring& sampleId);
     bool triggerEffect(const std::wstring& effectId);
+    // Length of a loaded system sound in seconds, or 0 when it is not loaded.
+    double effectSeconds(const std::wstring& effectId) const {
+        const auto found = effects_.find(effectId);
+        return found == effects_.end() || !found->second || sampleRate_ == 0 ? 0.0 :
+            static_cast<double>(found->second->pcm.size() / channels_) / sampleRate_;
+    }
     void setVolumes(int master, int music, int keys, int effects) noexcept;
     void setMusicFadeIn(uint32_t durationMs) noexcept;
     bool setBufferFrames(uint32_t frames) noexcept;

@@ -38,6 +38,7 @@ std::vector<std::pair<std::string,std::string>> rmlSettingsOptions(int command) 
     else if (id == ID_NOTE_HEIGHT) add(36,L"36 px");
     else if (id == ID_JUDGEMENT_PROFILE) { int i=0; for(auto s:{L"BASIC",L"EASY",L"NORMAL",L"HARD"}) add(i++,s); }
     else if (id == ID_GROOVE_GAUGE) { int i=0; for(auto s:{L"NORMAL",L"EASY",L"HARD"}) add(i++,s); }
+    else if (id == ID_LANE_OPTION) { for (int i=0; i<bms::laneOptionCount; ++i) add(i, bms::laneOptionName(bms::laneOptionFromInt(i))); }
     else if(id==ID_INTRO_ENABLE){add(0,L"Off");add(1,L"On");}
     else if(id==ID_PREVIEW_START){add(0,L"즉시 자동 시작");add(1,L"프리뷰 자동 시작");add(2,L"수동 시작");}
     else if(id==ID_TIMING_HINT){add(0,L"PGREAT 미만");add(1,L"GREAT 미만");add(2,L"GOOD 미만");add(3,L"없음");}

@@ -9,7 +9,7 @@
 namespace sevenmania::skin::lr2 {
 using Destination = std::array<int,19>;
 enum class LayerKind { Image, JudgeLine, MeasureLine, Judge, Combo, Number, Gauge, Bga, Text, BarBody, BarLamp, Button, Slider,
-    BarLevel, BarRank, BarFlash, BarGraph, OnMouse, GaugeChart, Count };
+    BarLevel, BarRank, BarFlash, BarGraph, OnMouse, GaugeChart, MouseCursor, Count };
 inline constexpr int maxSelectBars=64;
 struct ImageSource {
     std::array<int,10> values{};
@@ -35,6 +35,7 @@ inline std::optional<LayerKind> layerKind(std::string_view name,bool play,bool s
     if((select||play)&&name=="SLIDER")return LayerKind::Slider;
     if(screen&&name=="GAUGECHART_1P")return LayerKind::GaugeChart;
     if(select&&name=="ONMOUSE")return LayerKind::OnMouse;
+    if(select&&name=="MOUSECURSOR")return LayerKind::MouseCursor;
     if((play||screen)&&name=="BARGRAPH")return LayerKind::BarGraph;
     if((play||screen)&&name=="NUMBER")return LayerKind::Number;
     if(!play)return std::nullopt;
@@ -294,7 +295,10 @@ inline std::optional<ImageModel> imageModel(const Document& document,std::vector
                 read(c,1,lane) && lane>=0 && lane<maxPlayLanes;
             for(std::size_t i=0;valid&&i<=4;++i)valid=read(c,i+2,key[i]);
             if(!valid||key[3]<=0||key[4]<=0)warn(c,"Invalid DST_NOTE geometry");
-            else if(!playLaneUsed(document.header.type,lane))warn(c,("DST_NOTE lane "+std::to_string(lane)+" is not used by this key mode").c_str());
+            else if(!playLaneUsed(document.header.type,lane)) {
+                if(!playLaneOtherSide(document.header.type,lane))
+                    warn(c,("DST_NOTE lane "+std::to_string(lane)+" is not used by this key mode").c_str());
+            }
             else if(!out.tapDestinations[lane]) {
                 out.tapDestinations[lane]=key;
                 if(!out.noteOrder)out.noteOrder=out.sources.size();
@@ -331,7 +335,8 @@ inline std::optional<ImageModel> imageModel(const Document& document,std::vector
                     continue;
                 }
                 if(!playLaneUsed(document.header.type,lane)) {
-                    warn(c,("Note source lane "+std::to_string(lane)+" is not used by this key mode").c_str());
+                    if(!playLaneOtherSide(document.header.type,lane))
+                        warn(c,("Note source lane "+std::to_string(lane)+" is not used by this key mode").c_str());
                     continue;
                 }
                 auto& parts=(autoNoteWord(c.name)?out.autoNoteSources:out.noteSources)[lane];

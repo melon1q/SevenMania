@@ -220,7 +220,7 @@ struct PreviewScene::Impl {
     std::array<int,2> scratchSide{};
     bool resultScreen{},decideScreen{};
     std::size_t noteOrder{};
-    bool hasBga{},hasLaneCover{};
+    bool hasBga{},hasLaneCover{},hasMouseCursor{};
     std::optional<ScreenData> screen;
     ComPtr<ID2D1SolidColorBrush> textBrush;
     // Blend 3 and above: a white texel inverts the target under a sprite; blend 4 multiplies
@@ -320,6 +320,7 @@ int PreviewScene::buttonStates(int id) const noexcept {
 }
 bool PreviewScene::hasBga() const noexcept {return impl_->hasBga;}
 bool PreviewScene::hasLaneCover() const noexcept {return impl_->hasLaneCover;}
+bool PreviewScene::hasMouseCursor() const noexcept {return impl_->hasMouseCursor;}
 void PreviewScene::setStretch(bool stretch) noexcept {
     if(impl_->stretch==stretch)return;
     impl_->stretch=stretch;
@@ -460,10 +461,11 @@ std::optional<bool> SelectFrame::option(int id) const noexcept {
     if(id>=601&&id<=608)return false;
     // Rival lamps and ranks, and the course stages: SevenMania has neither.
     if((id>=640&&id<=645)||(id>=650&&id<=657)||(id>=580&&id<=584)||(id>=590&&id<=594))return false;
-    // Options of the best play. SevenMania has no random, assist or lane effect choice to record, so a
-    // played chart was played without them; the gauge is the best clear's when it is known.
+    // Options of the best play: its gauge when known, and the 1P lane option of the best clear (126 OFF,
+    // 127 MIRROR, 128 RANDOM, 129 S-RANDOM, 130/131 H-RANDOM and ALL-SCR, which SevenMania lacks).
+    // SevenMania has no assist or lane effect choice, so 134 (no effect) is the only lane effect.
     if(id>=118&&id<=123)return songSelected&&bestGauge==id-118; // Groove, survival, death, easy, p-attack, g-attack.
-    if(id>=126&&id<=131)return songSelected&&clearLamp>0&&id==126;
+    if(id>=126&&id<=131)return songSelected&&clearLamp>0&&id==126+bestLaneOption;
     if(id>=134&&id<=137)return songSelected&&clearLamp>0&&id==134;
     if(id>=143&&id<=145)return false; // Extra mode, double battle, SP to DP.
     // The score is always saved; the clear lamp a clear could reach follows the gauge.
@@ -527,6 +529,10 @@ std::optional<int> SelectFrame::recordNumber(int id) const noexcept {
 std::optional<int> SelectFrame::totalNumber(int id) const noexcept {
     const auto clamp=[](long long value){return static_cast<int>(std::clamp<long long>(value,0,std::numeric_limits<int>::max()));};
     switch(id) {
+        // Total play time (beatoraja NUMBER_TOTALPLAYTIME_HOUR / _MINUTE / _SECOND).
+        case 17: return clamp(totals.playSeconds/3600);
+        case 18: return clamp(totals.playSeconds/60%60);
+        case 19: return clamp(totals.playSeconds%60);
         case 30: return clamp(totals.playCount);
         case 31: return clamp(totals.clearCount);
         case 32: return clamp(totals.playCount-totals.clearCount);
@@ -538,7 +544,13 @@ std::optional<int> SelectFrame::totalNumber(int id) const noexcept {
 std::optional<int> SelectFrame::buttonState(int id) const noexcept {
     if(selectPanelButton(id))return panel==id?1:0;
     switch(id) {
+        case 10: return difficultyFilter;
+        case 42: return laneOption;          // LR2 order: OFF, MIRROR, RANDOM, S-RANDOM (H-RANDOM, ALL-SCR unused).
         case 11: return keyMode;
+        // TARGET's cells in LR2 order: no target, MY BEST, RANK AAA, AA, A, DEFAULT, then IR top/next/average.
+        // SevenMania's kinds start at MY BEST. DEFAULT TARGET (76) is a click area; its rate is number 13.
+        case 77: return targetKind+1;
+        case 76: return 0;
         case 40: return gaugeCell;
         case 46: return laneCover>0?1:0;     // Lane cover off / on.
         case 50: return laneCover>0?2:0;     // Off, hidden, sudden, hidden+sudden: the cover is a sudden.
@@ -549,20 +561,20 @@ std::optional<int> SelectFrame::buttonState(int id) const noexcept {
         case 55: return hiSpeedFix;          // Off, start, max, main, min BPM, then SevenMania's constant.
         case 12: case 13: case 14: case 15: case 16: case 57: case 74: return 0;
     }
-    // Features SevenMania lacks, held at their first ("none") cell: difficulty filter, text viewer,
-    // tag reset, replay, effects/EQ/pitch, 2P and battle options, random, assist, flip, HS-FIX,
-    // turntable side, ghost, BGA size, targets, replay saving, IR, help pages and the course editor.
+    // Features SevenMania lacks, held at their first ("none") cell: text viewer,
+    // tag reset, replay, effects/EQ/pitch, 2P and battle options, assist, flip, HS-FIX,
+    // turntable side, ghost, BGA size, replay saving, IR, help pages and the course editor.
     // The main help (200) launcher stays unsupported: its picture looks usable.
-    if(id==10||(id>=17&&id<=29)||id==32||id==33||(id>=41&&id<=45)||id==51||id==54||id==56||id==58||
-       id==71||id==73||id==76||id==77||id==83||(id>=92&&id<=96)||(id>=201&&id<=206)||id==210||
+    if((id>=17&&id<=29)||id==32||id==33||id==41||(id>=43&&id<=45)||id==51||id==54||id==56||id==58||
+       id==71||id==73||id==83||(id>=92&&id<=96)||(id>=201&&id<=206)||id==210||
        (id>=230&&id<=234)||(id>=240&&id<=243)||id==253||(id>=260&&id<=268))
         return 0;
     return std::nullopt;
 }
 
 bool SelectFrame::clickableButton(int id) noexcept {
-    return selectPanelButton(id)||id==11||id==12||id==13||id==14||id==15||id==16||id==40||id==46||id==50||
-        id==55||id==57||id==70||id==72||id==74||id==75;
+    return selectPanelButton(id)||id==10||id==11||id==12||id==13||id==14||id==15||id==16||id==40||id==46||id==50||
+        id==55||id==57||id==70||id==72||id==74||id==75||id==76||id==77||id==42;
 }
 
 bool SelectFrame::isOptionText(int ref) noexcept {
@@ -574,8 +586,9 @@ std::wstring SelectFrame::optionText(int ref) const {
         return index>=0&&static_cast<std::size_t>(index)<names.size()?std::wstring(names.begin()[index]):std::wstring();
     };
     switch(ref) {
-        case 1: return L"MY BEST"; // The target is the best score.
+        case 1: return pick(targetKind,{L"MY BEST",L"RANK AAA",L"RANK AA",L"RANK A",L"DEFAULT"});
         case 60: return pick(keyMode,{L"ALL",L"5KEYS",L"7KEYS",L"10KEYS",L"14KEYS",L"9KEYS"});
+        case 63: return pick(laneOption,{L"OFF",L"MIRROR",L"RANDOM",L"S-RANDOM"});
         case 65: case 66: return gaugeCell==1?L"HARD":gaugeCell==3?L"EASY":L"NORMAL";
         case 71: return scoreGraph?L"ON":L"OFF";
         case 73: return laneCover>0?L"ON":L"OFF";
@@ -598,6 +611,7 @@ std::wstring SelectFrame::text(int ref) const {
 std::optional<int> SelectFrame::settingNumber(int id) const noexcept {
     if(id==10)return static_cast<int>(std::lround(hiSpeed*100));
     if(id==12)return judgeTiming;
+    if(id==13)return targetRate;
     return std::nullopt;
 }
 
@@ -695,7 +709,7 @@ bool PreviewScene::load(const Document& document,std::vector<Diagnostic>& diagno
         int* duration=nullptr;
         int limit=30000;
         if((decide||resultScreen)&&command.name=="SCENETIME")duration=&next->sceneMilliseconds;
-        else if((decide||resultScreen)&&command.name=="STARTINPUT") {
+        else if((decide||resultScreen||play||document.header.type==static_cast<int>(ScreenType::Select))&&command.name=="STARTINPUT") {
             duration=&next->startInputMilliseconds;
             // Result: when the score update shows and how long it stays before a key leaves. Empty is 0.
             for(std::size_t field=2;resultScreen&&field<=3&&field<command.fields.size();++field) {
@@ -1016,6 +1030,7 @@ bool PreviewScene::load(const Document& document,std::vector<Diagnostic>& diagno
             (source.kind==LayerKind::BarLevel?next->barLevels:next->barRanks)[static_cast<std::size_t>(source.values[0])]=next->layers.size();
         if(source.kind==LayerKind::BarFlash)next->barFlashes.push_back(next->layers.size());
         if(play&&source.kind==LayerKind::Slider&&(source.parameters[2]==4||source.parameters[2]==5))next->hasLaneCover=true;
+        if(source.kind==LayerKind::MouseCursor)next->hasMouseCursor=true;
         next->layers.push_back({*image,std::move(source),*grid,{}});
         next->layers.back().transparent=transparent;
     }
@@ -1794,6 +1809,12 @@ void PreviewScene::draw(ID2D1DeviceContext* target,double milliseconds,int width
             transform(Matrix3x2F::Identity());
             for(std::size_t index=1;index<=lastPoint&&history[index]>=0;++index)
                 target->DrawLine(point(index-1),point(index),impl_->textBrush.Get(),std::max(1.f,frame->width));
+        } else if(source.kind==LayerKind::MouseCursor) {
+            // Drawn at the cursor, the destination's x and y giving the picture's offset from the hot spot.
+            if(!select||select->mouseX<0||select->mouseY<0)continue;
+            const float mouseX=(select->mouseX-translateX)/viewport.stretchX;
+            const float mouseY=(select->mouseY-translateY)/viewport.stretchY;
+            sprite(mouseX+frame->x,mouseY+frame->y,frame->sourceX,frame->sourceY);
         } else if(source.kind==LayerKind::OnMouse) {
             // Shown while the cursor is inside a rectangle given relative to the picture.
             // Panel -1 means "no panel open", 0 any state, otherwise that panel.

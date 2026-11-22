@@ -83,6 +83,8 @@ struct BgaClip {
 
 struct Chart {
     std::wstring catalogGroupKey;
+    // Lowercase hex digests of the chart file's raw bytes; empty when the file could not be read.
+    std::wstring md5, sha256;
     bool catalogOnly{}; // Selection metadata; reparse before preview/gameplay.
     std::filesystem::path path;
     std::wstring title;

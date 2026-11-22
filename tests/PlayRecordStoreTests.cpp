@@ -181,17 +181,127 @@ int main(int argc, char** argv) {
             const auto* firstRecord=totals.findPlayed(normalizedRecordPath(first));
             require(firstRecord&&firstRecord->totalJudgements==std::array{10,4,2,4,4}&&firstRecord->bestJudgements==std::array{8,2,1,1,0},
                 "a chart keeps its own judgement totals beside the best play's");
+            // Play time adds up per chart and over every record (LR2 select numbers 17-19).
+            require(totals.saveChart(recordChartId(first),true,1,1,L"LEGACY",-1,std::nullopt,1,std::array{1,0,0,0,0},0,12,std::nullopt,95)&&
+                    totals.saveChart(recordChartId(second),true,1,1,L"LEGACY",-1,std::nullopt,1,std::array{1,0,0,0,0},0,3,std::nullopt,30)&&
+                    totals.saveChart(recordChartId(second),true,1,1,L"LEGACY",-1,std::nullopt,1,std::array{1,0,0,0,0},0,3,std::nullopt,-5),
+                    "play time saves");
+            require(totals.totals().playSeconds==125&&totals.findPlayed(normalizedRecordPath(second))->playSeconds==30,"play time totals");
             PlayRecordStore reread;reread.file=totalsFile;reread.load();
-            require(reread.totals().playCount==3&&reread.totals().judgements[0]==13,"totals survive a reload");
+            require(reread.totals().playSeconds==125,"play time survives a reload");
+            require(reread.totals().playCount==6&&reread.totals().judgements[0]==16,"totals survive a reload");
             // An old record without the new counts adds nothing to them.
             const auto legacy=root/L"TotalsOld.bms";
             const auto legacySection=recordSectionForPath(normalizedRecordPath(legacy));
             WritePrivateProfileStringW(legacySection.c_str(),L"Path",normalizedRecordPath(legacy).c_str(),totalsFile.c_str());
             WritePrivateProfileStringW(legacySection.c_str(),L"Played",L"1",totalsFile.c_str());
             reread.load();
-            require(reread.records.size()==3&&reread.totals().playCount==3&&reread.totals().judgements[1]==4,
+            require(reread.records.size()==3&&reread.totals().playCount==6&&reread.totals().judgements[1]==4,
                 "legacy records add nothing to the totals");
             std::filesystem::remove(totalsFile);
+        }
+
+        // A file an older build wrote (ANSI, via the profile API) loads unchanged and is rewritten as UTF-16.
+        {
+            const auto ansiFile=root/L"ansi-records.ini";
+            std::filesystem::remove(ansiFile);
+            const auto ansiChart=root/L"Ansi"/L"Chart.bms";
+            const auto ansiKey=normalizedRecordPath(ansiChart);
+            const auto ansiSection=recordSectionForPath(ansiKey);
+            for(const auto& [name,value]:{std::pair{L"Path",ansiKey.c_str()},std::pair{L"Played",L"1"},std::pair{L"Cleared",L"0"},
+                                          std::pair{L"MaxCombo",L"42"},std::pair{L"AccuracyScore",L"654321"},std::pair{L"PlayCount",L"3"},
+                                          std::pair{L"ScoreJudgeRank",L"-1"},std::pair{L"BestClearLamp",L"0"}})
+                WritePrivateProfileStringW(ansiSection.c_str(),name,value,ansiFile.c_str());
+            WritePrivateProfileStringW(L"Other",L"Note",L"x",ansiFile.c_str());
+            {
+                std::ifstream in(ansiFile,std::ios::binary);char first{};in.get(first);
+                require(first=='[',"the profile API writes a new file as ANSI");
+            }
+            PlayRecordStore ansi;ansi.file=ansiFile;ansi.load();
+            const auto* ansiRecord=ansi.findPlayed(ansiKey);
+            require(ansi.records.size()==1&&ansiRecord&&ansiRecord->maxCombo==42&&ansiRecord->bestAccuracyScore==654321&&ansiRecord->playCount==3&&
+                    ansiRecord->scoreJudgement.rank==-1&&ansiRecord->bestKnownClear&&ansiRecord->bestKnownClear->lamp==RecordClearLamp::Failed,
+                    "an ANSI record file loads like the profile API reads it");
+            require(ansi.flush(),"rewrite the ANSI file");
+            ansi.load();
+            wchar_t note[8]{};GetPrivateProfileStringW(L"Other",L"Note",L"",note,8,ansiFile.c_str());
+            require(ansi.findPlayed(ansiKey)&&ansi.findPlayed(ansiKey)->playCount==3&&std::wstring(note)==L"x","the rewrite keeps every value");
+            std::filesystem::remove(ansiFile);
+        }
+
+        // Hash keys: a record follows the chart's SHA-256, not its folder.
+        {
+            const auto hashFile=root/L"hash-records.ini";
+            std::filesystem::remove(hashFile);
+            const std::wstring sha(64,L'a'),md5(32,L'b');
+            // A path outside the ANSI code page must survive the file (older builds wrote ANSI).
+            const auto songPath=root/L"Song \u00fc\U0001F3B5 \ud55c\uae00"/L"Chart.bms";
+            {
+                PlayRecordStore legacyStore;legacyStore.file=hashFile;
+                require(legacyStore.save(songPath,true,50,700000,L"SM-JUDGE-1",2,std::nullopt,300,std::array{100,50,0,0,0},0,150),"legacy path save");
+            }
+            const auto id=recordChartId(songPath,md5,sha);
+            require(id.key==L"sha256:"+sha&&id.legacyKey()==normalizedRecordPath(songPath),"hashed id uses the digest");
+            require(recordChartId(songPath,md5,L"xyz").key==normalizedRecordPath(songPath),"invalid digest falls back to the path key");
+            require(recordChartId(songPath).legacyKey().empty(),"a path key has no older key");
+            PlayRecordStore hashStore;hashStore.file=hashFile;hashStore.load();
+            require(hashStore.findPlayed(id.legacyKey())&&!hashStore.findPlayed(id.key),"non-ANSI legacy record reloads under its path");
+            require(hashStore.adoptLegacyRecord(id)&&hashStore.findPlayed(id.key)&&!hashStore.records.contains(id.legacyKey()),"adoption moves the record");
+            require(!hashStore.adoptLegacyRecord(id),"a second adoption changes nothing");
+            require(hashStore.flush()&&hashStore.lastWriteSucceeded(),"flush writes the file");
+
+            // The same chart in a moved folder keeps its record; the conditions of each play are kept.
+            const auto moved=root/L"Moved"/L"Chart.bms";
+            const auto movedId=recordChartId(moved,md5,sha);
+            const RecordPlayOptions random{2,L"HARD",L"1,3",L"MIRROR"};
+            const RecordClearInfo hardClear{RecordClearLamp::Hard,L"7KEYS",L"HARD"};
+            require(hashStore.saveChart(movedId,true,60,650000,L"SM-JUDGE-1",2,hardClear,320,std::array{110,40,0,0,0},0,150,random),"hashed save");
+            PlayRecordStore reread;reread.file=hashFile;reread.load();
+            const auto* hashed=reread.findPlayed(movedId.key);
+            require(hashed&&reread.records.size()==1,"one record per chart after a move");
+            require(hashed->bestAccuracyScore==700000&&hashed->maxCombo==60&&hashed->playCount==2&&hashed->bestExScore==320,
+                "the moved chart continues the old record");
+            require(hashed->path==normalizedRecordPath(moved)&&hashed->md5==md5&&hashed->sha256==sha,"identity survives restart");
+            require(hashed->lastOptions==random&&hashed->clearOptions==random&&!hashed->scoreOptions,
+                "a better lamp records its conditions; the older best score keeps unknown conditions");
+            require(hashed->bestKnownClear&&hashed->bestKnownClear->lamp==RecordClearLamp::Hard&&hashed->legacyClearUnknown,"lamp after a move");
+            const RecordPlayOptions easyOptions{2,L"EASY",L"2"};
+            require(reread.saveChart(movedId,true,10,900000,L"SM-JUDGE-1",2,RecordClearInfo{RecordClearLamp::Easy,L"7KEYS",L"EASY"},
+                    330,std::array{120,30,0,0,0},0,150,easyOptions),"easier, higher play");
+            hashed=reread.findPlayed(movedId.key);
+            require(hashed->scoreOptions==easyOptions&&hashed->clearOptions==random&&hashed->lastOptions==easyOptions&&
+                    hashed->bestKnownClear->lamp==RecordClearLamp::Hard,"score and clear keep the conditions of their own play");
+
+            // A second copy of the chart that an older build recorded under another path merges in.
+            const auto copy=root/L"Copy"/L"Chart.bms";
+            {
+                PlayRecordStore legacyStore;legacyStore.file=hashFile;legacyStore.load();
+                require(legacyStore.save(copy,false,999,100000,L"SM-JUDGE-1",2,std::nullopt,10,std::array{5,0,0,0,5},5,150),"second legacy copy");
+            }
+            reread.load();
+            require(reread.records.size()==2&&reread.adoptLegacyRecord(recordChartId(copy,md5,sha))&&reread.records.size()==1,"copies merge");
+            hashed=reread.findPlayed(movedId.key);
+            require(hashed->maxCombo==999&&hashed->bestAccuracyScore==900000&&hashed->playCount==4&&hashed->clearCount==3&&
+                    hashed->bestExScore==330&&hashed->minMissCount==0&&hashed->path==normalizedRecordPath(copy),"merge keeps the best of both");
+            require(reread.flush(),"merged flush");
+
+            // Sections the store does not own are kept; an older build cannot mistake a hashed section for a path record.
+            WritePrivateProfileStringW(L"Custom",L"Value",L"kept",hashFile.c_str());
+            reread.load();
+            require(reread.saveChart(movedId,false,1,1,L"LEGACY",-1,RecordClearInfo{},0,std::array{0,0,0,0,1},1,150),"save beside a custom section");
+            wchar_t kept[16]{};GetPrivateProfileStringW(L"Custom",L"Value",L"",kept,16,hashFile.c_str());
+            require(std::wstring(kept)==L"kept","foreign sections survive a rewrite");
+            require(recordSectionForPath(normalizedRecordPath(reread.findPlayed(movedId.key)->path))!=recordSectionForPath(movedId.key),
+                "hashed sections never match their Path for older builds");
+            {
+                std::ifstream in(hashFile,std::ios::binary);char bom[2]{};in.read(bom,2);
+                require(static_cast<unsigned char>(bom[0])==0xff&&static_cast<unsigned char>(bom[1])==0xfe,"records are written as UTF-16LE");
+            }
+            for(const auto& entry:std::filesystem::directory_iterator(root))
+                require(entry.path().extension()!=L".tmp","a finished save leaves no temporary file");
+            PlayRecordStore blocked;blocked.file=root;  // a directory cannot be replaced by a file
+            require(blocked.saveChart(movedId,true,1,1)&&!blocked.lastWriteSucceeded(),"a failed write is reported");
+            std::filesystem::remove(hashFile);
         }
 
         std::filesystem::remove(file);

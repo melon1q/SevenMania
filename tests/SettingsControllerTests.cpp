@@ -32,6 +32,8 @@ int main() {
         require(!controller.set(1290,-1).applied&&!controller.set(1290,6).applied,"invalid HI-SPEED FIX accepted");
         require(controller.set(1291,60).applied&&controller.set(1291,120).applied&&controller.snapshot().at(1291)==120,"select FPS failed");
         require(!controller.set(1291,144).applied&&!controller.set(1291,0).applied,"select FPS other than 60/120 accepted");
+        for(int option=0;option<=3;++option)require(controller.set(1295,option).applied&&controller.snapshot().at(1295)==option,"lane option failed");
+        require(!controller.set(1295,-1).applied&&!controller.set(1295,4).applied,"invalid lane option accepted");
         std::cout << "Settings controller: units, validation, summary mapping, failures, persistence and deferred commands passed.\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

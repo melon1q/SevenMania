@@ -5,6 +5,7 @@
 #include "ControllerModel.h"
 #include "KeyLaneMap.h"
 #include "KeyProfiles.h"
+#include "LaneOption.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -18,6 +19,75 @@
 namespace {
 
 int failures = 0;
+
+// Player lane option (settings / LR2 button 42), applied after the chart's own #OPTION.
+bool playerLaneOptionTests() {
+    using namespace bms;
+    int bad = 0;
+    const auto expect = [&](bool ok, const char* what) { if (!ok) { std::cerr << "FAIL: " << what << "\n"; ++bad; } };
+    const auto make = [](ChartMode mode, std::vector<std::pair<int, double>> notes) {
+        Chart chart; chart.mode = mode;
+        for (const auto& [lane, time] : notes) { Note note; note.lane = lane; note.timeSeconds = time; chart.notes.push_back(note); }
+        return chart;
+    };
+    const auto lanes = [](const Chart& chart) { std::vector<int> out; for (const auto& n : chart.notes) out.push_back(n.lane); return out; };
+
+    expect(laneOptionKeys(make(ChartMode::SevenKey, {})) == std::vector<int>{1, 2, 3, 4, 5, 6, 7} &&
+           laneOptionKeys(make(ChartMode::FiveKey, {})) == std::vector<int>{1, 2, 3, 4, 5} &&
+           laneOptionKeys(make(ChartMode::FourteenKey, {})) == std::vector<int>{1, 2, 3, 4, 5, 6, 7} &&
+           laneOptionKeys(make(ChartMode::PopnNine, {})).size() == 9, "1P key lanes per mode");
+
+    auto off = make(ChartMode::SevenKey, {{0, 0}, {1, 1}, {7, 2}});
+    expect(applyLaneOption(off, LaneOption::Off, 1).empty() && lanes(off) == std::vector<int>{0, 1, 7}, "OFF changes nothing");
+
+    auto mirror = make(ChartMode::SevenKey, {{0, 0}, {1, 1}, {3, 2}, {7, 3}});
+    mirror.mines.push_back({2, 4, 5}); mirror.invisible.push_back({6, 5, L"01"});
+    applyLaneOption(mirror, LaneOption::Mirror, 1);
+    expect(lanes(mirror) == std::vector<int>{0, 7, 5, 1} && mirror.mines[0].lane == 6 && mirror.invisible[0].lane == 2,
+        "MIRROR reverses 1P keys, keeps the scratch, moves mines and hidden sounds");
+    auto mirror5 = make(ChartMode::FiveKey, {{1, 0}, {5, 1}});
+    applyLaneOption(mirror5, LaneOption::Mirror, 1);
+    expect(lanes(mirror5) == std::vector<int>{5, 1}, "5K mirror stays within five keys");
+    auto dp = make(ChartMode::FourteenKey, {{1, 0}, {9, 1}, {8, 2}});
+    applyLaneOption(dp, LaneOption::Mirror, 1);
+    expect(lanes(dp) == std::vector<int>{7, 9, 8}, "the 2P side and its scratch stay as written");
+
+    // RANDOM is one permutation of the keys for the whole chart, fixed by the seed.
+    std::vector<std::pair<int, double>> scale;
+    for (int i = 0; i < 70; ++i) scale.push_back({1 + i % 7, double(i)});
+    auto randomA = make(ChartMode::SevenKey, scale), randomB = randomA, randomC = randomA;
+    const auto map = applyLaneOption(randomA, LaneOption::Random, 42);
+    applyLaneOption(randomB, LaneOption::Random, 42);
+    expect(lanes(randomA) == lanes(randomB), "same seed, same arrangement");
+    auto sorted = map; std::sort(sorted.begin(), sorted.end());
+    expect(sorted == std::vector<int>{1, 2, 3, 4, 5, 6, 7}, "RANDOM is a permutation of the keys");
+    bool consistent = true;
+    for (size_t i = 0; i < scale.size(); ++i) consistent = consistent && randomA.notes[i].lane == map[static_cast<size_t>(scale[i].first - 1)];
+    expect(consistent, "every note of a lane moves to the same lane");
+    bool someSeedMoves = false;
+    for (uint64_t seed = 1; seed < 20 && !someSeedMoves; ++seed) {
+        auto c = randomC; applyLaneOption(c, LaneOption::Random, seed); someSeedMoves = lanes(c) != lanes(randomC);
+    }
+    expect(someSeedMoves, "RANDOM does rearrange");
+
+    // S-RANDOM: chords keep distinct lanes, a held long note's lane is never reused, scratch stays.
+    auto chord = make(ChartMode::SevenKey, {{0, 0}, {1, 0}, {2, 0}, {3, 0}, {4, 0}, {5, 0}, {6, 0}, {7, 0}});
+    applyLaneOption(chord, LaneOption::SRandom, 7);
+    std::set<int> chordLanes; for (const auto& n : chord.notes) chordLanes.insert(n.lane);
+    expect(chordLanes.size() == 8 && chord.notes[0].lane == 0, "S-RANDOM keeps a full chord on distinct lanes");
+    for (uint64_t seed = 1; seed <= 30; ++seed) {
+        auto held = make(ChartMode::SevenKey, {{1, 0}, {2, 0.5}, {3, 0.6}, {4, 0.7}, {5, 0.8}, {6, 0.9}, {7, 1.0}, {1, 2.5}});
+        held.notes[0].lengthSeconds = 2;
+        applyLaneOption(held, LaneOption::SRandom, seed);
+        bool clear = true;
+        for (size_t i = 1; i < 7; ++i) clear = clear && held.notes[i].lane != held.notes[0].lane;
+        expect(clear, "S-RANDOM never drops a note into a held long note");
+    }
+    expect(laneOptionFromInt(3) == LaneOption::SRandom && laneOptionFromInt(9) == LaneOption::Off &&
+           laneOptionFromName(L"MIRROR") == LaneOption::Mirror && laneOptionFromName(L"") == LaneOption::Off &&
+           std::wstring(laneOptionName(LaneOption::SRandom)) == L"S-RANDOM", "names and stored values");
+    return bad == 0;
+}
 
 void check(bool ok, const std::string& message) {
     if (!ok) {
@@ -399,6 +469,7 @@ int main() {
         std::cerr << failures << " failure(s)\n";
         return 1;
     }
+    if (!playerLaneOptionTests()) return 1;
     std::cout << "BmsKeyModeLaneTests passed\n";
     return 0;
 }

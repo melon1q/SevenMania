@@ -15,6 +15,11 @@ constexpr bool isPlayScreen(int type) noexcept {return type>=0&&type<=4;}
 // 9KEY uses 1-9 for its nine buttons.
 inline constexpr int maxPlayLanes=20;
 // True for an LR2 lane that a play screen of this type must place.
+// The 2P side (lanes 10-19) of a single-play skin (7KEY, 5KEY). LR2 half skins declare both sides in one
+// file; the side a single-play mode never uses is skipped without a warning.
+constexpr bool playLaneOtherSide(int type,int lane) noexcept {
+    return (type==0||type==1)&&lane>=10&&lane<=19;
+}
 constexpr bool playLaneUsed(int type,int lane) noexcept {
     switch(type) {
         case 0: return lane>=0&&lane<=7;

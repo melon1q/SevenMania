@@ -20,6 +20,9 @@ bool prepareSelectedChartData(bool deferred=false) {
     loadLr2PlaySkin(playingChart);
 #endif
     gBgaVideoStartSeconds = bms::bgaVideoStartSeconds(playingChart);
+    // The 1P lane option rearranges this play's freshly parsed notes; a restart keeps the arrangement.
+    gPlayLaneOption = gLaneOption;
+    bms::applyLaneOption(playingChart, gPlayLaneOption, (uint64_t(std::random_device{}()) << 32) ^ std::random_device{}());
     if (gPractice.enabled) {
         gPracticeNotesChartIndex = index;
         gPracticeOriginalDuration = playingChart.durationSeconds;
@@ -32,6 +35,7 @@ bool prepareSelectedChartData(bool deferred=false) {
     gResultScore.reset(static_cast<int>(bms::judgementNoteCount(gCharts[index])));
     gFeedback.reset();
     gPlayAbandoned=false;
+    resetFailureEnding();
     bms::configurePlaybackGauge(gGrooveGauge,gCharts[index],gGrooveGaugeMode,gPractice.enabled);
     if(gChartOptions.gaugeAuthored)gGrooveGauge.configureAuthored(gChartOptions.gameLevel,gChartOptions.extra);
     gKeyBeams.reset();

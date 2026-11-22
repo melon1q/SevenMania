@@ -3,6 +3,8 @@ bool gLr2SelectActive{};
 int gLr2SelectPanel{};
 using Lr2SelectClock=std::chrono::steady_clock;
 std::array<Lr2SelectClock::time_point,6> gLr2PanelOpened{},gLr2PanelClosed{};
+// When the LR2 select scene last came on screen (its timer 0); #STARTINPUT counts from here.
+Lr2SelectClock::time_point gLr2SelectShownAt{};
 std::optional<sevenmania::skin::lr2::SelectControl> gLr2SliderDrag;
 bool gLr2SliderVolumeChanged{};
 
@@ -79,7 +81,8 @@ int lr2ClearLamp(const PlayRecord* record) {
     if(!record||(!record->played&&!record->cleared))return 0;
     if(record->bestKnownClear) {
         constexpr std::array<int,9> lamps{1,2,2,3,4,4,5,5,5}; // Indexed by RecordClearLamp.
-        return lamps[std::min<std::size_t>(static_cast<std::size_t>(record->bestKnownClear->lamp),lamps.size()-1)];
+        const int lamp=lamps[std::min<std::size_t>(static_cast<std::size_t>(record->bestKnownClear->lamp),lamps.size()-1)];
+        return record->cleared&&lamp<2?3:lamp; // a known failure never hides an older, unclassified clear
     }
     return record->cleared?3:1;
 }
@@ -205,6 +208,8 @@ sevenmania::skin::lr2::SelectFrame captureLr2Select(const sevenmania::skin::lr2:
             frame.song.numbers.maxCombo=static_cast<int>(record->maxCombo);
             frame.record=lr2SelectRecord(record,notes);
             frame.bestGauge=lr2BestGauge(record);
+            // Lane option of the best clear; records from before the option count as OFF.
+            frame.bestLaneOption=record->clearOptions?static_cast<int>(bms::laneOptionFromName(record->clearOptions->lane)):0;
         }
     }
     const auto now=Lr2SelectClock::now();
@@ -216,7 +221,7 @@ sevenmania::skin::lr2::SelectFrame captureLr2Select(const sevenmania::skin::lr2:
     frame.fadeoutAge=age(gLr2SelectFadeAt);
     // Summed once per change of the records, not every frame.
     const auto& totals=gPlayRecordStore.totals();
-    frame.totals={totals.playCount,totals.clearCount,totals.judgements};
+    frame.totals={totals.playCount,totals.clearCount,totals.judgements,totals.playSeconds};
     frame.panel=gLr2SelectPanel;
     for(std::size_t panel=0;panel<frame.panelOn.size();++panel) {
         frame.panelOn[panel]=age(gLr2PanelOpened[panel]);
@@ -224,6 +229,10 @@ sevenmania::skin::lr2::SelectFrame captureLr2Select(const sevenmania::skin::lr2:
     }
     constexpr std::array<int,6> keyCells{2,1,4,3,5,0}; // Same order as KeyModeFilter.
     frame.keyMode=keyCells[static_cast<std::size_t>(gKeyModeFilter)];
+    frame.difficultyFilter=gDifficultyFilter;
+    frame.laneOption=static_cast<int>(gLaneOption);
+    frame.targetKind=static_cast<int>(gTargetKind);
+    frame.targetRate=gDefaultTargetRate;
     frame.gaugeCell=lr2GaugeCell();
     for(std::size_t i=0;i<lr2VolumeChannels.size();++i)frame.volumes[i]=gVolumes[lr2VolumeChannels[i]]/100.f;
     frame.hiSpeed=gNoteSpeed;
@@ -323,7 +332,8 @@ bool presentLr2Select(int width,int height) {
         return false;
     }
     if(gLr2SelectGpuFailed)return false;
-    static auto started=std::chrono::steady_clock::now();
+    auto& started=gLr2SelectShownAt;
+    if(started==Lr2SelectClock::time_point{})started=Lr2SelectClock::now();
     if(!gLr2SelectAttempted) {
         gLr2SelectAttempted=true;
         Options options;
@@ -403,11 +413,48 @@ void pressLr2OptionButton(int id,bool increment) {
             postSetting(ID_AUTO_JUDGE_MODE,gAutoJudgeMode?0:autoJudgeOn?autoJudgeOn:static_cast<int>(bms::AutoJudgeAdjuster::Suggest));
             break;
         case 70: lr2ScoreGraph(!lr2ScoreGraph());break;
+        case 10: cycleDifficultyFilter(increment);break;
+        case 42:
+            postSetting(ID_LANE_OPTION,(static_cast<int>(gLaneOption)+(increment?1:bms::laneOptionCount-1))%bms::laneOptionCount);
+            break;
+        case 77: gTargetKind=bms::nextTargetKind(gTargetKind,increment);saveDisplaySettings();break;
+        case 76:
+            gDefaultTargetRate=std::clamp(gDefaultTargetRate+(increment?1:-1),bms::minDefaultTargetRate,bms::maxDefaultTargetRate);
+            saveDisplaySettings();
+            break;
     }
 }
 
+// Select #STARTINPUT: keys, clicks and the wheel do nothing until the scene has been up that long.
+// Swallows the message while locked; lr2SelectInput and the list never see it.
+bool lr2SelectInputLocked(UINT message) {
+    if(!gLr2SelectActive||!gLr2SelectScene||gLoading||gPlaying||gShowingResult||gSettingsWindow)return false;
+    switch(message) {
+    case WM_KEYDOWN: case WM_CHAR: case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK: case WM_MOUSEWHEEL: break;
+    default: return false;
+    }
+    const double age=std::chrono::duration<double,std::milli>(Lr2SelectClock::now()-gLr2SelectShownAt).count();
+    return sevenmania::skin::lr2::sceneInputLocked(gLr2SelectScene->startInputMilliseconds(),age);
+}
+
+// Select MOUSECURSOR: over the client area the skin draws the cursor, so the system one is hidden.
+bool lr2SelectSetCursor(LPARAM lParam) {
+    if(LOWORD(lParam)!=HTCLIENT||!gLr2SelectActive||!gLr2SelectScene||!gLr2SelectScene->hasMouseCursor()||
+       gLoading||gPlaying||gShowingResult||gSongInfoVisible||gSettingsWindow)return false;
+    SetCursor(nullptr);
+    return true;
+}
+
+// Play #STARTINPUT: while the LR2 play scene's lead-in is younger than it, the loading keys
+// (Esc cancels, Enter skips the intro) are ignored.
+bool lr2PlayInputLocked() {
+    if(!gLr2PlayScene||gLr2GpuFailed||gLr2Play.leadInFailed)return false;
+    return sevenmania::skin::lr2::sceneInputLocked(gLr2PlayScene->startInputMilliseconds(),gLr2Play.leadInAge());
+}
+
 // Buttons that step through values, which a right click steps backwards.
-bool lr2SteppingButton(int id) {return id==11||id==40||id==55||id==57||id==74;}
+bool lr2SteppingButton(int id) {return id==10||id==11||id==40||id==42||id==55||id==57||id==74||id==76||id==77;}
 
 bool lr2SelectInput(HWND window,UINT message,WPARAM wParam,LPARAM lParam) {
     if(gLr2SliderDrag&&(message==WM_CAPTURECHANGED||message==WM_CANCELMODE)) {

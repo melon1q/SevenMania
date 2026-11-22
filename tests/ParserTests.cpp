@@ -5,6 +5,9 @@
 #include "ScrollTimeline.h"
 #include "HiSpeedFix.h"
 #include "SelectFrameClock.h"
+#include "ChartHash.h"
+#include "SongMetadataCache.h"
+#include <iterator>
 
 #include <cmath>
 #include <filesystem>
@@ -178,6 +181,25 @@ int main(int argc, char** argv) {
         writeChart(decimalLevelPath, L"#PLAYER 1\n#DIFFICULTY 4\n#PLAYLEVEL 12.5\n#BPM 120\n#00011:01\n");
         const auto decimalLevel = bms::BmsParser().parse(decimalLevelPath);
         require(decimalLevel.chart.playLevel == L"12.5", "decimal #PLAYLEVEL must be preserved exactly");
+        {
+            // Record and difficulty-table identity: digests of the file's raw bytes.
+            const auto abc = bms::chartHashes("abc", 3);
+            require(abc.md5 == L"900150983cd24fb0d6963f7d28e17f72" &&
+                abc.sha256 == L"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "MD5/SHA-256 test vectors");
+            std::ifstream in(decimalLevelPath, std::ios::binary);
+            const std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const auto expected = bms::chartHashes(bytes);
+            require(decimalLevel.chart.sha256 == expected.sha256 && decimalLevel.chart.md5 == expected.md5 &&
+                decimalLevel.chart.sha256.size() == 64 && decimalLevel.chart.md5.size() == 32, "parsed chart must carry its file digests");
+            const auto missingFile = bms::BmsParser().parse(root / L"does-not-exist.bms");
+            require(missingFile.chart.sha256.empty() && missingFile.chart.md5.empty(), "an unreadable chart has no digest");
+            const auto cacheDir = root / L"hash-cache";
+            bms::SongMetadataCache cache(root, 1, cacheDir);
+            cache.save(decimalLevel.chart);
+            bms::Chart cached;
+            require(cache.load(decimalLevelPath, cached) && cached.sha256 == expected.sha256 && cached.md5 == expected.md5,
+                "metadata cache must keep the chart digests");
+        }
         const auto missingLevelPath = root / L"category-only.bme";
         writeChart(missingLevelPath, L"#PLAYER 1\n#DIFFICULTY 5\n#BPM 120\n#00011:01\n");
         const auto missingLevel = bms::BmsParser().parse(missingLevelPath);

@@ -9,6 +9,7 @@ int readSettingValue(int id) {
     case ID_FPS: return gTargetFps;
     case ID_SPEED: return int(std::lround(gNoteSpeed * 4));
     case ID_HI_SPEED_FIX: return int(gHiSpeedFix);
+    case ID_LANE_OPTION: return int(gLaneOption);
     case ID_SELECT_FPS: return gSelectFrameClock.fps();
     case ID_SKIN_JUDGEMENT_MODE:return gSkinJudgementMode;
     case ID_SKIN_COMBO_MODE:return gSkinComboMode;
@@ -76,6 +77,7 @@ bool applySettingValue(int id, int value, std::wstring& error) {
     case ID_FPS: gTargetFps = value; gFramePacer.reset(value); break;
     case ID_SPEED: gNoteSpeed = value / 4.0; break;
     case ID_HI_SPEED_FIX: gHiSpeedFix = static_cast<bms::HiSpeedFix>(value); break;
+    case ID_LANE_OPTION: gLaneOption = bms::laneOptionFromInt(value); break; // takes effect from the next play
     case ID_SELECT_FPS: gSelectFrameClock.setFps(value); break;
     case ID_SKIN_JUDGEMENT_MODE:case ID_SKIN_COMBO_MODE:
         value=1;

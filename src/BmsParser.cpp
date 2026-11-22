@@ -5,6 +5,7 @@
 #include "BmsText.h"
 #include "BmsonParser.h"
 #include "ChartOptions.h"
+#include "ChartHash.h"
 #include <random>
 
 #include <algorithm>
@@ -69,7 +70,7 @@ std::vector<std::wstring> splitLines(const std::wstring& text) {
 
 std::wstring decodeBytes(const std::vector<char>& bytes,const std::filesystem::path& directory) { return decodeBmsText(bytes,directory); }
 
-std::wstring readText(const std::filesystem::path& path) {
+std::vector<char> readBytes(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary | std::ios::ate);
     if (!in) throw std::runtime_error("파일을 열 수 없습니다.");
     const auto size = in.tellg();
@@ -77,8 +78,10 @@ std::wstring readText(const std::filesystem::path& path) {
     std::vector<char> bytes(static_cast<size_t>(size));
     in.seekg(0);
     if (!bytes.empty() && !in.read(bytes.data(), static_cast<std::streamsize>(bytes.size()))) throw std::runtime_error("chart read failed");
-    return decodeBytes(bytes,path.parent_path());
+    return bytes;
 }
+
+std::wstring readText(const std::filesystem::path& path) { return decodeBytes(readBytes(path),path.parent_path()); }
 
 std::wstring koreanArchiveFilename(const std::wstring& filename) {
     // Older Korean ZIP extractors can interpret Shift-JIS filename bytes as
@@ -267,13 +270,23 @@ ParseResult BmsParser::parse(const std::filesystem::path& path) const {
     chart.title = path.stem().wstring();
 
     std::wstring text;
-    try { text = readText(path); }
+    ChartHashes hashes;
+    try {
+        const auto bytes = readBytes(path);
+        hashes = chartHashes(bytes);
+        text = decodeBytes(bytes, path.parent_path());
+    }
     catch (const std::exception&) {
         chart.blockReason = L"파일을 읽을 수 없음";
         return result;
     }
+    chart.md5 = hashes.md5; chart.sha256 = hashes.sha256;
 
-    if(toLower(path.extension().wstring())==L".bmson")return parseBmson(path,text);
+    if(toLower(path.extension().wstring())==L".bmson") {
+        auto parsed = parseBmson(path,text);
+        parsed.chart.md5 = std::move(hashes.md5); parsed.chart.sha256 = std::move(hashes.sha256);
+        return parsed;
+    }
     std::unordered_map<std::wstring, std::wstring> headers;
     std::unordered_map<std::wstring, std::wstring> sampleNames;
     std::unordered_map<std::wstring, std::wstring> bitmapNames;

@@ -15,8 +15,8 @@ beatoraja `SystemSoundManager.SoundType`과 같은 이름을 쓴다. 출처: [Sy
 | 효과음 | `o-open` / `o-close` | LR2 선곡 옵션 패널 열기 / 닫기 |
 | 효과음 | `o-change` | LR2 선곡 옵션 값 변경, 키 모드 필터, 정렬 |
 | 효과음 | `playready` | 플레이 시작 |
-| 효과음 | `playstop` | 일시정지 QUIT으로 플레이 중단 |
-| 효과음 | `clear` / `fail` | 결과 화면 진입 (클리어 / 실패) |
+| 효과음 | `playstop` | 게이지가 바닥나거나 일시정지 QUIT으로 플레이가 끝나는 순간(LR2 스킨은 실패 셔터가 닫히기 시작할 때). 곡은 그 자리에서 멈춘다 |
+| 효과음 | `clear` / `fail` | 결과 화면 진입 (클리어 / 실패). 게임 오버·QUIT도 `fail`. `playstop`이 아직 울리는 중이면 끝난 뒤에 재생한다(시스템 효과음은 한 번에 하나만 재생) |
 | 효과음 | `resultclose` | 결과 화면에서 선곡으로 복귀 |
 | 효과음 | `click`, `levelchange` | SevenMania 전용: 버튼 클릭, 난이도 변경 |
 

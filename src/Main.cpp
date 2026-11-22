@@ -23,6 +23,8 @@ bool skinGearForMode(int gearMode);
 #include "BmsParser.h"
 #include "GameplayModePolicy.h"
 #include "KeyModeFilter.h"
+#include "TargetScore.h"
+#include "LaneOption.h"
 #include "KeyProfiles.h"
 #include "KeyLaneMap.h"
 #include "SongCatalog.h"
@@ -257,7 +259,7 @@ constexpr int ID_SUMMARY_GAUGE = 1265;
 constexpr int ID_TIMING_HINT=1052;
 constexpr int ID_INTRO_ENABLE=1097;
 constexpr int ID_PREVIEW_START=1099;
-constexpr int ID_HI_SPEED_FIX=1290,ID_SELECT_FPS=1291;
+constexpr int ID_HI_SPEED_FIX=1290,ID_SELECT_FPS=1291,ID_LANE_OPTION=1295;
 constexpr int ID_ACCURACY_LIMIT=1049,ID_SUMMARY_ACCURACY_LIMIT=1266;
 constexpr int ID_RESOLUTION = 1048;
 constexpr int JUDGE_OFFSET_MIN = -4096;
@@ -283,6 +285,11 @@ HWND gHiddenSongs{};
 HIMAGELIST gSongRowImages{};
 bool gShowHiddenCharts{};
 bms::KeyModeFilter gKeyModeFilter{ bms::KeyModeFilter::Key7 };
+int gDifficultyFilter{}; // bms::difficultyFilterMatches: 0 all, 1-5 BEGINNER..INSANE
+bms::TargetKind gTargetKind{ bms::TargetKind::MyBest };
+// 1P lane option for the next play, and the one the current play was arranged with.
+bms::LaneOption gLaneOption{ bms::LaneOption::Off }, gPlayLaneOption{ bms::LaneOption::Off };
+int gDefaultTargetRate{ bms::initialDefaultTargetRate };
 bool gHasPartialLoadCharts{};
 std::wstring gPartialLoadSummary;
 std::array<int, 2> gBrowseSelections{ -1, -1 };
@@ -734,6 +741,21 @@ void resetResultFade() {
     if (gWindow) KillTimer(gWindow, ID_RESULT_FADE);
 }
 
+// Fail ending (LR2 / beatoraja): an empty gauge or QUIT stops the song, freezes the picture at the
+// last heard time and plays playstop; the result's clear/fail sound waits until playstop has finished.
+constexpr UINT_PTR ID_RESULT_SOUND = 0xB511;
+bool gFailureEndingStarted{};
+double gFailureEndingPlayhead{};
+double gPlayStopSeconds{};
+std::chrono::steady_clock::time_point gPlayStopStartedAt{};
+bms::SystemSound gPendingResultSound{bms::SystemSound::Count};
+void resetFailureEnding() {
+    gFailureEndingStarted = false;
+    gPlayStopSeconds = 0;
+    gPendingResultSound = bms::SystemSound::Count;
+    if (gWindow) KillTimer(gWindow, ID_RESULT_SOUND);
+}
+
 void syncNativeResultNext() {
     if(!IsWindow(gResultNext))return;
     bool visible=gShowingResult&&!gResultFade.active();
@@ -942,7 +964,10 @@ std::wstring practiceTime(double seconds) {
 double playbackTimingScale() {return (gPractice.enabled?gPractice.rate():1.0)*gChartOptions.rate;}
 // gPlayhead is the "heard" time: the device clock minus the user's audio-latency correction.
 bms::TimingOffsets gTimingOffsets;
-double heardPlayhead() {return bms::heardSeconds(gAudio.positionSeconds(),gTimingOffsets,playbackTimingScale());}
+double heardPlayhead() {
+    if (gFailureEndingStarted) return gFailureEndingPlayhead; // the song has stopped; the picture holds still
+    return bms::heardSeconds(gAudio.positionSeconds(),gTimingOffsets,playbackTimingScale());
+}
 // Judgement time = heard time minus the judge offset (manual or auto). Notes are drawn from gPlayhead, never from this.
 double judgePlayhead() {return bms::judgeSeconds(gPlayhead,gTimingOffsets,playbackTimingScale());}
 bms::AutoJudgeAdjuster gAutoJudge;
@@ -1068,6 +1093,10 @@ void loadDisplaySettings() {
     const auto startup=sevenmania::readStartupSettings(gSettingsFile);
     gBrowseBackgroundMode = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Background", 2, gSettingsFile.c_str())), 0, 3);
     gKeyModeFilter = bms::keyModeFilterFromInt(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"KeyMode", 0, gSettingsFile.c_str())));
+    gDifficultyFilter = bms::difficultyFilterFromInt(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Difficulty", 0, gSettingsFile.c_str())));
+    gTargetKind = bms::targetKindFromInt(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Target", 0, gSettingsFile.c_str())));
+    gDefaultTargetRate = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"TargetRate", bms::initialDefaultTargetRate, gSettingsFile.c_str())),
+        bms::minDefaultTargetRate, bms::maxDefaultTargetRate);
     gBackgroundBlur = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Blur", 20, gSettingsFile.c_str())), 0, 100);
     gBackgroundOpacity = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Browse", L"Opacity", 10, gSettingsFile.c_str())), 0, 100);
     gSongPreviewEnabled = GetPrivateProfileIntW(L"Sound", L"SongPreview", 1, gSettingsFile.c_str()) != 0;
@@ -1124,6 +1153,7 @@ void loadDisplaySettings() {
     gSelectFrameClock.setFps(static_cast<int>(GetPrivateProfileIntW(L"Display", L"SelectFPS", SelectFrameClock::defaultFps, gSettingsFile.c_str())));
     gJudgementProfile = JudgementProfile::Normal;
     gGrooveGaugeMode = static_cast<GrooveGaugeMode>(std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gameplay", L"GrooveGaugeMode", 0, gSettingsFile.c_str())), 0, 2));
+    gLaneOption = bms::laneOptionFromInt(static_cast<int>(GetPrivateProfileIntW(L"Gameplay", L"LaneOption", 0, gSettingsFile.c_str())));
     gIntroEnabled=GetPrivateProfileIntW(L"Gameplay",L"SongIntro",1,gSettingsFile.c_str())!=0;
     gPreviewStartMode=std::clamp(int(GetPrivateProfileIntW(L"Gameplay",L"PreviewStart",0,gSettingsFile.c_str())),0,2);
     gTimingHintCondition=std::clamp(int(GetPrivateProfileIntW(L"Gameplay",L"TimingHintCondition",0,gSettingsFile.c_str())),0,3);
@@ -1154,6 +1184,9 @@ void saveDisplaySettings() {
     if (gSettingsFile.empty()) return;
     WritePrivateProfileStringW(L"Browse", L"Background", std::to_wstring(gBrowseBackgroundMode).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Browse", L"KeyMode", std::to_wstring(static_cast<int>(gKeyModeFilter)).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Browse", L"Difficulty", std::to_wstring(gDifficultyFilter).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Browse", L"Target", std::to_wstring(static_cast<int>(gTargetKind)).c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Browse", L"TargetRate", std::to_wstring(gDefaultTargetRate).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Browse", L"Blur", std::to_wstring(gBackgroundBlur).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Browse", L"Opacity", std::to_wstring(gBackgroundOpacity).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Browse", L"CustomBackground", gCustomBackgroundName.c_str(), gSettingsFile.c_str());
@@ -1195,6 +1228,7 @@ void saveDisplaySettings() {
     WritePrivateProfileStringW(L"Display", L"SelectFPS", std::to_wstring(gSelectFrameClock.fps()).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Gameplay", L"JudgementProfile", judgementProfile.c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Gameplay", L"GrooveGaugeMode", grooveGaugeMode.c_str(), gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Gameplay", L"LaneOption", std::to_wstring(static_cast<int>(gLaneOption)).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Display",L"SeparatorOpacity",std::to_wstring(gSeparatorOpacity).c_str(),gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Gameplay",L"SongIntro",std::to_wstring(gIntroEnabled).c_str(),gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Gameplay",L"SongIntroMs",nullptr,gSettingsFile.c_str()); // legacy key removed
@@ -1517,10 +1551,50 @@ void initializeSettingsPath() {
 
 void loadPlayRecords() { gPlayRecordStore.load(); }
 
+RecordChartId chartRecordId(const bms::Chart& chart) { return recordChartId(chart.path, chart.md5, chart.sha256); }
+
+// Charts with a file hash use it as their record key. A record an older build stored under the
+// chart's path moves to that key here, the first time the chart is listed, and the file is written once.
 void rebuildChartRecordKeys() {
     gLr2ChartSummaries.clear();
     gChartRecordKeys.resize(gCharts.size());
-    for (size_t i = 0; i < gCharts.size(); ++i) gChartRecordKeys[i] = normalizedRecordPath(gCharts[i].path);
+    bool adopted = false;
+    for (size_t i = 0; i < gCharts.size(); ++i) {
+        const auto id = chartRecordId(gCharts[i]);
+        gChartRecordKeys[i] = id.key;
+        if (!id.legacyKey().empty() && gPlayRecords.contains(id.legacyKey())) adopted = gPlayRecordStore.adoptLegacyRecord(id) || adopted;
+    }
+    if (adopted) gPlayRecordStore.flush();
+}
+
+// The conditions the play just finished ran under, for the record.
+RecordPlayOptions currentPlayOptions(const bms::Chart& chart) {
+    RecordPlayOptions options;
+    options.mode = static_cast<int>(chart.mode);
+    options.gauge = activeGaugeModeText();
+    options.lane = bms::laneOptionName(gPlayLaneOption);
+    for (const int branch : chart.randomSelections) options.random += (options.random.empty() ? L"" : L",") + std::to_wstring(branch);
+    return options;
+}
+
+// Seconds of song the play just finished lasted, at the speed it was played (pauses not counted).
+int currentPlaySeconds() {
+    const double scale = playbackTimingScale();
+    if (!std::isfinite(gPlayhead) || gPlayhead <= 0 || !(scale > 0)) return 0;
+    return static_cast<int>(std::min(gPlayhead / scale, 24.0 * 3600));
+}
+
+// Clear lamp of the play just finished: failed, the gauge's clear, full combo or perfect.
+RecordClearInfo currentClearInfo(bool cleared) {
+    RecordClearInfo info{RecordClearLamp::Failed, L"7KEYS", activeGaugeModeText()};
+    if (!cleared) return info;
+    const auto counts = gResultScore.judgementCounts();
+    if (gResultScore.missCount() == 0 && gResultScore.noteCount() > 0)
+        info.lamp = counts[1] == 0 && counts[2] == 0 ? RecordClearLamp::Perfect : RecordClearLamp::FullCombo;
+    else
+        info.lamp = gGrooveGaugeMode == GrooveGaugeMode::Easy ? RecordClearLamp::Easy :
+            gGrooveGaugeMode == GrooveGaugeMode::Hard ? RecordClearLamp::Hard : RecordClearLamp::Normal;
+    return info;
 }
 
 const PlayRecord* playRecordForChart(size_t chartIndex) {
@@ -1528,11 +1602,17 @@ const PlayRecord* playRecordForChart(size_t chartIndex) {
     return gPlayRecordStore.findPlayed(gChartRecordKeys[chartIndex]);
 }
 
-void savePlayRecord(const std::filesystem::path& chartPath, bool cleared, unsigned maxCombo, int accuracyScore, const std::wstring& spec=L"LEGACY", int rank=-1) {
+void savePlayRecord(const bms::Chart& chart, bool cleared, unsigned maxCombo, int accuracyScore, const std::wstring& spec=L"LEGACY", int rank=-1) {
     if (!playSavesRecord()) return; // practice, diagnostic and autoplay plays are not records
-    if (gPlayRecordStore.save(chartPath, cleared, maxCombo, accuracyScore, spec, rank, std::nullopt, gResultScore.exScore(),
-            gResultScore.judgementCounts(), gResultScore.missCount(), gResultScore.noteCount()) && gList)
+    if (gPlayRecordStore.saveChart(chartRecordId(chart), cleared, maxCombo, accuracyScore, spec, rank, currentClearInfo(cleared),
+            gResultScore.exScore(), gResultScore.judgementCounts(), gResultScore.missCount(), gResultScore.noteCount(),
+            currentPlayOptions(chart), currentPlaySeconds()) && gList)
         InvalidateRect(gList, nullptr, FALSE);
+}
+// Tests and tools that only know a path record it under the path key.
+void savePlayRecord(const std::filesystem::path& chartPath, bool cleared, unsigned maxCombo, int accuracyScore, const std::wstring& spec=L"LEGACY", int rank=-1) {
+    bms::Chart chart; chart.path = chartPath;
+    savePlayRecord(chart, cleared, maxCombo, accuracyScore, spec, rank);
 }
 
 int selectedGroupIndex() {
@@ -1731,8 +1811,10 @@ void refreshSongRow(size_t index) {
 }
 
 bms::ui::SongEntryKind navigationKind(int id);
+// The song list's filters: key mode (Tab, LR2 button 11) and difficulty (LR2 button 10).
 bool chartMatchesKeyMode(size_t chartIndex) {
-    return chartIndex < gCharts.size() && bms::keyModeFilterMatches(gKeyModeFilter, gCharts[chartIndex].mode);
+    return chartIndex < gCharts.size() && bms::keyModeFilterMatches(gKeyModeFilter, gCharts[chartIndex].mode) &&
+        bms::difficultyFilterMatches(gDifficultyFilter, gCharts[chartIndex].difficulty);
 }
 bool groupMatchesKeyMode(const bms::ui::SongGroup& group) {
     for (const size_t c : group.chartIndices) if (chartMatchesKeyMode(c)) return true;
@@ -2001,6 +2083,22 @@ void cycleKeyModeFilter(bool forward = true) {
     setStatus(std::wstring(L"키 모드: ") + bms::keyModeFilterLabel(gKeyModeFilter));
 }
 
+void cycleDifficultyFilter(bool forward = true) {
+    if (gPlaying || gShowingResult || gLoading) return;
+    const int previous = gSongSelection.selectedGroupIndex();
+    gDifficultyFilter = bms::nextDifficultyFilter(gDifficultyFilter, forward);
+    gBrowseSelections.fill(-1);
+    gBrowseSelections[gShowHiddenCharts ? 1 : 0] = previous;
+    rebuildSongRows(previous);
+    saveDisplaySettings();
+    setStatus(std::wstring(L"난이도: ") + bms::difficultyFilterLabel(gDifficultyFilter));
+}
+
+// EX score the play races against (LR2 play numbers 151 / 108, bar graphs 14 / 15).
+int currentTargetExScore(std::optional<int> bestExScore, int notes) {
+    return bms::targetExScore(gTargetKind, bestExScore, notes, gDefaultTargetRate);
+}
+
 void buildSongGroups() {
     gSongSelection.setCollectVariants(gLibrarySources.collectVariants);
     gSongSelection.setIndividualCharts(gLibrarySources.individualCharts);
@@ -2186,6 +2284,7 @@ void showBrowseView() {
     gFeedback.reset();
     gGrooveGauge.reset();
     gPlayAbandoned = false;
+    resetFailureEnding();
     gKeyBeams.reset();
     if(gActiveChartIndex>=0 && gActiveChartIndex<static_cast<int>(gCharts.size())) {
         const auto layout=bms::chartLayout(gCharts[gActiveChartIndex],0,68,104);
@@ -4293,6 +4392,8 @@ LRESULT CALLBACK songListSubclass(HWND window, UINT message, WPARAM wParam, LPAR
 
     if(summaryInput(message,wParam,lParam,window))return 0;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
+    if(lr2SelectInputLocked(message))return 0;
+    if(message==WM_SETCURSOR&&lr2SelectSetCursor(lParam))return TRUE;
     if(lr2SelectInput(window,message,wParam,lParam))return 0;
 #endif
     if (handleBrowseShortcut(message, wParam, lParam)) return 0;

@@ -42,6 +42,19 @@ inline const wchar_t* keyModeFilterLabel(KeyModeFilter f) noexcept {
     }
 }
 
+// Song-select difficulty filter (LR2 select button 10): 0 shows every chart, 1-5 only charts whose
+// #DIFFICULTY is BEGINNER, NORMAL, HYPER, ANOTHER or INSANE. Charts without a difficulty show only in 0.
+inline constexpr int difficultyFilterCount = 6;
+inline int difficultyFilterFromInt(int v) noexcept { return v >= 0 && v < difficultyFilterCount ? v : 0; }
+inline int nextDifficultyFilter(int f, bool forward) noexcept {
+    return (difficultyFilterFromInt(f) + (forward ? 1 : difficultyFilterCount - 1)) % difficultyFilterCount;
+}
+inline bool difficultyFilterMatches(int f, int difficulty) noexcept { return f <= 0 || f >= difficultyFilterCount || difficulty == f; }
+inline const wchar_t* difficultyFilterLabel(int f) noexcept {
+    static constexpr const wchar_t* names[] = {L"ALL", L"BEGINNER", L"NORMAL", L"HYPER", L"ANOTHER", L"INSANE"};
+    return names[difficultyFilterFromInt(f)];
+}
+
 inline KeyModeFilter keyModeFilterFromInt(int v) noexcept {
     return v >= 0 && v <= static_cast<int>(KeyModeFilter::All) ? static_cast<KeyModeFilter>(v) : KeyModeFilter::Key7;
 }

@@ -59,8 +59,24 @@ bool lr2HoldFinish() {
 }
 #endif
 
+bool triggerSystemSound(bms::SystemSound sound);
+// An empty gauge or QUIT: stop the song where it is and play playstop, once, before the fail shutters
+// (or the result fade) run. The playhead stays at the last heard time, so the picture holds still.
+void beginFailureEnding() {
+    if (gFailureEndingStarted || !gPlaying || gPractice.enabled || gNoInputBenchmark || gAccuracyRestartPending) return;
+    if (!bms::playStopsOnFailure(gGrooveGauge.depleted(), gPlayAbandoned)) return;
+    gFailureEndingPlayhead = gPlayhead;
+    gFailureEndingStarted = true;
+    gAudio.releaseSong();
+    startUiEffects();
+    const auto stop = bms::SystemSound::PlayStop;
+    gPlayStopSeconds = triggerSystemSound(stop) ? gAudio.effectSeconds(bms::systemSoundInfo(stop).effectId) : 0;
+    gPlayStopStartedAt = std::chrono::steady_clock::now();
+}
+
 void finishPlayback() {
     if (!gPlaying) return; // Finalize scores and capture the frame only once.
+    beginFailureEnding();
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     if(!lr2PlayEnding())sampleLr2ResultGauge();
     if(lr2HoldFinish())return;
@@ -89,7 +105,8 @@ void finishPlayback() {
         const auto outcome = bms::playOutcome(gGrooveGauge.clearConditionMet(), gGrooveGauge.depleted(), gPlayAbandoned);
         gResultGaugeCleared = outcome.cleared;
         gResultGaugeFailed = outcome.failed;
-        resultSound = gPlayAbandoned ? bms::SystemSound::PlayStop : outcome.cleared ? bms::SystemSound::ResultClear : bms::SystemSound::ResultFail;
+        // playstop already sounded when the play failed; the result itself is clear or fail.
+        resultSound = outcome.cleared ? bms::SystemSound::ResultClear : bms::SystemSound::ResultFail;
         gPlayAbandoned = false;
     }
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -103,18 +120,26 @@ void finishPlayback() {
         }
     }
     if (playSavesRecord() && gActiveChartIndex >= 0 && gActiveChartIndex < static_cast<int>(gCharts.size())) {
-        savePlayRecord(gCharts[static_cast<size_t>(gActiveChartIndex)].path, gResultGaugeCleared,
+        savePlayRecord(gCharts[static_cast<size_t>(gActiveChartIndex)], gResultGaugeCleared,
             gFeedback.maxCombo(), gResultScore.value(), gCharts[gActiveChartIndex].judgementSpec,gCharts[gActiveChartIndex].rank);
     }
-    gAudio.releaseSong();
+    // A fail ending already swapped the song for UI output; stopping it again would cut playstop.
+    const bool failureEnding = gFailureEndingStarted;
+    if (!failureEnding) gAudio.releaseSong();
     gBgaRaster.reset();
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     gLr2PlayScene.reset();
 #endif
     gCompositionPresenter.reset();
     releaseBgaBackplate();
-    startUiEffects();
-    triggerSystemSound(resultSound);
+    if (!failureEnding) startUiEffects();
+    gFailureEndingStarted = false;
+    const int resultSoundDelay = failureEnding ? bms::resultSoundDelayMs(gPlayStopSeconds,
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - gPlayStopStartedAt).count()) : 0;
+    if (resultSoundDelay > 0 && gWindow) {
+        gPendingResultSound = resultSound;
+        SetTimer(gWindow, ID_RESULT_SOUND, static_cast<UINT>(resultSoundDelay), nullptr);
+    } else triggerSystemSound(resultSound);
     gVideoBga.reset();
     gBgaVideos.reset();gBgaSwitch.reset();
     gPressed.fill(false);gKeyboardPressed.fill(false);gControllerPressed.fill(false);gController.mapper.reset();clearAccuracyRestart();
@@ -162,7 +187,8 @@ void continueBenchmarkSeries() {
 
 void pausePlayback(bool focusMenu = true) {
     HUD_SCOPE(PauseTransition);
-    if (!gPlaying || gPaused || !gAudio.pause()) return;
+    // The fail ending has already stopped the song; pausing would cut playstop and stall the ending.
+    if (!gPlaying || gPaused || gFailureEndingStarted || !gAudio.pause()) return;
     gPlayhead = heardPlayhead();
     gPaused = true;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -230,7 +256,8 @@ void quitPausedPlayback() {
 
 void restartPlayback() {
     gFrameStatistics.reset();
-    if (!gPlaying || gLoading || gActiveChartIndex < 0 || gActiveChartIndex >= static_cast<int>(gCharts.size())) return;
+    // A failed play goes on to its result; the song it would restart is already released.
+    if (!gPlaying || gLoading || gFailureEndingStarted || gActiveChartIndex < 0 || gActiveChartIndex >= static_cast<int>(gCharts.size())) return;
     if(gAudio.isRunning()&&!gAudio.isPaused()&&!gAudio.pause())gAudio.stop();
     const auto& chart = gCharts[static_cast<size_t>(gActiveChartIndex)];
     gPaused = false;
@@ -250,6 +277,7 @@ void restartPlayback() {
     gResultScore.reset(static_cast<int>(bms::judgementNoteCount(chart)));
     gFeedback.reset();
     gPlayAbandoned=false;
+    resetFailureEnding();
     bms::configurePlaybackGauge(gGrooveGauge,chart,gGrooveGaugeMode,gPractice.enabled);
     if(gChartOptions.gaugeAuthored)gGrooveGauge.configureAuthored(gChartOptions.gameLevel,gChartOptions.extra);
     gKeyBeams.reset();

@@ -32,14 +32,14 @@ class SongMetadataCache {
         return directory_/(std::to_wstring(h)+L".meta");
     }
     void transfer(std::iostream& f,Chart& c,bool w,bool validate=true){
-        uint64_t magic=0x534D434143480004ull,seed=seed_,size=(w||validate)?std::filesystem::file_size(c.path):0;
+        uint64_t magic=0x534D434143480005ull,seed=seed_,size=(w||validate)?std::filesystem::file_size(c.path):0;
         int64_t time=(w||validate)?std::filesystem::last_write_time(c.path).time_since_epoch().count():0;
         int64_t parent=(w||validate)?std::filesystem::last_write_time(c.path.parent_path()).time_since_epoch().count():0;
         const auto expectedMagic=magic,expectedSeed=seed_,expectedSize=size;
         const auto expectedTime=time,expectedParent=parent;auto expectedPath=c.path;
         io(f,magic,w);io(f,seed,w);io(f,size,w);io(f,time,w);io(f,parent,w);path(f,c.path,w);
         if(!w&&(magic!=expectedMagic||seed!=expectedSeed||(validate&&(size!=expectedSize||time!=expectedTime||parent!=expectedParent||c.path!=expectedPath))))throw std::runtime_error("stale cache");
-        for(auto* s:{&c.title,&c.subtitle,&c.artist,&c.genre,&c.playLevel,&c.subartist,&c.comment,&c.blockReason,&c.partialLoadReason,&c.catalogGroupKey})text(f,*s,w);
+        for(auto* s:{&c.title,&c.subtitle,&c.artist,&c.genre,&c.playLevel,&c.subartist,&c.comment,&c.blockReason,&c.partialLoadReason,&c.catalogGroupKey,&c.md5,&c.sha256})text(f,*s,w);
         for(auto* p:{&c.banner,&c.titleImage,&c.previewAudio,&c.fallbackVideo,&c.finishImage})path(f,*p,w);
         int mode=int(c.mode),play=c.playable,partial=c.partialLoad,defined=c.previewStartDefined;
         io(f,mode,w);io(f,play,w);io(f,partial,w);io(f,defined,w);
@@ -71,7 +71,7 @@ public:
     static Chart metadata(const Chart& x){Chart c;c.catalogOnly=true;
 #define META(field) c.field=x.field;
         c.catalogGroupKey=songResourceIdentity(x);
-        META(path) META(title) META(subtitle) META(artist) META(genre) META(playLevel) META(subartist) META(comment) META(blockReason) META(partialLoadReason)
+        META(path) META(title) META(subtitle) META(artist) META(genre) META(playLevel) META(subartist) META(comment) META(blockReason) META(partialLoadReason) META(md5) META(sha256)
         META(banner) META(titleImage) META(previewAudio) META(fallbackVideo) META(finishImage) META(mode) META(playable) META(partialLoad) META(previewStartDefined)
         META(rank) META(rankDefaulted) META(judgementSpec) META(difficulty) META(initialBpm) META(durationSeconds) META(previewStartSeconds) META(previewDurationSeconds)
 #undef META
