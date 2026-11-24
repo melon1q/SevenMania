@@ -1,8 +1,11 @@
 #include "skin/lr2/Lr2Preview.h"
+#include "skin/lr2/Lr2Thumbnail.h"
 #include "skin/lr2/Lr2Diagnostics.h"
 #include "skin/lr2/Lr2Font.h"
 #include "skin/lr2/Lr2PlayTimeline.h"
 #include "SkinRenderTestSupport.h"
+#include "CompositionPresenter.h"
+#include "ScrollTimeline.h"
 #include <d2d1_1.h>
 #include <array>
 #include <numeric>
@@ -28,10 +31,11 @@ struct PreviewSurface : Surface {
         drawing->SetTarget(bitmap.Get());
         drawing->SetDpi(96,96);
     }
-    void render(const PreviewScene& scene,double time,const PlayFrame* play=nullptr,const SelectFrame* select=nullptr,const ScreenTimers& timers={}) {
+    void render(const PreviewScene& scene,double time,const PlayFrame* play=nullptr,const SelectFrame* select=nullptr,
+                const ScreenTimers& timers={},const FrameScale* upscale=nullptr) {
         drawing->BeginDraw();
         drawing->Clear(D2D1::ColorF(0,0,0));
-        scene.draw(drawing.Get(),time,width,height,play,DrawPass::All,select,timers);
+        scene.draw(drawing.Get(),time,width,height,play,DrawPass::All,select,timers,upscale);
         hr(drawing->EndDraw());
         context->CopyResource(staging.Get(),texture.Get());
     }
@@ -416,11 +420,20 @@ void colorKeyRenders(const std::filesystem::path& dir) {
 }
 }
 
+#include "Lr2UpscaleComparison.inl"
+
 int wmain(int argc,wchar_t** argv) try {
-    require(argc==2||argc==3,"expected output directory or --real FILE");
+    const bool comparison=argc==6&&std::wstring_view(argv[1])==L"--compare-upscale";
+    const bool thumbnail=argc==4&&(std::wstring_view(argv[1])==L"--thumbnail"||std::wstring_view(argv[1])==L"--render-thumbnail");
+    require(argc==2||argc==3||comparison||thumbnail,
+        "expected output folder, --report FILE, --thumbnail SKIN PNG, --render-thumbnail SKIN PNG or --compare-upscale SELECT PLAY CHART NEW_OUTPUT_FOLDER");
     const HRESULT initialized=CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     hr(initialized);
     struct Apartment {~Apartment(){CoUninitialize();}} apartment;
+    if(comparison) {
+        compareLr2Upscale(argv[2],argv[3],argv[4],argv[5]);
+        return 0;
+    }
     if(argc==3&&(std::wstring_view(argv[1])==L"--bench"||std::wstring_view(argv[1])==L"--bench-select")) {
         // Frame cost of a 7KEY play (or select) skin on the GPU at 1920x1080: load, prepare, then draw/EndDraw times.
         const bool selectBench=std::wstring_view(argv[1])==L"--bench-select";
@@ -501,6 +514,18 @@ int wmain(int argc,wchar_t** argv) try {
             std::cout<<"playLanes "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-p0).count()/1000
                      <<" ms per call ("<<sink<<")\n";
         }
+        return 0;
+    }
+    if(thumbnail) {
+        // Manual check: the skin select screen's preview for a real skin (found picture, or drawn).
+        Options header;header.headerOnly=true;
+        const auto parsed=parse(argv[2],header);
+        if(!parsed){std::cout<<"skin did not parse\n";return 1;}
+        const auto found=std::wstring_view(argv[1])==L"--thumbnail"?findThumbnail(argv[2]):std::filesystem::path{};
+        if(!found.empty()){std::wcout<<L"found: "<<found.wstring()<<L"\n";return 0;}
+        std::string error;
+        if(!renderThumbnail(argv[2],static_cast<ScreenType>(parsed.document->header.type),{},argv[3],error)){std::cout<<"render failed: "<<error<<"\n";return 1;}
+        std::wcout<<L"rendered: "<<argv[3]<<L"\n";
         return 0;
     }
     if(argc==3&&std::wstring_view(argv[1])==L"--report") {
@@ -643,6 +668,50 @@ int wmain(int argc,wchar_t** argv) try {
     first.pixel(310,50,136,16,32,"premultiplied DDS over BMP");
     first.pixel(510,310,255,255,255,"wildcard image without CUSTOMFILE uses the first match");
     {
+        // Skin select previews: the fixture has no thumbnail, so it is drawn offscreen into a PNG.
+        require(result.document->header.thumbnail.empty(),"fixture names no thumbnail");
+        const auto rendered=std::filesystem::path(argv[1])/"thumbnail.png";
+        std::filesystem::remove(rendered);
+        std::string error;
+        require(renderThumbnail(path,ScreenType::Play7Key,{},rendered,error),"skin preview renders");
+        ComPtr<IWICImagingFactory> factory;ComPtr<IWICBitmapDecoder> decoder;ComPtr<IWICBitmapFrameDecode> frame;
+        hr(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)));
+        hr(factory->CreateDecoderFromFilename(rendered.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnDemand,&decoder));
+        hr(decoder->GetFrame(0,&frame));
+        UINT width{},height{};hr(frame->GetSize(&width,&height));
+        require(width==640&&height==480,"preview keeps the skin's resolution");
+        ComPtr<IWICFormatConverter> converter;hr(factory->CreateFormatConverter(&converter));
+        hr(converter->Initialize(frame.Get(),GUID_WICPixelFormat32bppBGR,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom));
+        std::array<BYTE,4> pixel{};const WICRect at{300,300,1,1}; // background, clear of the animated sprites
+        hr(converter->CopyPixels(&at,4,4,pixel.data()));
+        require(pixel[2]==16&&pixel[1]==32&&pixel[0]==64,"preview shows the skin's background");
+        // The cache name follows the choices.
+        SkinChoices other;other.options["MODE"]="B";
+        require(thumbnailCacheName(path,{})!=thumbnailCacheName(path,other)&&thumbnailCacheName(path,{})==thumbnailCacheName(path,{}),
+            "preview cache name follows the choices");
+
+        // Finding a picture: #INFORMATION's thumbnail, then one named after the skin, never a guess between skins.
+        const auto dir=std::filesystem::path(argv[1])/"thumbnails";
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir/"named");
+        std::filesystem::create_directories(dir/"shared");
+        std::filesystem::create_directories(dir/"single");
+        const Bytes dot{255,255,255,255};
+        save(dir/"named"/"shot.png",dot,1,1);
+        std::ofstream(dir/"named"/"select.lr2skin",std::ios::binary)<<"#INFORMATION,5,Named,SevenMania,shot.png\n";
+        require(findThumbnail(dir/"named"/"select.lr2skin")==dir/"named"/"shot.png","#INFORMATION thumbnail");
+        std::ofstream(dir/"named"/"other.lr2skin",std::ios::binary)<<"#INFORMATION,5,Missing,SevenMania,nothing.png\n";
+        require(findThumbnail(dir/"named"/"other.lr2skin").empty(),"a missing thumbnail and no match finds nothing");
+        save(dir/"shared"/"ss_7.png",dot,1,1);save(dir/"shared"/"preview.png",dot,1,1);
+        std::ofstream(dir/"shared"/"play_7.lr2skin",std::ios::binary)<<"#INFORMATION,0,Seven,SevenMania\n";
+        std::ofstream(dir/"shared"/"play_5.lr2skin",std::ios::binary)<<"#INFORMATION,1,Five,SevenMania\n";
+        require(findThumbnail(dir/"shared"/"play_7.lr2skin")==dir/"shared"/"ss_7.png","ss_<key> beside a play skin");
+        require(findThumbnail(dir/"shared"/"play_5.lr2skin").empty(),"skins sharing a folder never borrow a generic picture");
+        save(dir/"single"/"Preview_Image.jpg",dot,1,1);
+        std::ofstream(dir/"single"/"result.lr2skin",std::ios::binary)<<"#INFORMATION,7,Single,SevenMania\n";
+        require(findThumbnail(dir/"single"/"result.lr2skin")==dir/"single"/"Preview_Image.jpg","a lone preview picture beside a lone skin");
+    }
+    {
         // Play lead-in: scene (timer 0) first, READY (40) after LOADSTART+LOADEND or the load, song PLAYSTART later.
         const PlayLeadInTimes times{2200,2800,1000};
         auto at=playLeadIn(times,0,-1);
@@ -721,6 +790,15 @@ int wmain(int argc,wchar_t** argv) try {
         surface.pixel(320,120,239,223,191,"blend 10 inverts the target");
         surface.pixel(60,120,16,32,64,"subtract leaves pixels outside the sprite unchanged");
         surface.pixel(160,120,16,32,64,"multiply leaves pixels outside the sprite unchanged");
+        auto* target=surface.drawing.Get();
+        target->BeginDraw();
+        target->Clear(D2D1::ColorF(0,0,0));
+        target->SetTransform(D2D1::Matrix3x2F::Scale(.75f,.5f)*D2D1::Matrix3x2F::Translation(80,40));
+        blends.draw(target,0,640,480,nullptr,DrawPass::All,nullptr,{},nullptr,true);
+        hr(target->EndDraw());
+        surface.context->CopyResource(surface.staging.Get(),surface.texture.Get());
+        surface.pixel(170,100,0,0,64,"multiply samples the backdrop at the transformed output position");
+        surface.pixel(200,100,16,32,64,"output-space multiply stays inside the transformed sprite");
     }
     first.render(scene,500);
     first.pixel(90,50,136,80,32,"second sprite with interpolated position, RGB and opacity");
@@ -798,6 +876,22 @@ int wmain(int argc,wchar_t** argv) try {
         "slider hit area covers its travel");
     require(volume->sliderPosition(155,405)==.5f&&volume->sliderPosition(0,405)==0.f&&volume->sliderPosition(600,405)==1.f,
         "slider position follows the thumb centre and clamps");
+    for (const bool stretch:{false,true}) {
+        selectScene.setStretch(stretch);
+        const auto upscale=selectScene.upscale(UpscaleFilter::Nearest,1600,960);
+        require(upscale.has_value(),"SD scene upscales to a wide window");
+        const auto x=[&](float px) { return upscale->x+px*upscale->outputWidth/upscale->width; };
+        const auto y=[&](float py) { return upscale->y+py*upscale->outputHeight/upscale->height; };
+        first.render(selectScene,0,nullptr,&selection,{},&*upscale);
+        const auto slider=selectScene.selectControlAt(x(105),y(405));
+        require(slider&&slider->slider==17&&std::abs(slider->sliderPosition(x(155),y(405))-.5f)<.001f,
+            "upscaled slider drag must use the same coordinates as hit testing");
+        const auto button=selectScene.selectControlAt(x(410),y(350));
+        require(button&&button->button==11&&!button->increment(x(405),y(350))&&button->increment(x(435),y(350)),
+            "split button must follow both letterbox and stretch coordinates");
+    }
+    selectScene.setStretch(false);
+    first.render(selectScene,0,nullptr,&selection);
     require(!selectScene.selectControlAt(605,105)&&!selectScene.selectControlAt(105,445),
         "list slider is inert without rows and unsupported sliders are not controls");
     for(const auto token:{"Unsupported select button: 99","Unsupported select slider: 99"})
@@ -1103,6 +1197,49 @@ int wmain(int argc,wchar_t** argv) try {
         "missing features answer on their none side");
 
     // Play endings, score graph and song-position slider.
+    for(const bool multiplyBarrier:{false,true}) {
+        const auto splitPath=path.parent_path()/(multiplyBarrier?"split-blend.lr2skin":"split-output.lr2skin");
+        {
+            std::ofstream split(splitPath);
+            split<<"#INFORMATION,0,Split output,SevenMania\n#IMAGE,../Shared/sheet.png\n"
+                "#SRC_IMAGE,0,111,0,0,1,1\n#DST_IMAGE,0,0,0,0,640,480,0,255,0,32,0,1\n"
+                "#SRC_BGA,0,0,0,0,0,0\n#DST_BGA,0,0,100,100,100,100,0,255,255,255,255,1\n"
+                "#SRC_IMAGE,0,111,0,0,1,1\n#DST_IMAGE,0,0,125,100,10,100,0,128,255,0,0,"
+                <<(multiplyBarrier?4:1)<<"\n"
+                "#SRC_NOWJUDGE_1P,5,0,2,0,1,1,1,1\n#DST_NOWJUDGE_1P,5,0,250,100,10,10,0,255,255,255,255\n";
+            for(int lane=0;lane<8;++lane)split<<"#DST_NOTE,"<<lane<<",0,"<<10+lane*12<<",400,10,5\n";
+        }
+        const auto splitSkin=parse(splitPath);
+        auto diagnostics=splitSkin.diagnostics;
+        PreviewScene split;
+        PreviewSurface out(1280,1080);
+        require(splitSkin&&split.load(*splitSkin.document,diagnostics,true)&&split.prepare(out.drawing.Get()),
+            "split play fixture prepares");
+        const auto scale=split.upscale(UpscaleFilter::Bicubic,1280,1080);
+        require(scale&&split.outputBgaCanvasSize(*scale)==(multiplyBarrier?0:200),
+            "BGA resolution must follow its destination unless a blend requires native composition");
+        const uint32_t blue=0xff0000ffu;
+        PlayFrame frame;
+        frame.bgaEnabled=true; frame.hasBga=true; frame.bga=split.updateBga(&blue,1,1,1);
+        frame.judge=5; frame.judgementAge=80;
+        auto* dc=out.drawing.Get();
+        const auto draw=[&](DrawPass pass,bool clear) {
+            dc->BeginDraw();
+            if(clear)dc->Clear(D2D1::ColorF(0,0,0));
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(2,2)*D2D1::Matrix3x2F::Translation(0,60));
+            split.draw(dc,100,640,480,&frame,pass,nullptr,{},nullptr,true);
+            hr(dc->EndDraw());
+            out.context->CopyResource(out.staging.Get(),out.texture.Get());
+        };
+        draw(DrawPass::NativeBeforeNotes,true);
+        if(multiplyBarrier)out.pixel(220,280,0,0,255,"blend barrier keeps BGA in the native pass");
+        else out.pixel(220,280,0,32,0,"promoted BGA does not also draw in the native pass");
+        out.pixel(510,270,0,32,0,"promoted judgement is not in the native pass");
+        draw(DrawPass::OutputBeforeNotes,false);
+        out.pixel(220,280,0,0,255,"BGA remains below the note insertion point");
+        if(!multiplyBarrier)out.pixel(260,280,128,0,127,"the ordered output suffix keeps the translucent BGA overlay above it");
+        out.pixel(510,270,255,255,255,"early judgement now draws at its output coordinates");
+    }
     const auto endingPath=path.parent_path()/"ending.lr2skin";
     {
         std::ofstream ending(endingPath);
@@ -1180,6 +1317,27 @@ int wmain(int argc,wchar_t** argv) try {
     first.render(endingScene,1000,&ending);
     first.pixel(525,155,255,255,255,"half-closed lane cover slider moves half its range");
     first.pixel(525,105,0,0,0,"lane cover slider left its open position");
+    {
+        PreviewSurface output(1280,1080);
+        require(endingScene.prepare(output.drawing.Get()),"output cover texture preparation");
+        auto* target=output.drawing.Get();
+        target->BeginDraw();
+        target->Clear(D2D1::ColorF(0,0,0));
+        ComPtr<ID2D1SolidColorBrush> note;
+        hr(target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red),&note));
+        const auto transform=D2D1::Matrix3x2F::Scale(2,2)*D2D1::Matrix3x2F::Translation(0,60);
+        target->SetTransform(transform);
+        target->FillRectangle(D2D1::RectF(520,150,530,170),note.Get());
+        endingScene.draw(target,1000,640,480,&ending,DrawPass::AfterNotes,nullptr,{},nullptr,true);
+        D2D1_MATRIX_3X2_F restored{};
+        target->GetTransform(&restored);
+        require(restored._11==2&&restored._22==2&&restored._32==60,"foreground must restore the playfield transform");
+        hr(target->EndDraw());
+        output.context->CopyResource(output.staging.Get(),output.texture.Get());
+        output.pixel(1050,370,255,255,255,"authored lane cover draws over the output note");
+        output.pixel(1050,390,255,0,0,"note remains visible below the authored cover");
+        require(endingScene.prepare(first.drawing.Get()),"restore original test device");
+    }
     ending.laneCoverShare=0;
     first.render(endingScene,1000,&ending);
     first.pixel(305,5,0,0,0,"no failure layer during play");

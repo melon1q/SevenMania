@@ -1,0 +1,6 @@
+#pragma once
+#cmakedefine01 BMS_HAS_LR2_HYBRID
+#if BMS_HAS_LR2_HYBRID
+#include "Lr2Hybrid_vertex.h"
+#include "Lr2Hybrid_pixel.h"
+#endif

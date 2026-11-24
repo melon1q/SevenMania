@@ -39,6 +39,7 @@ const std::vector<RmlSettingBinding>& rmlSettingBindings() {
         {"screen-mode",ID_SCREEN_MODE,RmlSettingBinding::Select},
         {"resolution",ID_RESOLUTION,RmlSettingBinding::Select},
         {"display-lr2-aspect",ID_LR2_ASPECT,RmlSettingBinding::Select},
+        {"display-lr2-upscale",ID_LR2_UPSCALE,RmlSettingBinding::Select},
         {"gpu-enabled",ID_COMPOSITION,RmlSettingBinding::Check},
         {"direct-composition",ID_DIRECT_COMPOSITION,RmlSettingBinding::Check},
         {"low-latency",ID_LOW_LATENCY,RmlSettingBinding::Select},

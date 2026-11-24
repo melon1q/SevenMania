@@ -757,12 +757,12 @@ int wmain(int argc, wchar_t** argv) {
             gPractice.configure(60); gPractice.startSeconds = 10; gPractice.endSeconds = 20; gPractice.enabled = true;
             auto* practicePixels = static_cast<uint32_t*>(gBackBufferPixels);
             GdiFlush(); std::fill_n(practicePixels, 640 * 360, 0xff000000u);
-            gGpuFrame = false; drawPracticeHud(gBackBufferDc); GdiFlush();
+            gGpuFrame = false; drawPracticeHud(gBackBufferDc, 640); GdiFlush();
             const auto whitePixel = std::find(practicePixels, practicePixels + 640 * 360, 0xffffffffu);
             require(whitePixel != practicePixels + 640 * 360, "practice HUD did not draw thin white text");
             const size_t position = static_cast<size_t>(whitePixel - practicePixels);
             require(gCompositionPresenter.prepare(gWindow, 640, 360), "practice GPU overlay initialization failed");
-            std::fill_n(practicePixels, 640 * 360, 0xff000000u); gGpuFrame = true; drawPracticeHud(gBackBufferDc);
+            std::fill_n(practicePixels, 640 * 360, 0xff000000u); gGpuFrame = true; drawPracticeHud(gBackBufferDc, 640);
             require(GpuTestAccess::spriteCount(gCompositionPresenter) == 2 &&
                 (GpuTestAccess::pixel(gCompositionPresenter, practicePixels, 640, static_cast<int>(position % 640), static_cast<int>(position / 640)) & 0xffffffu) == 0xffffffu,
                 "CPU and GPU practice HUD placement differ");

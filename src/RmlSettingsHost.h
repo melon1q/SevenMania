@@ -26,7 +26,13 @@ public:
     bool setVisible(const std::string& id, bool visible);
     bool setEnabled(const std::string& id, bool enabled);
     bool setClass(const std::string& id, const std::string& name, bool active);
+    // An <img>'s picture: a UTF-8 file path ("#preview" at the end loads it large, see RmlUiRuntime). Empty clears it.
+    bool setImage(const std::string& id, const std::string& path);
+    // Embedded only: these virtual keys go to the parent window instead of the document.
+    void forwardKeys(std::vector<int> keys);
     bool scrollTop(const std::string& id);
+    // Scrolls the element's scrolling ancestors just enough to show it.
+    bool scrollIntoView(const std::string& id);
     void close();
     HWND window() const noexcept;
     bool owns(HWND window) const noexcept;

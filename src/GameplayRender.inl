@@ -1,8 +1,14 @@
-void drawGameScreen(HDC dc) {
+void drawGameScreen(HDC dc, const sevenmania::skin::lr2::FrameScale* upscale) {
     gCompositionPresenter.setFrameIntro(nullptr);
     HUD_SCOPE(GamePaint);
     BMS_TRACE_ZONE("Game render CPU and GPU submission");
     RECT client{}; GetClientRect(gWindow, &client);
+    const int canvasWidth=upscale?upscale->width:gWindowWidth;
+    const int canvasHeight=upscale?upscale->height:gWindowHeight;
+    const double renderScale=upscale?bms::ui::viewport(canvasWidth,canvasHeight).scale:gUiScale;
+    const auto ui=[renderScale](int pixels) { return bms::ui::scaled(pixels,renderScale); };
+    const int defaultNoteHeight=upscale?ui(kFixedNoteHeight):gNoteHeight;
+    if(upscale)client={0,0,canvasWidth,canvasHeight};
     ++gFpsFrameCount;
     const auto fpsNow = std::chrono::steady_clock::now();
     const double fpsElapsed = std::chrono::duration<double>(fpsNow - gFpsEpoch).count();
@@ -17,12 +23,12 @@ void drawGameScreen(HDC dc) {
         return;
     }
     const auto& chart = gCharts[static_cast<size_t>(selected)];
-    const int laneWidth=bms::chartDeckWidths(chart,gUiScale).key;
-    const int scratchWidth=bms::chartDeckWidths(chart,gUiScale).scratch;
+    const int laneWidth=bms::chartDeckWidths(chart,renderScale).key;
+    const int scratchWidth=bms::chartDeckWidths(chart,renderScale).scratch;
     const auto gearLayout=bms::chartLayout(chart,0,laneWidth,scratchWidth);
     const int gearWidth = gearLayout.totalWidth();
-    const int edgeInset = std::min(ui(64), std::max(0, (gWindowWidth - gearWidth) / 2));
-    const int available = std::max(0, gWindowWidth - gearWidth);
+    const int edgeInset = std::min(ui(64), std::max(0, (canvasWidth - gearWidth) / 2));
+    const int available = std::max(0, canvasWidth - gearWidth);
     int fieldX = gGearPosition == 0 ? edgeInset : gGearPosition == 2 ? std::max(edgeInset, available - edgeInset) : available / 2;
     struct RenderLayout : LaneLayout {
         std::array<std::pair<int,int>,16> edges{};
@@ -34,13 +40,13 @@ void drawGameScreen(HDC dc) {
         int totalWidth() const {return authored?extent:LaneLayout::totalWidth();}
     } layout{bms::chartLayout(chart,fieldX,laneWidth,scratchWidth)};
     bool lr2Play=false;
-    int normalJudgeY=judgementLineY(gWindowHeight);
+    int normalJudgeY=judgementLineY(canvasHeight);
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     const auto lr2Lanes=gGpuFrame&&gLr2PlayScene&&!gLr2GpuFailed?
-        gLr2PlayScene->playLanes(gWindowWidth,gWindowHeight):std::nullopt;
+        gLr2PlayScene->playLanes(canvasWidth,canvasHeight):std::nullopt;
     if(lr2Lanes) {
         lr2Play=layout.authored=true;
-        fieldX=gWindowWidth;
+        fieldX=canvasWidth;
         int right=0;
         normalJudgeY=(*lr2Lanes)[0].noteBottom;
         for(std::size_t lane=0;lane<lr2Lanes->size();++lane) {
@@ -50,21 +56,27 @@ void drawGameScreen(HDC dc) {
             right=std::max(right,edge.right);
         }
         layout.extent=right-fieldX;
+        if(upscale)gCompositionPresenter.drawPlayLayersAtOutput([](ID2D1RenderTarget* target,int width,int height) {
+            if(gLr2PlayScene)gLr2PlayScene->draw(static_cast<ID2D1DeviceContext*>(target),gLr2Play.frame.playAge+gLr2Play.sceneLead,
+                width,height,&gLr2Play.frame,sevenmania::skin::lr2::DrawPass::OutputBeforeNotes,nullptr,{},nullptr,true);
+        });
         gCompositionPresenter.setFrameOverlay([](ID2D1RenderTarget* target,int width,int height) {
             if(gLr2PlayScene)gLr2PlayScene->draw(static_cast<ID2D1DeviceContext*>(target),gLr2Play.frame.playAge+gLr2Play.sceneLead,
-                width,height,&gLr2Play.frame,sevenmania::skin::lr2::DrawPass::BeforeNotes);
+                width,height,&gLr2Play.frame,gCompositionPresenter.drawsPlayLayersAtOutput()
+                    ?sevenmania::skin::lr2::DrawPass::NativeBeforeNotes:sevenmania::skin::lr2::DrawPass::BeforeNotes);
         });
         gCompositionPresenter.setFrameForeground([](ID2D1RenderTarget* target,int width,int height) {
             if(gLr2PlayScene)gLr2PlayScene->draw(static_cast<ID2D1DeviceContext*>(target),gLr2Play.frame.playAge+gLr2Play.sceneLead,
-                width,height,&gLr2Play.frame,sevenmania::skin::lr2::DrawPass::AfterNotes);
+                width,height,&gLr2Play.frame,sevenmania::skin::lr2::DrawPass::AfterNotes,nullptr,{},nullptr,
+                gCompositionPresenter.drawsPlayLayersAtOutput());
         });
     }
 #endif
     const int top = PLAYFIELD_TOP;
-    const int judgeY=bms::optionJudgeLine(gChartOptions,gPlayhead,normalJudgeY,gWindowHeight);
+    const int judgeY=bms::optionJudgeLine(gChartOptions,gPlayhead,normalJudgeY,canvasHeight);
     const bool reverse=gChartOptions.crazy.contains(L"reverse");
     const auto noteY=[&](double distance){return judgeY+(reverse?distance:-distance);};
-    const int fieldBottom=reverse?gWindowHeight:judgeY+ui(38);
+    const int fieldBottom=reverse?canvasHeight:judgeY+ui(38);
     if(lr2Play)fillRect(dc,client,RGB(0,0,0));
     else { BMS_PERF_SCOPE(bgaMs); HUD_SCOPE(Backdrop);drawBgaBackplate(dc, chart, client, fieldX, laneWidth, top, judgeY, scratchWidth); }
     if (!lr2Play && dc == gBackBufferDc && gBackBufferPixels) {
@@ -80,7 +92,7 @@ void drawGameScreen(HDC dc) {
         const int index = layout.separatorIndex(lane);
         if (index < 0 || !gLaneSeparators[static_cast<size_t>(index)]) continue;
         const int x = layout.left(lane);
-        const RECT separator{ x, 0, x + 1, gWindowHeight };
+        const RECT separator{ x, 0, x + 1, canvasHeight };
         drawLaneSeparator(dc,separator,judgeY);
     }
     RECT judge{ fieldX, judgeY, fieldX + layout.totalWidth(), judgeY + 3 };
@@ -89,11 +101,11 @@ void drawGameScreen(HDC dc) {
 
     // Scroll speed is FHD pixels per second scaled by the window height (the lane length), so the note
     // travel time matches FHD at every resolution, including 5:4/4:3 where gUiScale is width-limited.
-    const double pixelsPerSecond = 270.0 * bms::ui::scrollScale(gWindowHeight) * (gChartOptions.hiSpeed>0?gChartOptions.hiSpeed:gNoteSpeed) *
+    const double pixelsPerSecond = 270.0 * bms::ui::scrollScale(canvasHeight) * (gChartOptions.hiSpeed>0?gChartOptions.hiSpeed:gNoteSpeed) *
         playHiSpeedScale(chart) * (gHiSpeedFix==bms::HiSpeedFix::Constant?1.0:bms::speedAt(chart,gPlayhead));
     const double scrollPosition = playScrollPosition(chart, bms::drawSeconds(gPlayhead, gTimingOffsets, playbackTimingScale()));
-    const double visibleBehind = 42.0 * gUiScale / std::max(0.001,std::abs(pixelsPerSecond));
-    const double visibleAhead = (std::max(judgeY-top,fieldBottom-judgeY) + gNoteHeight) / std::max(0.001,std::abs(pixelsPerSecond));
+    const double visibleBehind = 42.0 * renderScale / std::max(0.001,std::abs(pixelsPerSecond));
+    const double visibleAhead = (std::max(judgeY-top,fieldBottom-judgeY) + defaultNoteHeight) / std::max(0.001,std::abs(pixelsPerSecond));
     const double firstVisiblePosition = scrollPosition - visibleBehind - 0.01;
     const double lastVisiblePosition = scrollPosition + visibleAhead;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -179,7 +191,7 @@ void drawGameScreen(HDC dc) {
         frame.bgaEnabled=gBgaBrightness>0;
         frame.bga=nullptr;
         if(frame.hasBga&&frame.bgaEnabled&&gLr2PlayScene->hasBga()) {
-            const auto canvas=playBgaCanvas();
+            const auto canvas=playBgaCanvas(canvasWidth,canvasHeight,upscale);
             std::uint64_t revision=0;
             drawBgaBackplate(dc,chart,canvas,fieldX,laneWidth,top,judgeY,scratchWidth,&revision);
             if(revision)frame.bga=gLr2PlayScene->updateBga(static_cast<const uint32_t*>(gBgaBackplatePixels),
@@ -278,7 +290,7 @@ void drawGameScreen(HDC dc) {
         int x=layout.left(note.lane),right=layout.right(note.lane);
         const int shift=static_cast<int>(visual.shift*layout.width(note.lane));x+=shift;right+=shift;
         const int inset=static_cast<int>((right-x)*(1-visual.scale)/2);x+=inset;right-=inset;
-        int baseNoteHeight=gNoteHeight;
+        int baseNoteHeight=defaultNoteHeight;
         double headY=noteY(distance);
         RECT tapBounds=noteBounds;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -303,7 +315,7 @@ void drawGameScreen(HDC dc) {
         if(gChartOptions.crazy.contains(L"clone") || gChartOptions.crazy.contains(L"clone2") || gChartOptions.crazy.contains(L"s-clone")) {
             const auto shadow=RGB(GetRValue(color)/3,GetGValue(color)/3,GetBValue(color)/3);
             const int copies=gChartOptions.crazy.contains(L"s-clone")?6:gChartOptions.crazy.contains(L"clone2")?3:1;
-            for(int copy=0;copy<copies;++copy){const int dx=copy==0?0:(copy%2?1:-1)*(right-x)/2;const double y=headY-(reverse?-1:1)*(24+copy*12)*gUiScale;fillGameRectSubpixel(dc,x+dx,y,right+dx,y+noteHeight,shadow,noteBounds);}
+            for(int copy=0;copy<copies;++copy){const int dx=copy==0?0:(copy%2?1:-1)*(right-x)/2;const double y=headY-(reverse?-1:1)*(24+copy*12)*renderScale;fillGameRectSubpixel(dc,x+dx,y,right+dx,y+noteHeight,shadow,noteBounds);}
         }
         const double intensity = visibility * (dark ? 0.5 : 1.0);
         if(dark || visibility<1)color=RGB(GetRValue(color)*intensity,GetGValue(color)*intensity,GetBValue(color)*intensity);
@@ -359,7 +371,7 @@ void drawGameScreen(HDC dc) {
     for(size_t i=0;i<chart.mines.size();++i) {
         const auto& mine=chart.mines[i];if(i<gMineHit.size() && gMineHit[i])continue;
         double y=noteY((playScrollPosition(chart,mine.timeSeconds)-scrollPosition)*pixelsPerSecond);
-        int height=gNoteHeight;
+        int height=defaultNoteHeight;
         RECT clip=noteBounds;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
         if(lr2Lanes&&mine.lane>=0&&mine.lane<8) {
@@ -392,7 +404,7 @@ void drawGameScreen(HDC dc) {
         const int colorIndex = gLaneColors[static_cast<size_t>(layout.colorSlot(note.lane))];
         const COLORREF color = gPalette[colorIndex].color;
         const double imageTail = reverse ? std::max(tailY, double(judgeY)) : std::min(tailY, double(judgeY));
-        drawLongNote(note.lane,x, right, judgeY, imageTail, gNoteHeight, std::min(clippedTail, double(judgeY)),
+        drawLongNote(note.lane,x, right, judgeY, imageTail, defaultNoteHeight, std::min(clippedTail, double(judgeY)),
             std::max(clippedTail, double(judgeY)), color, useNoteImages, useNoteImages && bms::isScratchLane(chart, note.lane), colorIndex, 1.0f, &hold);
     }
     // A cleanly released long note keeps its remaining body, inactive, until the tail reaches the line.
@@ -403,7 +415,7 @@ void drawGameScreen(HDC dc) {
         if(reverse?tailY<=judgeY:tailY>=judgeY){it=gReleasedLongNotes.erase(it);continue;}
         const int colorIndex=gLaneColors[static_cast<size_t>(layout.colorSlot(note.lane))];
         const double clippedTail=std::clamp(tailY,static_cast<double>(reverse?judgeY:top),static_cast<double>(reverse?fieldBottom:judgeY));
-        drawLongNote(note.lane,layout.left(note.lane),layout.right(note.lane),judgeY,tailY,gNoteHeight,std::min(clippedTail,double(judgeY)),std::max(clippedTail,double(judgeY)),
+        drawLongNote(note.lane,layout.left(note.lane),layout.right(note.lane),judgeY,tailY,defaultNoteHeight,std::min(clippedTail,double(judgeY)),std::max(clippedTail,double(judgeY)),
             gPalette[colorIndex].color,useNoteImages,useNoteImages&&bms::isScratchLane(chart,note.lane),colorIndex,1.0f);
         ++it;
     }
@@ -556,7 +568,7 @@ void drawGameScreen(HDC dc) {
     }
     }
     const int infoLine = ui(16), infoX = ui(26);
-    const int infoTop = std::max(judgeY + ui(116), gWindowHeight - ui(64));
+    const int infoTop = std::max(judgeY + ui(116), canvasHeight - ui(64));
     const COLORREF infoColor = RGB(255, 255, 255);
     const auto chartText=bms::textAt(chart,gPlayhead);
     if(!chartText.empty())drawText(dc,chartText,infoX,infoTop-ui(32),RGB(255,255,255),gPlayFont);
@@ -584,12 +596,15 @@ void drawGameScreen(HDC dc) {
     }
     }
     }
-    drawPracticeHud(dc);
+    drawPracticeHud(dc,canvasWidth);
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     if(!lr2Play)drawAppliedSkinDc(dc);
 #endif
     if (!(gAutoplay && lr2Play)) drawBenchmarkBadge(dc);
     if(!gGpuFrame&&!gPaused&&gTimingHint&&std::chrono::steady_clock::now()<gJudgementUntil){const auto& hint=gTimingHint<0?gFastHintImage:gSlowHintImage;if(hint.loaded()&&gBackBufferPixels){GdiFlush();hint.draw(static_cast<uint32_t*>(gBackBufferPixels),gBackBufferWidth,gBackBufferHeight,int(gTimingHintX),int(gTimingHintY),0, int(90*gTimingHintScale));}}
     if(lr2Play)gCompositionPresenter.markFrameForegroundBoundary();
+    if(upscale)gCompositionPresenter.markOutputOverlayBoundary();
     if (gPaused) drawPauseOverlay(dc);
 }
+
+void drawGameScreen(HDC dc) { drawGameScreen(dc,nullptr); }

@@ -74,6 +74,10 @@ function(bms_attach_song_list_ui target)
                 "${PROJECT_SOURCE_DIR}/Assets/UI/settings-probe.rml"
                 "${PROJECT_SOURCE_DIR}/Assets/UI/settings.rml"
                 "${PROJECT_SOURCE_DIR}/Assets/UI/settings.rcss"
+                "${PROJECT_SOURCE_DIR}/Assets/UI/skinselect.rml"
+                "${PROJECT_SOURCE_DIR}/Assets/UI/skinselect.rcss"
+                "${PROJECT_SOURCE_DIR}/Assets/UI/keyconfig.rml"
+                "${PROJECT_SOURCE_DIR}/Assets/UI/keyconfig.rcss"
                 "$<TARGET_FILE_DIR:${target}>/Assets/UI"
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/Assets/Licenses"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different

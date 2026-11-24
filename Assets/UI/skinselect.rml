@@ -1,0 +1,75 @@
+<rml><head><title>스킨 선택</title><link type="text/rcss" href="skinselect.rcss" /></head><body>
+<div id="shell">
+<div id="screens">
+<div class="group">
+<div class="screen" id="screen-0">MUSIC SELECT</div>
+<div class="screen" id="screen-1">DECIDE</div>
+<div class="screen" id="screen-7">RESULT</div>
+<div class="screen unsupported">COURSE RESULT</div>
+<div class="screen unsupported">SOUND SET</div>
+<div class="screen unsupported">KEY CONFIG</div>
+<div class="screen unsupported">SKIN SELECT</div>
+<div class="screen unsupported">THEME</div>
+</div>
+<div class="group">
+<div class="screen" id="screen-2">7KEY</div>
+<div class="screen unsupported">7KEY BATTLE</div>
+<div class="screen" id="screen-4">14KEY</div>
+<div class="screen" id="screen-3">5KEY</div>
+<div class="screen unsupported">5KEY BATTLE</div>
+<div class="screen" id="screen-5">10KEY</div>
+<div class="screen" id="screen-6">9KEY</div>
+<div class="screen unsupported">9KEY BATTLE</div>
+<div class="screen unsupported">24KEY</div>
+<div class="screen unsupported">24KEY BATTLE</div>
+<div class="screen unsupported">24K-DP</div>
+</div>
+</div>
+<div id="main">
+<div id="preview-row"><div class="arrow" id="skin-prev">◀</div><div id="preview-box"><img id="preview" /><div id="preview-note"></div></div><div class="arrow" id="skin-next">▶</div></div>
+<div id="skin-name"></div><div id="skin-author"></div>
+<div class="option skin-row" id="skin-row"><div class="option-line"><div class="label">스킨</div><div class="value-box"><div class="step" id="skin-dec">◀</div><div class="value" id="skin-value"></div><div class="step" id="skin-inc">▶</div></div></div></div>
+<div id="options">
+<div class="option" id="option-0" style="display:none"><div class="option-line"><div class="label" id="option-0-label"></div><div class="value-box"><div class="step" id="option-0-dec">◀</div><div class="value" id="option-0-value"></div><div class="step" id="option-0-inc">▶</div></div></div></div>
+<div class="option" id="option-1" style="display:none"><div class="option-line"><div class="label" id="option-1-label"></div><div class="value-box"><div class="step" id="option-1-dec">◀</div><div class="value" id="option-1-value"></div><div class="step" id="option-1-inc">▶</div></div></div></div>
+<div class="option" id="option-2" style="display:none"><div class="option-line"><div class="label" id="option-2-label"></div><div class="value-box"><div class="step" id="option-2-dec">◀</div><div class="value" id="option-2-value"></div><div class="step" id="option-2-inc">▶</div></div></div></div>
+<div class="option" id="option-3" style="display:none"><div class="option-line"><div class="label" id="option-3-label"></div><div class="value-box"><div class="step" id="option-3-dec">◀</div><div class="value" id="option-3-value"></div><div class="step" id="option-3-inc">▶</div></div></div></div>
+<div class="option" id="option-4" style="display:none"><div class="option-line"><div class="label" id="option-4-label"></div><div class="value-box"><div class="step" id="option-4-dec">◀</div><div class="value" id="option-4-value"></div><div class="step" id="option-4-inc">▶</div></div></div></div>
+<div class="option" id="option-5" style="display:none"><div class="option-line"><div class="label" id="option-5-label"></div><div class="value-box"><div class="step" id="option-5-dec">◀</div><div class="value" id="option-5-value"></div><div class="step" id="option-5-inc">▶</div></div></div></div>
+<div class="option" id="option-6" style="display:none"><div class="option-line"><div class="label" id="option-6-label"></div><div class="value-box"><div class="step" id="option-6-dec">◀</div><div class="value" id="option-6-value"></div><div class="step" id="option-6-inc">▶</div></div></div></div>
+<div class="option" id="option-7" style="display:none"><div class="option-line"><div class="label" id="option-7-label"></div><div class="value-box"><div class="step" id="option-7-dec">◀</div><div class="value" id="option-7-value"></div><div class="step" id="option-7-inc">▶</div></div></div></div>
+<div class="option" id="option-8" style="display:none"><div class="option-line"><div class="label" id="option-8-label"></div><div class="value-box"><div class="step" id="option-8-dec">◀</div><div class="value" id="option-8-value"></div><div class="step" id="option-8-inc">▶</div></div></div></div>
+<div class="option" id="option-9" style="display:none"><div class="option-line"><div class="label" id="option-9-label"></div><div class="value-box"><div class="step" id="option-9-dec">◀</div><div class="value" id="option-9-value"></div><div class="step" id="option-9-inc">▶</div></div></div></div>
+<div class="option" id="option-10" style="display:none"><div class="option-line"><div class="label" id="option-10-label"></div><div class="value-box"><div class="step" id="option-10-dec">◀</div><div class="value" id="option-10-value"></div><div class="step" id="option-10-inc">▶</div></div></div></div>
+<div class="option" id="option-11" style="display:none"><div class="option-line"><div class="label" id="option-11-label"></div><div class="value-box"><div class="step" id="option-11-dec">◀</div><div class="value" id="option-11-value"></div><div class="step" id="option-11-inc">▶</div></div></div></div>
+<div class="option" id="option-12" style="display:none"><div class="option-line"><div class="label" id="option-12-label"></div><div class="value-box"><div class="step" id="option-12-dec">◀</div><div class="value" id="option-12-value"></div><div class="step" id="option-12-inc">▶</div></div></div></div>
+<div class="option" id="option-13" style="display:none"><div class="option-line"><div class="label" id="option-13-label"></div><div class="value-box"><div class="step" id="option-13-dec">◀</div><div class="value" id="option-13-value"></div><div class="step" id="option-13-inc">▶</div></div></div></div>
+<div class="option" id="option-14" style="display:none"><div class="option-line"><div class="label" id="option-14-label"></div><div class="value-box"><div class="step" id="option-14-dec">◀</div><div class="value" id="option-14-value"></div><div class="step" id="option-14-inc">▶</div></div></div></div>
+<div class="option" id="option-15" style="display:none"><div class="option-line"><div class="label" id="option-15-label"></div><div class="value-box"><div class="step" id="option-15-dec">◀</div><div class="value" id="option-15-value"></div><div class="step" id="option-15-inc">▶</div></div></div></div>
+<div class="option" id="option-16" style="display:none"><div class="option-line"><div class="label" id="option-16-label"></div><div class="value-box"><div class="step" id="option-16-dec">◀</div><div class="value" id="option-16-value"></div><div class="step" id="option-16-inc">▶</div></div></div></div>
+<div class="option" id="option-17" style="display:none"><div class="option-line"><div class="label" id="option-17-label"></div><div class="value-box"><div class="step" id="option-17-dec">◀</div><div class="value" id="option-17-value"></div><div class="step" id="option-17-inc">▶</div></div></div></div>
+<div class="option" id="option-18" style="display:none"><div class="option-line"><div class="label" id="option-18-label"></div><div class="value-box"><div class="step" id="option-18-dec">◀</div><div class="value" id="option-18-value"></div><div class="step" id="option-18-inc">▶</div></div></div></div>
+<div class="option" id="option-19" style="display:none"><div class="option-line"><div class="label" id="option-19-label"></div><div class="value-box"><div class="step" id="option-19-dec">◀</div><div class="value" id="option-19-value"></div><div class="step" id="option-19-inc">▶</div></div></div></div>
+<div class="option" id="option-20" style="display:none"><div class="option-line"><div class="label" id="option-20-label"></div><div class="value-box"><div class="step" id="option-20-dec">◀</div><div class="value" id="option-20-value"></div><div class="step" id="option-20-inc">▶</div></div></div></div>
+<div class="option" id="option-21" style="display:none"><div class="option-line"><div class="label" id="option-21-label"></div><div class="value-box"><div class="step" id="option-21-dec">◀</div><div class="value" id="option-21-value"></div><div class="step" id="option-21-inc">▶</div></div></div></div>
+<div class="option" id="option-22" style="display:none"><div class="option-line"><div class="label" id="option-22-label"></div><div class="value-box"><div class="step" id="option-22-dec">◀</div><div class="value" id="option-22-value"></div><div class="step" id="option-22-inc">▶</div></div></div></div>
+<div class="option" id="option-23" style="display:none"><div class="option-line"><div class="label" id="option-23-label"></div><div class="value-box"><div class="step" id="option-23-dec">◀</div><div class="value" id="option-23-value"></div><div class="step" id="option-23-inc">▶</div></div></div></div>
+<div class="option" id="option-24" style="display:none"><div class="option-line"><div class="label" id="option-24-label"></div><div class="value-box"><div class="step" id="option-24-dec">◀</div><div class="value" id="option-24-value"></div><div class="step" id="option-24-inc">▶</div></div></div></div>
+<div class="option" id="option-25" style="display:none"><div class="option-line"><div class="label" id="option-25-label"></div><div class="value-box"><div class="step" id="option-25-dec">◀</div><div class="value" id="option-25-value"></div><div class="step" id="option-25-inc">▶</div></div></div></div>
+<div class="option" id="option-26" style="display:none"><div class="option-line"><div class="label" id="option-26-label"></div><div class="value-box"><div class="step" id="option-26-dec">◀</div><div class="value" id="option-26-value"></div><div class="step" id="option-26-inc">▶</div></div></div></div>
+<div class="option" id="option-27" style="display:none"><div class="option-line"><div class="label" id="option-27-label"></div><div class="value-box"><div class="step" id="option-27-dec">◀</div><div class="value" id="option-27-value"></div><div class="step" id="option-27-inc">▶</div></div></div></div>
+<div class="option" id="option-28" style="display:none"><div class="option-line"><div class="label" id="option-28-label"></div><div class="value-box"><div class="step" id="option-28-dec">◀</div><div class="value" id="option-28-value"></div><div class="step" id="option-28-inc">▶</div></div></div></div>
+<div class="option" id="option-29" style="display:none"><div class="option-line"><div class="label" id="option-29-label"></div><div class="value-box"><div class="step" id="option-29-dec">◀</div><div class="value" id="option-29-value"></div><div class="step" id="option-29-inc">▶</div></div></div></div>
+<div class="option" id="option-30" style="display:none"><div class="option-line"><div class="label" id="option-30-label"></div><div class="value-box"><div class="step" id="option-30-dec">◀</div><div class="value" id="option-30-value"></div><div class="step" id="option-30-inc">▶</div></div></div></div>
+<div class="option" id="option-31" style="display:none"><div class="option-line"><div class="label" id="option-31-label"></div><div class="value-box"><div class="step" id="option-31-dec">◀</div><div class="value" id="option-31-value"></div><div class="step" id="option-31-inc">▶</div></div></div></div>
+<div class="option" id="option-32" style="display:none"><div class="option-line"><div class="label" id="option-32-label"></div><div class="value-box"><div class="step" id="option-32-dec">◀</div><div class="value" id="option-32-value"></div><div class="step" id="option-32-inc">▶</div></div></div></div>
+<div class="option" id="option-33" style="display:none"><div class="option-line"><div class="label" id="option-33-label"></div><div class="value-box"><div class="step" id="option-33-dec">◀</div><div class="value" id="option-33-value"></div><div class="step" id="option-33-inc">▶</div></div></div></div>
+<div class="option" id="option-34" style="display:none"><div class="option-line"><div class="label" id="option-34-label"></div><div class="value-box"><div class="step" id="option-34-dec">◀</div><div class="value" id="option-34-value"></div><div class="step" id="option-34-inc">▶</div></div></div></div>
+<div class="option" id="option-35" style="display:none"><div class="option-line"><div class="label" id="option-35-label"></div><div class="value-box"><div class="step" id="option-35-dec">◀</div><div class="value" id="option-35-value"></div><div class="step" id="option-35-inc">▶</div></div></div></div>
+<div class="option" id="option-36" style="display:none"><div class="option-line"><div class="label" id="option-36-label"></div><div class="value-box"><div class="step" id="option-36-dec">◀</div><div class="value" id="option-36-value"></div><div class="step" id="option-36-inc">▶</div></div></div></div>
+<div class="option" id="option-37" style="display:none"><div class="option-line"><div class="label" id="option-37-label"></div><div class="value-box"><div class="step" id="option-37-dec">◀</div><div class="value" id="option-37-value"></div><div class="step" id="option-37-inc">▶</div></div></div></div>
+<div class="option" id="option-38" style="display:none"><div class="option-line"><div class="label" id="option-38-label"></div><div class="value-box"><div class="step" id="option-38-dec">◀</div><div class="value" id="option-38-value"></div><div class="step" id="option-38-inc">▶</div></div></div></div>
+<div class="option" id="option-39" style="display:none"><div class="option-line"><div class="label" id="option-39-label"></div><div class="value-box"><div class="step" id="option-39-dec">◀</div><div class="value" id="option-39-value"></div><div class="step" id="option-39-inc">▶</div></div></div></div>
+</div>
+<div id="footer"><span id="status"></span>   ↑↓ 항목 · ←→ 바꾸기 · PageUp/PageDown 화면 · Esc 닫기</div>
+</div></div></body></rml>

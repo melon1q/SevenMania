@@ -22,6 +22,7 @@ int readSettingValue(int id) {
     case ID_COMPOSITION: return gCompositionEnabled;
     case ID_DIRECT_COMPOSITION: return gDirectCompositionEnabled;
     case ID_LR2_ASPECT: return gLr2Stretch;
+    case ID_LR2_UPSCALE: return static_cast<int>(gLr2UpscaleFilter);
     case ID_JUDGEMENT_PROFILE: return int(gJudgementProfile);
     case ID_NOTE_HEIGHT: return kFixedNoteHeight;
     case ID_GROOVE_GAUGE: return int(gGrooveGaugeMode);
@@ -149,6 +150,12 @@ bool applySettingValue(int id, int value, std::wstring& error) {
             if(scene)scene->setStretch(gLr2Stretch);
 #endif
         break;
+    case ID_LR2_UPSCALE:
+        if(value<0||value>=static_cast<int>(lr2UpscaleLabels.size()))return false;
+        gLr2UpscaleFilter=sevenmania::skin::lr2::upscaleFilterFromSetting(value);
+        gCompositionPresenter.retryUpscale();
+        InvalidateRect(gWindow,nullptr,FALSE);
+        break;
     case ID_LOW_LATENCY:
         gReflexRequested = value != 0;
         if (!gReflexRequested) gCompositionPresenter.lowLatency().request(latency::Mode::Off);
@@ -192,6 +199,7 @@ HWND settingControl(int id) {
     case ID_SCREEN_MODE: return gScreenModeChoice; case ID_GEAR_POSITION: return gGearChoice;
     case ID_COMPOSITION: return gCompositionChoice; case ID_DIRECT_COMPOSITION: return gDirectCompositionChoice;
     case ID_LR2_ASPECT: return gLr2AspectChoice;
+    case ID_LR2_UPSCALE: return gLr2UpscaleChoice;
     case ID_JUDGEMENT_PROFILE: return gJudgementChoice; case ID_NOTE_HEIGHT: return gNoteHeightChoice;
     case ID_GROOVE_GAUGE: return gGrooveGaugeChoice; case ID_SOUND_BUFFER: return gSoundBufferChoice;
     case ID_AUDIO_OUTPUT_MODE: return gAudioOutputModeChoice;

@@ -220,12 +220,14 @@ struct PreviewScene::Impl {
     std::array<int,2> scratchSide{};
     bool resultScreen{},decideScreen{};
     std::size_t noteOrder{};
+    std::size_t outputLayerStart{};
+    float outputBgaWidth{},outputBgaHeight{};
     bool hasBga{},hasLaneCover{},hasMouseCursor{};
     std::optional<ScreenData> screen;
     ComPtr<ID2D1SolidColorBrush> textBrush;
     // Blend 3 and above: a white texel inverts the target under a sprite; blend 4 multiplies
     // the sprite with a copy of the target.
-    ComPtr<ID2D1Bitmap1> white, backdrop;
+    ComPtr<ID2D1Bitmap1> white, backdrop, outputBackdrop;
     ComPtr<ID2D1Effect> placement, multiply;
     std::array<std::optional<std::size_t>,10> barBodies{},barLamps{},barLevels{},barRanks{};
     std::vector<std::size_t> barFlashes;
@@ -234,6 +236,7 @@ struct PreviewScene::Impl {
     std::size_t barOrder{};
     std::vector<SelectControl> controls;
     SelectBar controlClip;
+    std::optional<FrameScale> controlScale;
     ComPtr<IDWriteTextFormat> barText;
     ComPtr<ID2D1Bitmap1> banner;
     Bytes bannerPixels;
@@ -319,6 +322,13 @@ int PreviewScene::buttonStates(int id) const noexcept {
     return fewest;
 }
 bool PreviewScene::hasBga() const noexcept {return impl_->hasBga;}
+int PreviewScene::outputBgaCanvasSize(const FrameScale& scale) const noexcept {
+    if(impl_->outputBgaWidth<=0||impl_->outputBgaHeight<=0)return 0;
+    const float pixels=std::max(impl_->outputBgaWidth*scale.outputWidth/scale.width,
+                                impl_->outputBgaHeight*scale.outputHeight/scale.height);
+    // The BGA compositor uses a square. Cap work for video and very large windows.
+    return int(std::ceil(std::clamp(pixels,1.f,1080.f)));
+}
 bool PreviewScene::hasLaneCover() const noexcept {return impl_->hasLaneCover;}
 bool PreviewScene::hasMouseCursor() const noexcept {return impl_->hasMouseCursor;}
 void PreviewScene::setStretch(bool stretch) noexcept {
@@ -1056,7 +1066,30 @@ bool PreviewScene::load(const Document& document,std::vector<Diagnostic>& diagno
         if(model->barOrder==model->sources.size())next->barOrder=next->layers.size();
     }
     if(!model->noteOrder||model->noteOrder==model->sources.size())next->noteOrder=next->layers.size();
+    next->outputLayerStart=next->noteOrder;
     if(play) {
+        // Only split the source-over suffix before the notes. Moving an early
+        // layer on its own would put it above sprites that originally covered it.
+        for(std::size_t i=next->noteOrder;i>0;--i) {
+            const auto& source=next->layers[i-1].source;
+            if(source.blend>1)break;
+            if(source.kind==LayerKind::Bga||source.kind==LayerKind::Judge||source.kind==LayerKind::Combo)
+                next->outputLayerStart=i-1;
+        }
+        for(std::size_t i=0;i<next->layers.size();++i) {
+            const auto& source=next->layers[i].source;
+            if(source.kind!=LayerKind::Bga)continue;
+            if(i<next->outputLayerStart||source.blend>1) {
+                next->outputBgaWidth=next->outputBgaHeight=0;
+                break;
+            }
+            for(const auto& key:source.destinations) {
+                const float width=float(key[3])+(source.offset?float((*source.offset)[2]):0.f);
+                const float height=float(key[4])+(source.offset?float((*source.offset)[3]):0.f);
+                next->outputBgaWidth=std::max(next->outputBgaWidth,std::abs(width));
+                next->outputBgaHeight=std::max(next->outputBgaHeight,std::abs(height));
+            }
+        }
         const int type=document.header.type;
         std::array<PlayLane,16> lanes{};
         // Lanes the key mode lacks (5KEY's last two keys, 7KEY's 2P side) stay empty at the right edge.
@@ -1174,6 +1207,7 @@ void PreviewScene::releaseDevice() {
     impl_->textBrush.Reset();
     impl_->white.Reset();
     impl_->backdrop.Reset();
+    impl_->outputBackdrop.Reset();
     impl_->placement.Reset();
     impl_->multiply.Reset();
     for(auto& layer:impl_->layers)layer.color.Reset();
@@ -1213,10 +1247,21 @@ bool SelectControl::increment(float px,float py) const noexcept {
 }
 
 std::optional<SelectControl> PreviewScene::selectControlAt(float x,float y) const noexcept {
+    if(impl_->controlScale)impl_->controlScale->toCanvas(x,y);
     const auto& clip=impl_->controlClip;
     if(x<clip.x||y<clip.y||x>=clip.x+clip.width||y>=clip.y+clip.height)return std::nullopt;
-    for(auto it=impl_->controls.rbegin();it!=impl_->controls.rend();++it)
-        if(it->contains(x,y))return *it;
+    for(auto it=impl_->controls.rbegin();it!=impl_->controls.rend();++it) {
+        if(!it->contains(x,y))continue;
+        auto control=*it;
+        if(const auto& scale=impl_->controlScale) {
+            const float sx=scale->outputWidth/scale->width, sy=scale->outputHeight/scale->height;
+            control.viewportScaleX*=sx;
+            control.viewportScaleY*=sy;
+            control.viewportOffsetX=scale->x+control.viewportOffsetX*sx;
+            control.viewportOffsetY=scale->y+control.viewportOffsetY*sy;
+        }
+        return control;
+    }
     return std::nullopt;
 }
 
@@ -1358,20 +1403,41 @@ bool PreviewScene::prepare(ID2D1DeviceContext* target) {
     return true;
 }
 
+std::optional<FrameScale> PreviewScene::upscale(UpscaleFilter filter,int width,int height) const noexcept {
+    return frameScale(filter,impl_->width,impl_->height,width,height,impl_->stretch);
+}
+
 void PreviewScene::draw(ID2D1DeviceContext* target,double milliseconds,int width,int height,
-                        const PlayFrame* play,DrawPass pass,const SelectFrame* select,const ScreenTimers& timers) const {
+                        const PlayFrame* play,DrawPass pass,const SelectFrame* select,const ScreenTimers& timers,
+                        const FrameScale* upscale,bool inheritTargetTransform) const {
     if(select)impl_->controls.clear();
     if(!target||impl_->context.Get()!=target||width<=0||height<=0)return;
+    const auto begin=pass==DrawPass::AfterNotes?impl_->noteOrder:
+        pass==DrawPass::OutputBeforeNotes?impl_->outputLayerStart:0;
+    const auto end=pass==DrawPass::NativeBeforeNotes?impl_->outputLayerStart:
+        pass==DrawPass::BeforeNotes||pass==DrawPass::OutputBeforeNotes?impl_->noteOrder:impl_->layers.size();
+    if(begin==end&&!select)return;
     const auto viewport=skinViewport(width,height,impl_->width,impl_->height,impl_->stretch);
     const float scale=viewport.scale,w=viewport.width,h=viewport.height;
     const float offsetX=viewport.x,offsetY=viewport.y;
     const float translateX=impl_->stretch?viewport.translationX():0.f;
     const float translateY=impl_->stretch?viewport.translationY():0.f;
-    if(select)impl_->controlClip=impl_->stretch?SelectBar{0,0,float(width),float(height)}:SelectBar{offsetX,offsetY,w,h};
+    float pointerX=-1, pointerY=-1;
+    if(select) {
+        impl_->controlClip=impl_->stretch?SelectBar{0,0,float(width),float(height)}:SelectBar{offsetX,offsetY,w,h};
+        impl_->controlScale=upscale?std::optional{*upscale}:std::nullopt;
+        if(select->mouseX>=0&&select->mouseY>=0) {
+            pointerX=select->mouseX;
+            pointerY=select->mouseY;
+            if(upscale)upscale->toCanvas(pointerX,pointerY);
+        }
+    }
     D2D1_MATRIX_3X2_F previous{};
     target->GetTransform(&previous);
     using D2D1::Matrix3x2F;
-    const auto output=Matrix3x2F::Scale(viewport.stretchX,viewport.stretchY)*Matrix3x2F::Translation(translateX,translateY);
+    auto output=Matrix3x2F::Scale(viewport.stretchX,viewport.stretchY)*Matrix3x2F::Translation(translateX,translateY);
+    if(inheritTargetTransform)
+        output=output*Matrix3x2F(previous._11,previous._12,previous._21,previous._22,previous._31,previous._32);
     const auto transform=[&](const Matrix3x2F& matrix) {target->SetTransform(matrix*output);};
     transform(Matrix3x2F::Identity());
     target->PushAxisAlignedClip(D2D1::RectF(offsetX,offsetY,offsetX+w,offsetY+h),D2D1_ANTIALIAS_MODE_ALIASED);
@@ -1441,8 +1507,6 @@ void PreviewScene::draw(ID2D1DeviceContext* target,double milliseconds,int width
             }
         }
     }
-    const auto begin=pass==DrawPass::AfterNotes?impl_->noteOrder:0;
-    const auto end=pass==DrawPass::BeforeNotes?impl_->noteOrder:impl_->layers.size();
     // Draws with an LR2 bitmap font. Returns false, drawing nothing, when the font lacks a
     // character (LR2 fonts cover Shift_JIS only) so the caller can use the system font.
     const auto drawFontText=[&](int fontIndex,std::wstring_view text,float anchorX,float y,float maxWidth,
@@ -1526,15 +1590,16 @@ void PreviewScene::draw(ID2D1DeviceContext* target,double milliseconds,int width
             ComPtr<ID2D1Bitmap1> drawn;
             target->GetTarget(&current);
             if(current&&SUCCEEDED(current.As(&drawn))) {
+                auto& backdrop=inheritTargetTransform?impl_->outputBackdrop:impl_->backdrop;
                 const auto size=drawn->GetPixelSize();
-                if(!impl_->backdrop||impl_->backdrop->GetPixelSize().width!=size.width||impl_->backdrop->GetPixelSize().height!=size.height) {
-                    impl_->backdrop.Reset();
+                if(!backdrop||backdrop->GetPixelSize().width!=size.width||backdrop->GetPixelSize().height!=size.height) {
+                    backdrop.Reset();
                     const auto properties=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
                         drawn->GetPixelFormat(),96,96);
-                    target->CreateBitmap(size,nullptr,0,&properties,&impl_->backdrop);
+                    target->CreateBitmap(size,nullptr,0,&properties,&backdrop);
                 }
                 target->Flush();
-                if(impl_->backdrop&&SUCCEEDED(impl_->backdrop->CopyFromBitmap(nullptr,drawn.Get(),nullptr))) {
+                if(backdrop&&SUCCEEDED(backdrop->CopyFromBitmap(nullptr,drawn.Get(),nullptr))) {
                     // Only the sprite's source rectangle enters the effect graph.
                     ComPtr<ID2D1Effect> crop;
                     if(SUCCEEDED(target->CreateEffect(CLSID_D2D1Crop,&crop))) {
@@ -1545,7 +1610,7 @@ void PreviewScene::draw(ID2D1DeviceContext* target,double milliseconds,int width
                             static_cast<D2D1_MATRIX_3X2_F>(Matrix3x2F::Translation(-src.left,-src.top)*placed*output));
                         impl_->placement->SetValue(D2D1_2DAFFINETRANSFORM_PROP_INTERPOLATION_MODE,
                             layer.source.filter?D2D1_2DAFFINETRANSFORM_INTERPOLATION_MODE_LINEAR:D2D1_2DAFFINETRANSFORM_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-                        impl_->multiply->SetInput(0,impl_->backdrop.Get());
+                        impl_->multiply->SetInput(0,backdrop.Get());
                         // Only the device-pixel bounds of the placed sprite are written back.
                         const auto device=placed*output;
                         float left=1e9f,top=1e9f,right=-1e9f,bottom=-1e9f;
@@ -1811,9 +1876,9 @@ void PreviewScene::draw(ID2D1DeviceContext* target,double milliseconds,int width
                 target->DrawLine(point(index-1),point(index),impl_->textBrush.Get(),std::max(1.f,frame->width));
         } else if(source.kind==LayerKind::MouseCursor) {
             // Drawn at the cursor, the destination's x and y giving the picture's offset from the hot spot.
-            if(!select||select->mouseX<0||select->mouseY<0)continue;
-            const float mouseX=(select->mouseX-translateX)/viewport.stretchX;
-            const float mouseY=(select->mouseY-translateY)/viewport.stretchY;
+            if(!select||pointerX<0||pointerY<0||pointerX>=width||pointerY>=height)continue;
+            const float mouseX=(pointerX-translateX)/viewport.stretchX;
+            const float mouseY=(pointerY-translateY)/viewport.stretchY;
             sprite(mouseX+frame->x,mouseY+frame->y,frame->sourceX,frame->sourceY);
         } else if(source.kind==LayerKind::OnMouse) {
             // Shown while the cursor is inside a rectangle given relative to the picture.
@@ -1821,8 +1886,8 @@ void PreviewScene::draw(ID2D1DeviceContext* target,double milliseconds,int width
             const int panel=source.parameters[0];
             if(!select||(panel<0?select->panel!=0:panel>0&&select->panel!=panel))continue;
             const float hoverX=left+source.parameters[1]*scale,hoverY=top+source.parameters[2]*scale;
-            const float mouseX=(select->mouseX-translateX)/viewport.stretchX;
-            const float mouseY=(select->mouseY-translateY)/viewport.stretchY;
+            const float mouseX=(pointerX-translateX)/viewport.stretchX;
+            const float mouseY=(pointerY-translateY)/viewport.stretchY;
             if(mouseX<hoverX||mouseY<hoverY||mouseX>=hoverX+source.parameters[3]*scale||
                mouseY>=hoverY+source.parameters[4]*scale)continue;
             sprite(left,top,frame->sourceX,frame->sourceY);

@@ -341,7 +341,7 @@ class Parser {
     void header(const Command& c) {
         auto& h=document_.header;const auto& f=c.fields;
         try {
-            if(c.name=="INFORMATION") {if(f.size()<4)throw Failure("INFORMATION needs type, name and author");h.type=number(f[1]);h.name=f[2];h.author=f[3];}
+            if(c.name=="INFORMATION") {if(f.size()<4)throw Failure("INFORMATION needs type, name and author");h.type=number(f[1]);h.name=f[2];h.author=f[3];h.thumbnail=f.size()>4?f[4]:std::string{};}
             else if(c.name=="CUSTOMOPTION") {if(f.size()<3)throw Failure("CUSTOMOPTION needs name and ID");CustomOption o{f[1],number(f[2]),{}};for(std::size_t i=3;i<f.size();++i)if(!f[i].empty())o.choices.push_back(f[i]);if(o.firstId<0||o.choices.size()>static_cast<std::size_t>(std::numeric_limits<int>::max()-o.firstId))throw Failure("CUSTOMOPTION ID range invalid");h.options.push_back(std::move(o));}
             else if(c.name=="CUSTOMFILE") {if(f.size()<3)throw Failure("CUSTOMFILE needs name and pattern");h.files.push_back({f[1],f[2],f.size()>3?f[3]:std::string{}});}
             else if(c.name=="CUSTOMOFFSET") {if(f.size()<3)throw Failure("CUSTOMOFFSET needs name and ID");CustomOffset o;o.name=f[1];o.id=number(f[2]);for(std::size_t i=0;i<6&&i+3<f.size();++i)o.enabled[i]=number(f[i+3])>0;h.offsets.push_back(std::move(o));}

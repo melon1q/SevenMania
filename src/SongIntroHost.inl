@@ -185,24 +185,31 @@ bool presentLr2Screen(sevenmania::skin::lr2::PreviewScene& scene,double elapsed,
  gCompositionPresenter.setModernDrawing(true);
  gCompositionPresenter.setDirectComposition(select||gDirectCompositionEnabled);
  gCompositionPresenter.setVsync(gTargetFps==vsyncFps);
- if(!gCompositionPresenter.prepare(gWindow,width,height))return false;
- auto* target=static_cast<ID2D1DeviceContext*>(gCompositionPresenter.renderTarget());
- if(!scene.prepare(target))return false;
- if(select)select->hasBanner=scene.updateSelectBanner(select->banner);
- gCompositionPresenter.setFrameOverlay(nullptr);
- gCompositionPresenter.setFrameForeground(nullptr);
- gCompositionPresenter.setFrameIntro(nullptr);
+ const auto requested=scene.upscale(gLr2UpscaleFilter,width,height);
  struct DrawData {sevenmania::skin::lr2::PreviewScene& scene;double elapsed;sevenmania::skin::lr2::SelectFrame* select;
   const sevenmania::skin::lr2::ScreenTimers& timers;
-  const sevenmania::skin::lr2::PlayFrame* play;};
- DrawData data{scene,elapsed,select,timers,play};
- return gCompositionPresenter.present(gWindow,gBackBufferPixels,width,height,nullptr,0,0,0,
-  {[](void* payload,ID2D1RenderTarget* drawing,int w,int h) {
+  const sevenmania::skin::lr2::PlayFrame* play;
+  const sevenmania::skin::lr2::FrameScale* upscale;};
+ const auto present=[&](bool allowUpscale) {
+  if(!gCompositionPresenter.prepare(gWindow,width,height))return false;
+  auto* target=static_cast<ID2D1DeviceContext*>(gCompositionPresenter.renderTarget());
+  if(!scene.prepare(target))return false;
+  if(select)select->hasBanner=scene.updateSelectBanner(select->banner);
+  gCompositionPresenter.setFrameOverlay(nullptr);
+  gCompositionPresenter.setFrameForeground(nullptr);
+  gCompositionPresenter.setFrameIntro(nullptr);
+  const bool scaled=allowUpscale&&requested&&gCompositionPresenter.setFrameUpscale(*requested,false);
+  DrawData data{scene,elapsed,select,timers,play,scaled?&*requested:nullptr};
+  return gCompositionPresenter.present(gWindow,gBackBufferPixels,width,height,nullptr,0,0,0,
+   {[](void* payload,ID2D1RenderTarget* drawing,int w,int h) {
    const auto& frame=*static_cast<DrawData*>(payload);
    drawing->Clear(D2D1::ColorF(D2D1::ColorF::Black));
    frame.scene.draw(static_cast<ID2D1DeviceContext*>(drawing),frame.elapsed,w,h,frame.play,
-       sevenmania::skin::lr2::DrawPass::All,frame.select,frame.timers);
-  },&data});
+       sevenmania::skin::lr2::DrawPass::All,frame.select,frame.timers,frame.upscale);
+   },&data});
+ };
+ if(present(true))return true;
+ return requested&&std::string_view(gCompositionPresenter.lastFailureStage())=="lr2-upscale-draw"&&present(false);
 }
 // The LR2 play scene before the song, while the chart loads. False leaves the black loading screen.
 bool presentLr2PlayLeadIn(int width,int height) {

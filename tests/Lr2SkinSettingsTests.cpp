@@ -109,6 +109,24 @@ int wmain(int argc,wchar_t** argv) {
         require(gLr2Stretch&&value(aspectBinding->element)=="1"&&
             GetPrivateProfileIntW(L"Display",L"Lr2Stretch",0,gSettingsFile.c_str())==1,"stretch is shown and saved");
         require(settingsController().set(ID_LR2_ASPECT,0).applied&&!gLr2Stretch,"letterbox applies again");
+        require(value("display-lr2-upscale")=="0","missing setting defaults to original LR2 rendering");
+        require(postSetting(ID_LR2_UPSCALE,1),"Bicubic setting queued");
+        pump();
+        require(gLr2UpscaleFilter==UpscaleFilter::Bicubic&&value("display-lr2-upscale")=="1",
+            "Bicubic setting did not reach the renderer and settings page");
+        require(settingsController().set(ID_LR2_UPSCALE,2).applied&&
+            GetPrivateProfileIntW(L"Display",L"Lr2UpscaleFilter",0,gSettingsFile.c_str())==2,
+            "Nearest neighbor selection was not saved");
+        require(!settingsController().set(ID_LR2_UPSCALE,4).applied&&gLr2UpscaleFilter==UpscaleFilter::Nearest,
+            "unknown LR2 filter replaced the active selection");
+        gLr2UpscaleFilter=UpscaleFilter::Original;
+        loadDisplaySettings();
+        require(gLr2UpscaleFilter==UpscaleFilter::Nearest,"saved filter did not reload");
+        require(postSetting(ID_LR2_UPSCALE,3),"hybrid setting queued");
+        pump();
+        require(gLr2UpscaleFilter==UpscaleFilter::Hybrid&&value("display-lr2-upscale")=="3","hybrid setting not applied");
+        loadDisplaySettings();
+        require(gLr2UpscaleFilter==UpscaleFilter::Hybrid,"hybrid selection did not reload");
         selectSettingsCategory(5);
         require(value("lr2-play7")=="none"&&value("lr2-custom-screen")=="none"&&value("lr2-custom-value")=="none","empty LR2 section state");
         paintPage(output/L"lr2-skin-page-empty.png");

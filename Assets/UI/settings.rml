@@ -46,6 +46,7 @@
 <div class="row"><label>화면 모드</label><div class="ctl"><select id="screen-mode" style="display:none"></select><div class="seg"><button id="screen-mode:0">창화면</button><button id="screen-mode:1">보더리스</button><button id="screen-mode:2">전체화면</button></div></div></div>
 <div class="row"><label for="resolution">해상도</label><div class="ctl"><select id="resolution"></select></div></div>
 <div class="row"><label for="display-lr2-aspect">LR2 스킨 화면 비율</label><div class="ctl"><select id="display-lr2-aspect"></select></div></div>
+<div class="row"><label for="display-lr2-upscale">LR2 SD/HD 확대 필터</label><div class="ctl"><select id="display-lr2-upscale"></select></div></div>
 <div class="row"><label for="graphics-fps">프레임 목표</label><div class="ctl"><select id="graphics-fps"></select></div></div>
 <div class="row"><label for="select-fps">선곡 화면 프레임</label><div class="ctl"><select id="select-fps"></select></div></div>
 <div class="row"><label for="custom-fps">직접 지정 (1~1500)</label><div class="ctl"><input id="custom-fps" type="range" min="1" max="1500" step="1" /><div id="custom-fps-value" class="range-value"></div></div></div>

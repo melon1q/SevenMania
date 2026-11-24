@@ -1,3 +1,21 @@
+// Consume the whole Esc press so key repeat cannot close the player after dismissing song info.
+bool handleSongInfoEscape(UINT message, WPARAM key) {
+    static bool consumed = false;
+    if (key != VK_ESCAPE) return false;
+    if (message == WM_KEYUP) {
+        const bool wasConsumed = consumed;
+        consumed = false;
+        return wasConsumed;
+    }
+    if (message != WM_KEYDOWN) return false;
+    if (consumed) return true;
+    if (!gSongInfoVisible) return false;
+    gSongInfoVisible = false;
+    InvalidateRect(gWindow, nullptr, FALSE);
+    consumed = true;
+    return true;
+}
+
 int runPlayerLoop() {
     MSG message{};
     bool running = true;
@@ -16,7 +34,13 @@ int runPlayerLoop() {
         // Bound message processing so continuous input cannot starve a due frame.
         for (int processed = 0; processed < 64 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++processed) {
             if (message.message == WM_QUIT) { running = false; break; }
-            if(!gSettingsWindow&&!gPracticeWindow&&handleOverlayEscape(message.message,message.wParam))continue;
+            if (skinSelectOwns(message.hwnd)) { TranslateMessage(&message); DispatchMessageW(&message); continue; }
+            if (keyConfigOwns(message.hwnd)) {
+                // While a lane waits for its key, every key goes to the popup, whichever of its windows has focus.
+                if (keyConfigCapturesKey(message.message)) { SendMessageW(gKeyConfigWindow, message.message, message.wParam, message.lParam); continue; }
+                TranslateMessage(&message); DispatchMessageW(&message); continue;
+            }
+            if(!gSettingsWindow&&!gPracticeWindow&&handleSongInfoEscape(message.message,message.wParam))continue;
             if (handleSettingsCaptureMessage(message.message,message.wParam,message.lParam)) continue;
             if (gRmlSettingsHost.owns(message.hwnd) || gRmlSettingsPage.owns(message.hwnd)) {
                 TranslateMessage(&message); DispatchMessageW(&message); continue;

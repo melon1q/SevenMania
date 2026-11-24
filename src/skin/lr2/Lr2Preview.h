@@ -1,6 +1,7 @@
 #pragma once
 #include "Lr2ImageModel.h"
 #include "Lr2ScreenState.h"
+#include "Lr2FrameScale.h"
 #include <memory>
 #include <span>
 
@@ -63,7 +64,7 @@ struct PlayFrame {
     std::optional<bool> option(int id) const noexcept;
     std::optional<int> number(int id) const noexcept;
 };
-enum class DrawPass { All, BeforeNotes, AfterNotes };
+enum class DrawPass { All, BeforeNotes, AfterNotes, NativeBeforeNotes, OutputBeforeNotes };
 struct ScreenData {
     std::array<std::wstring,7> songText; // LR2 string references 10 through 16.
     std::filesystem::path stageImage;
@@ -193,14 +194,18 @@ public:
     bool prepare(ID2D1DeviceContext* target);
     void releaseDevice();
     void setStretch(bool stretch) noexcept;
+    std::optional<FrameScale> upscale(UpscaleFilter filter, int width, int height) const noexcept;
     void draw(ID2D1DeviceContext* target, double milliseconds, int width, int height,
               const PlayFrame* play=nullptr,DrawPass pass=DrawPass::All,const SelectFrame* select=nullptr,
-              const ScreenTimers& timers={}) const;
+              const ScreenTimers& timers={}, const FrameScale* upscale=nullptr,
+              bool inheritTargetTransform=false) const;
     int selectCenter() const noexcept;
     std::optional<SelectBar> selectBar(int slot,int width,int height) const noexcept;
     std::optional<SelectControl> selectControlAt(float x,float y) const noexcept;
     bool updateSelectBanner(const std::filesystem::path& path);
     bool hasBga() const noexcept;
+    // Zero keeps the original BGA canvas for skins with any BGA layer in the native pass.
+    int outputBgaCanvasSize(const FrameScale& scale) const noexcept;
     // The skin draws the lane cover itself (play slider 4 or 5), so the player's own cover stays off.
     bool hasLaneCover() const noexcept;
     // Select MOUSECURSOR: the skin draws the cursor, so the host hides the system one over the window.

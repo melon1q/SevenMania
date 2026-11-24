@@ -18,6 +18,33 @@ add_link_options("/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/long-paths.mani
 
 enable_testing()
 
+set(lr2_shader_files third_party/fsr1/ffx_a.h third_party/fsr1/ffx_fsr1.h src/Lr2Hybrid.hlsl)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${lr2_shader_files})
+get_filename_component(lr2_windows_kits "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots;KitsRoot10]" ABSOLUTE)
+find_program(BMS_FXC fxc HINTS
+    "${lr2_windows_kits}/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64"
+    "$ENV{WindowsSdkDir}/bin/$ENV{WindowsSDKVersion}/x64")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+if(BMS_FXC)
+    foreach(stage vertex pixel)
+        if(stage STREQUAL "vertex")
+            set(profile vs_5_0)
+        else()
+            set(profile ps_5_0)
+        endif()
+        execute_process(COMMAND "${BMS_FXC}" /nologo /O3 /T "${profile}" /E "${stage}Main"
+            /I "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fsr1"
+            /Fh "${CMAKE_CURRENT_BINARY_DIR}/generated/Lr2Hybrid_${stage}.h" /Vn "lr2Hybrid_${stage}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/Lr2Hybrid.hlsl" COMMAND_ERROR_IS_FATAL ANY)
+    endforeach()
+    set(BMS_HAS_LR2_HYBRID 1)
+else()
+    set(BMS_HAS_LR2_HYBRID 0)
+    message(WARNING "Windows SDK fxc was not found. LR2 hybrid mode will use Bicubic.")
+endif()
+configure_file(cmake/Lr2HybridShaders.h.in generated/Lr2HybridShaders.h @ONLY)
+include_directories("${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 enable_language(RC)
 
 include(cmake/RustSongSelection.cmake)
@@ -32,6 +59,7 @@ add_test(NAME BmsResultFadeTests COMMAND BmsResultFadeTests)
 add_executable(BmsGpuTests tests/GpuTests.cpp)
 target_include_directories(BmsGpuTests PRIVATE src)
 add_test(NAME BmsGpuTests COMMAND BmsGpuTests)
+add_test(NAME BmsLr2UpscaleGpuTests COMMAND BmsGpuTests --lr2-upscale)
 add_executable(BmsLowLatencyTests tests/LowLatencyTests.cpp)
 target_include_directories(BmsLowLatencyTests PRIVATE src)
 add_test(NAME BmsLowLatencyTests COMMAND BmsLowLatencyTests)
@@ -221,6 +249,9 @@ target_link_libraries(BmsUiTests PRIVATE comctl32)
 add_dependencies(BmsUiTests BmsPlayer)
 add_test(NAME BmsUiTests COMMAND BmsUiTests $<TARGET_FILE:BmsPlayer> ${CMAKE_SOURCE_DIR}/Validation)
 
+add_custom_command(TARGET BmsPlayer POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/third_party/fsr1/LICENSE"
+          "$<TARGET_FILE_DIR:BmsPlayer>/FSR1-LICENSE.txt")
 add_custom_command(TARGET BmsPlayer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:BmsPlayer>/Assets
     COMMAND ${CMAKE_COMMAND} -E copy_if_different

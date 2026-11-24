@@ -158,13 +158,17 @@ std::optional<sevenmania::skin::lr2::Document> lr2SkinHeader(const std::filesyst
     return std::move(*result.document);
 }
 
+// The Theme folder's skins, searched once (again after "다시 검색"). Shared with the skin select screen.
+void ensureLr2SkinsScanned() {
+    if(gLr2SkinsScanned)return;
+    gLr2SkinsScanned=true;
+    gLr2Skins=gLr2SkinRoot.empty()?std::vector<sevenmania::skin::lr2::SkinEntry>{}:sevenmania::skin::lr2::findSkins(gLr2SkinRoot);
+}
+
 void syncLr2SkinSettings(const std::wstring& status=L"") {
     if(!gRmlSettingsPage.window())return;
     using Options=std::vector<std::pair<std::string,std::string>>;
-    if(!gLr2SkinsScanned) {
-        gLr2SkinsScanned=true;
-        gLr2Skins=gLr2SkinRoot.empty()?std::vector<sevenmania::skin::lr2::SkinEntry>{}:sevenmania::skin::lr2::findSkins(gLr2SkinRoot);
-    }
+    ensureLr2SkinsScanned();
     const bool allowed=!gLr2CommandLine&&!gPlaying&&!gShowingResult&&!gLoading;
     gRmlSettingsPage.setText("lr2-root",lr2Utf8(gLr2SkinRoot.wstring()));
     for(const char* id:{"lr2-clear","lr2-rescan"})gRmlSettingsPage.setEnabled(id,allowed);

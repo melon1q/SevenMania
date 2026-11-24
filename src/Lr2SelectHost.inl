@@ -319,7 +319,8 @@ sevenmania::skin::lr2::SelectFrame captureLr2Select(const sevenmania::skin::lr2:
 bool presentLr2Select(int width,int height) {
     using namespace sevenmania::skin::lr2;
     if(gLr2SelectFile.empty())return false;
-    if(gPlaying||gShowingResult||gLoading||gStartupSplash||gSongInfoVisible||gSettingsWindow||
+    // The owned settings window blocks input while the LR2 select scene stays visible behind it.
+    if(gPlaying||gShowingResult||gLoading||gStartupSplash||gSongInfoVisible||
        !gList||!gBackBufferPixels||width<=0||height<=0||!gCompositionEnabled) {
         gLr2SelectGpuFailed=false;
         if(gLr2SelectActive) {
@@ -453,6 +454,8 @@ bool lr2PlayInputLocked() {
     return sevenmania::skin::lr2::sceneInputLocked(gLr2PlayScene->startInputMilliseconds(),gLr2Play.leadInAge());
 }
 
+void openSkinSelectScreen(); // SkinSelectScreen.inl, included later with the settings window
+void openKeyConfigScreen(); // KeyConfigScreen.inl, likewise
 // Buttons that step through values, which a right click steps backwards.
 bool lr2SteppingButton(int id) {return id==10||id==11||id==40||id==42||id==55||id==57||id==74||id==76||id==77;}
 
@@ -538,9 +541,9 @@ bool lr2SelectInput(HWND window,UINT message,WPARAM wParam,LPARAM lParam) {
             else if(id==15)beginSelectedChart();
             else if(id==16)beginSelectedChart(false,true); // Autoplay.
             else if(id==13||id==14) {
-                // Skin and key settings live in the SevenMania settings window.
+                // LR2/beatoraja: 13 is KEY CONFIG, 14 is SKIN SELECT.
                 resetLr2SelectControls();
-                openSettings();
+                if(id==13)openKeyConfigScreen();else openSkinSelectScreen();
                 return true;
             } else {pressLr2OptionButton(id,id==57||control->increment(float(point.x),float(point.y)));triggerSystemSound(bms::SystemSound::OptionChange);}
             InvalidateRect(gWindow,nullptr,FALSE);

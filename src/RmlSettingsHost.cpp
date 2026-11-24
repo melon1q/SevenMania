@@ -4,6 +4,7 @@
 #include <RmlUi/Core/ElementDocument.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <set>
@@ -28,6 +29,7 @@ struct RmlSettingsHost::Impl : Rml::EventListener {
     bool embedded{}, synchronizing{}, faulted{};
     Metrics stats;
     std::set<int> keys;
+    std::vector<int> forwarded;
     std::map<std::string,std::vector<std::pair<std::string,std::string>>> optionSets;
     bool dirty = true;
     bool releasingCapture{};
@@ -186,6 +188,10 @@ struct RmlSettingsHost::Impl : Rml::EventListener {
                 return 0;
             }
             if (message == WM_KEYDOWN && w == VK_F9 && self->embedded) { PostMessageW(GetParent(window), WM_KEYDOWN, w, l); return 0; }
+            // Keys the embedding window drives itself (a screen navigated by arrows, for example).
+            if (message == WM_KEYDOWN && self->embedded && std::find(self->forwarded.begin(), self->forwarded.end(), int(w)) != self->forwarded.end()) {
+                PostMessageW(GetParent(window), WM_KEYDOWN, w, l); return 0;
+            }
             if (message == WM_SYSKEYDOWN && w == VK_F4 && (l & (1LL << 29))) { PostMessageW(window, WM_CLOSE, 0, 0); return 0; }
             if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) self->keys.insert(int(w));
             if (message == WM_KEYUP || message == WM_SYSKEYUP) self->keys.erase(int(w));
@@ -315,11 +321,21 @@ bool RmlSettingsHost::setVisible(const std::string& id,bool visible) {
 bool RmlSettingsHost::setEnabled(const std::string& id,bool enabled) {
     return impl_ && impl_->edit(id,[&](Rml::Element* e){if(auto* c=dynamic_cast<Rml::ElementFormControl*>(e))c->SetDisabled(!enabled);});
 }
+void RmlSettingsHost::forwardKeys(std::vector<int> keys) { if (impl_) impl_->forwarded = std::move(keys); }
+bool RmlSettingsHost::setImage(const std::string& id,const std::string& path) {
+    return impl_ && impl_->edit(id,[&](Rml::Element* e){if(path.empty())e->RemoveAttribute("src");else e->SetAttribute("src",path);});
+}
 bool RmlSettingsHost::setClass(const std::string& id,const std::string& name,bool active) {
     return impl_ && impl_->edit(id,[&](Rml::Element* e){e->SetClass(name,active);});
 }
 bool RmlSettingsHost::scrollTop(const std::string& id) {
     return impl_ && impl_->edit(id,[&](Rml::Element* e){e->SetScrollTop(0);});
+}
+bool RmlSettingsHost::scrollIntoView(const std::string& id) {
+    if (!impl_ || !impl_->context) return false;
+    impl_->runtime->requireThread();
+    impl_->context->Update(); // rows shown a moment ago have no layout until the next update
+    return impl_->edit(id,[&](Rml::Element* e){e->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));});
 }
 void RmlSettingsHost::close() {
     if (impl_ && impl_->runtime) impl_->runtime->requireThread();
@@ -383,7 +399,10 @@ bool RmlSettingsHost::setOptions(const std::string&,const std::vector<std::pair<
 bool RmlSettingsHost::setVisible(const std::string&,bool) { return false; }
 bool RmlSettingsHost::setEnabled(const std::string&,bool) { return false; }
 bool RmlSettingsHost::setClass(const std::string&,const std::string&,bool) { return false; }
+bool RmlSettingsHost::setImage(const std::string&,const std::string&) { return false; }
+void RmlSettingsHost::forwardKeys(std::vector<int>) {}
 bool RmlSettingsHost::scrollTop(const std::string&) { return false; }
+bool RmlSettingsHost::scrollIntoView(const std::string&) { return false; }
 void RmlSettingsHost::close() {}
 HWND RmlSettingsHost::window() const noexcept { return nullptr; }
 bool RmlSettingsHost::owns(HWND) const noexcept { return false; }

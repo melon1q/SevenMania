@@ -48,7 +48,7 @@ public:
         if (id == 1025 || (id >= 1270 && id <= 1274) || id == 1039 || id == 1044 || id == 1047 || (id >= 1200 && id <= 1206))
             return value == 0 || value == 1;
         if (id == 1023 || id == 1024 || id == 1029) return value >= 0 && value <= 2;
-        if (id == 1026 || id == 1035) return value >= 0 && value <= 3;
+        if (id == 1026 || id == 1035 || id == 1275) return value >= 0 && value <= 3;
         if (id == 1027) return value == 36;   // the note height is fixed to the sheet cell height
         if (id == 1034) return value == 32 || value == 64 || value == 128 || value == 256 || value == 512 || value == 1024;
         if (id >= 1100 && id <= 1107) return value >= 0 && value < 10;
@@ -76,7 +76,7 @@ public:
     void clearPending() { pending_.clear(); }
     std::map<int, int> snapshot() const {
         std::map<int, int> values;
-        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1054,1055,1056,1057,1058,1096,1097,1098,1099,1290,1291,1295,1270,1271,1272,1273,1274}) values[id] = read_(id);
+        for (int id : {1012,1013,1018,1020,1021,1022,1023,1024,1025,1026,1027,1029,1034,1035,1037,1038,1039,1040,1041,1042,1043,1044,1045,1046,1047,1048,1049,1050,1051,1052,1053,1054,1055,1056,1057,1058,1096,1097,1098,1099,1290,1291,1295,1270,1271,1272,1273,1274,1275}) values[id] = read_(id);
         for (const auto& range : {std::pair{1030,1033}, std::pair{1100,1107}, std::pair{1200,1206}})
             for (int id = range.first; id <= range.second; ++id) values[id] = read_(id);
         return values;

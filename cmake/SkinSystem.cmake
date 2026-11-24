@@ -34,10 +34,10 @@ set_tests_properties(SevenManiaResolutionScaleTests PROPERTIES TIMEOUT 30)
 
 # Optional screen renderer uses the same Direct2D-on-D3D11 path as CompositionPresenter.
 add_library(sevenmania_skin_render STATIC "${PROJECT_SOURCE_DIR}/src/skin/SkinRenderer.cpp" "${PROJECT_SOURCE_DIR}/src/skin/SkinApplication.cpp")
-target_sources(sevenmania_skin_render PRIVATE "${PROJECT_SOURCE_DIR}/src/skin/lr2/Lr2Preview.cpp")
+target_sources(sevenmania_skin_render PRIVATE "${PROJECT_SOURCE_DIR}/src/skin/lr2/Lr2Preview.cpp" "${PROJECT_SOURCE_DIR}/src/skin/lr2/Lr2Thumbnail.cpp")
 target_link_libraries(sevenmania_skin_render PUBLIC sevenmania_skin PRIVATE sevenmania_skin_inflate d3d11 d2d1 dwrite dxguid msimg32 windowscodecs ole32 gdi32 user32)
 add_executable(SevenManiaLr2PreviewTests "${PROJECT_SOURCE_DIR}/tests/Lr2PreviewTests.cpp")
-target_link_libraries(SevenManiaLr2PreviewTests PRIVATE sevenmania_skin_render d3d11 d2d1 windowscodecs ole32)
+target_link_libraries(SevenManiaLr2PreviewTests PRIVATE sevenmania_skin_render bms_core d3d11 d2d1 dcomp dxgi windowscodecs ole32)
 add_test(NAME SevenManiaLr2PreviewTests COMMAND SevenManiaLr2PreviewTests "${CMAKE_BINARY_DIR}/Validation/Lr2Preview")
 set_tests_properties(SevenManiaLr2PreviewTests PROPERTIES TIMEOUT 60)
 add_executable(SevenManiaSkinRenderTests "${PROJECT_SOURCE_DIR}/tests/SkinRenderTests.cpp")

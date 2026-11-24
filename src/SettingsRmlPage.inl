@@ -46,6 +46,7 @@ std::vector<std::pair<std::string,std::string>> rmlSettingsOptions(int command) 
     else if (id == ID_BROWSE_BACKGROUND) { int i=0; for(auto s:{L"단색",L"BGA",L"타이틀 이미지",L"사용자 이미지"}) add(i++,s); }
     else if (id == ID_SCREEN_MODE) { add(0,L"창화면");add(1,L"보더리스 창화면");add(2,L"전체화면"); }
     else if (id == ID_LR2_ASPECT) { add(0,L"비율 유지 (레터박스)");add(1,L"화면 채우기 (스트레치)"); }
+    else if (id == ID_LR2_UPSCALE) { for(int i=0;i<int(lr2UpscaleLabels.size());++i)add(i,lr2UpscaleLabels[i]); }
     else if (id == ID_RESOLUTION) {
         add(0,L"자동 (창 / 모니터 기본 크기)");
         for(size_t i=0;i<gResolutionOptions.size();++i) add(int(i+1),std::to_wstring(gResolutionOptions[i].width)+L" × "+std::to_wstring(gResolutionOptions[i].height));

@@ -1,5 +1,4 @@
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    if(summaryInput(message,wParam,lParam,window))return 0;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     if(lr2SelectInputLocked(message))return 0;
     if(message==WM_SETCURSOR&&lr2SelectSetCursor(lParam))return TRUE;
@@ -269,7 +268,6 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (gPlaying && gPaused) { showBrowseView(); openPracticeSetup(); }
             return 0;
         case ID_SETTINGS: gAudio.triggerEffect(L"click"); openSettings(); return 0;
-        case ID_SUMMARY_SETTINGS: gAudio.triggerEffect(L"click"); if (!gSummaryVisible) toggleSummary(); return 0;
         case ID_HIDDEN_SONGS:
             gAudio.triggerEffect(L"click");
             if (gLoading || gPlaying || gShowingResult) return 0;
@@ -318,7 +316,6 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_KEYDOWN:
         if(gSongInfoVisible){if(wParam==VK_ESCAPE){gSongInfoVisible=false;ShowWindow(gList,SW_SHOWNA);InvalidateRect(window,nullptr,FALSE);}return 0;}
         if((wParam==VK_BACK||wParam==VK_ESCAPE)&&navigateSongFolder(true))return 0;
-        if(summaryInput(message,wParam,lParam,window))return 0;
     if (handleBrowseShortcut(message, wParam, lParam)) return 0;
         if (gLoading) {
 #ifdef BMS_ENABLE_SKIN_BINDINGS
@@ -390,7 +387,6 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         break;
     case WM_KEYUP:
-        if(summaryInput(message,wParam,lParam,window))return 0;
     if (handleBrowseShortcut(message, wParam, lParam)) return 0;
         if (gCapturingBindings) {
             gCaptureAwaitRelease = false;
@@ -647,7 +643,15 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 #endif
             if (HUD_LEGACY_REFLEX()&&gPlaying&&!gPaused&&gGpuFrame) gCompositionPresenter.lowLatency().renderStart();
             if (gPlaying && gPrewarmTextPending) prewarmPlayText();
-            if (gPlaying) drawGameScreen(gBackBufferDc);
+            std::optional<sevenmania::skin::lr2::FrameScale> upscale;
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+            if(gGpuFrame&&gLr2PlayScene&&!gLr2GpuFailed) {
+                upscale=gLr2PlayScene->upscale(gLr2UpscaleFilter,width,height);
+                if(upscale&&(!gLr2PlayScene->playLanes(upscale->width,upscale->height)||
+                             !gCompositionPresenter.setFrameUpscale(*upscale,true)))upscale.reset();
+            }
+#endif
+            if (gPlaying) drawGameScreen(gBackBufferDc,upscale?&*upscale:nullptr);
             else if (gShowingResult) drawResultScreen(gBackBufferDc);
             else if (gLoading && gLoadResult.playback) drawPreparingPlayback(gBackBufferDc);
             else if (gStartupSplash) drawStartupSplash(gBackBufferDc);
@@ -655,13 +659,25 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             if (!gStartupSplash&&!songEntryActive()&&!(gLoading&&gLoadResult.playback&&waitingForLr2Play()))
                 drawResourceUsageOverlay(gBackBufferDc);
             if (gShowingResult) drawResultFade(gBackBufferDc);
-            drawSummary(gBackBufferDc);
             {HUD_SCOPE(FinalGdiFlush);GdiFlush();} // Complete GDI writes before the D3D texture upload reads the DIB.
             bool pauseFrameDeferred = false;
             { BMS_PERF_SCOPE(presentMs);
                 const uint64_t submittedBefore = gCompositionPresenter.submittedFrames();
                 gDiagPresentStart = std::chrono::steady_clock::now();
-                const bool presented = gGpuFrame && gCompositionPresenter.present(window, gBackBufferPixels, width, height);
+                bool presented = gGpuFrame && gCompositionPresenter.present(window, gBackBufferPixels, width, height);
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+                if(!presented&&upscale&&std::string_view(gCompositionPresenter.lastFailureStage())=="lr2-upscale-draw") {
+                    notePresentFallback();
+                    if(gCompositionPresenter.prepare(window,width,height)&&gLr2PlayScene->prepare(
+                        static_cast<ID2D1DeviceContext*>(gCompositionPresenter.renderTarget()))) {
+                        prepareAppliedSkinGpu();
+                        drawGameScreen(gBackBufferDc);
+                        drawResourceUsageOverlay(gBackBufferDc);
+                        GdiFlush();
+                        presented=gCompositionPresenter.present(window,gBackBufferPixels,width,height);
+                    }
+                }
+#endif
                 if (presented) notePresentWork();
                 if (presented && gCompositionPresenter.submittedFrames() != submittedBefore) notePresentSubmitted(true);
                 BMS_PERF_SET(presentDeferred, presented && gCompositionPresenter.presentationDeferred());
@@ -696,7 +712,6 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             else if (gLoading && gLoadResult.playback) drawPreparingPlayback(dc);
             else if (gStartupSplash) drawStartupSplash(dc);
             else drawBrowseScreen(dc);
-            drawSummary(dc);
         }
         EndPaint(window, &ps); return 0;
     }

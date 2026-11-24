@@ -115,9 +115,10 @@ std::wstring hudTextYOffsetLabel(int offset) {
 }
 
 #include "SettingsActions.inl"
-#include "SettingsSummaryOverlay.inl"
 #include "Lr2SkinSettings.inl"
 #include "DifficultyTableSettings.inl"
+#include "SkinSelectScreen.inl"
+#include "KeyConfigScreen.inl"
 #include "SettingsRmlPage.inl"
 
 void openRmlSettingsProbe() {
@@ -284,6 +285,11 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         for(const auto* label:{L"비율 유지 (레터박스)",L"화면 채우기 (스트레치)"})
             SendMessageW(gLr2AspectChoice,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
         SendMessageW(gLr2AspectChoice,CB_SETCURSEL,gLr2Stretch,0);
+        settingsControl(window,L"STATIC",L"LR2 SD/HD 확대 필터",0,0,24,478,330,24);
+        gLr2UpscaleChoice=settingsControl(window,L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,ID_LR2_UPSCALE,24,504,330,120);
+        for(const auto* label:lr2UpscaleLabels)
+            SendMessageW(gLr2UpscaleChoice,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
+        SendMessageW(gLr2UpscaleChoice,CB_SETCURSEL,int(gLr2UpscaleFilter),0);
         gCreatingSettingsCategory = 0;
         heading(L"게임플레이", 24, 96, 710);
         settingsControl(window, L"STATIC", L"BGA 밝기", 0, 0, 24, 194, 250, 24);
@@ -624,6 +630,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         gBgaDarknessChoice = nullptr;
         gLaneCoverSlider = gLaneCoverValue = nullptr;
         gScreenModeChoice = gResolutionChoice = gGearChoice = gCompositionChoice = gDirectCompositionChoice = gLr2AspectChoice = nullptr; gResolutionOptions.clear(); gSettingsScroll = 0;
+        gLr2UpscaleChoice = nullptr;
         gSubpixelChoice = gAntialiasChoice = gLowLatencyChoice = nullptr;
         gColorChoices.fill(nullptr);
         gSeparatorButtons.fill(nullptr);
@@ -636,7 +643,7 @@ LRESULT CALLBACK settingsProc(HWND window, UINT message, WPARAM wParam, LPARAM l
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-void openFullSettings() {
+void openSettings() {
     if (gPlaying || gPracticeWindow || (gLoading && gLoadResult.playback)) return;
     if (gSettingsWindow) { selectSettingsCategory(4); SetForegroundWindow(gSettingsWindow); return; }
     HWND settings{};
@@ -663,10 +670,4 @@ void openFullSettings() {
     // All categories are connected; open the summary by default. Keep native fallback.
     selectSettingsCategory(4);
     if (!gRmlSettingsPageActive && gCategoryButtons[4]) SetFocus(gCategoryButtons[4]);
-}
-
-void openSettings() {
-    if(gPlaying||gPracticeWindow||gLoading)return;
-    if(gSummaryVisible)toggleSummary();
-    openFullSettings();
 }

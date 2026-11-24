@@ -7,6 +7,7 @@
 #include "skin/SevenManiaSkinData.h"
 #include "skin/SkinApplication.h"
 #include "skin/SkinAnchors.h"
+#include "skin/lr2/Lr2Thumbnail.h"
 void emitSevenManiaSkinEvent(std::string_view event);
 void setSevenManiaSkinAnimationPaused(bool paused);
 bool skinOwnsHud();
@@ -187,7 +188,6 @@ constexpr int ID_INFO = 1008;
 constexpr int ID_HELP = 1009;
 constexpr int ID_BIND = 1010;
 constexpr int ID_SETTINGS = 1011;
-constexpr int ID_SUMMARY_SETTINGS = 1038;
 constexpr int ID_FPS = 1012;
 constexpr int ID_SPEED = 1013;
 constexpr int ID_CLOSE_SETTINGS = 1014;
@@ -203,6 +203,7 @@ constexpr int ID_GEAR_POSITION = 1024;
 constexpr int ID_COMPOSITION = 1025;
 constexpr int ID_DIRECT_COMPOSITION = 1273;
 constexpr int ID_LR2_ASPECT = 1274;
+constexpr int ID_LR2_UPSCALE = 1275;
 constexpr int ID_JUDGEMENT_PROFILE = 1026;
 constexpr int ID_NOTE_HEIGHT = 1027;
 constexpr int ID_HIDDEN_SONGS = 1028;
@@ -381,6 +382,7 @@ bool gResolutionConfigured{};
 std::vector<DisplayResolution> gResolutionOptions;
 HWND gGearChoice{}, gCompositionChoice{}, gDirectCompositionChoice{};
 HWND gLr2AspectChoice{};
+HWND gLr2UpscaleChoice{};
 HWND gSubpixelChoice{}, gAntialiasChoice{}, gLowLatencyChoice{};
 bool gNoteSubpixel = true, gNoteAntialias = true;
 bool gReflexRequested = false;
@@ -397,6 +399,10 @@ bool gSkinMirrorUi = false;
 bool gCompositionEnabled{};
 bool gDirectCompositionEnabled = true;
 bool gLr2Stretch{};
+using sevenmania::skin::lr2::UpscaleFilter;
+UpscaleFilter gLr2UpscaleFilter{};
+constexpr std::array<const wchar_t*,4> lr2UpscaleLabels{
+    L"기존 방식", L"Bicubic (쌍입방)", L"Nearest neighbor (최근접)", L"하이브리드 (SD · 실험적)"};
 CompositionPresenter gCompositionPresenter;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
 std::filesystem::path gLr2PlayFile;
@@ -942,7 +948,6 @@ void updateBrowseMedia();
 void stopBrowseMedia();
 std::filesystem::path executableFolder();
 void openSettings();
-void openFullSettings();
 void restartSongInformationEntrance();
 RECT playBgaViewport();
 void layoutControls();
@@ -1122,6 +1127,8 @@ void loadDisplaySettings() {
     const UINT legacyComposition = GetPrivateProfileIntW(L"Display", L"DirectComposition", 1, gSettingsFile.c_str());
     gDirectCompositionEnabled = legacyComposition != 0;
     gLr2Stretch = GetPrivateProfileIntW(L"Display",L"Lr2Stretch",0,gSettingsFile.c_str()) == 1;
+    gLr2UpscaleFilter = sevenmania::skin::lr2::upscaleFilterFromSetting(
+        GetPrivateProfileIntW(L"Display",L"Lr2UpscaleFilter",0,gSettingsFile.c_str()));
     gCompositionEnabled = GetPrivateProfileIntW(L"Display", L"GpuRendering", legacyComposition, gSettingsFile.c_str()) != 0;
     gNoteSubpixel = GetPrivateProfileIntW(L"Display", L"NoteSubpixel", 1, gSettingsFile.c_str()) != 0;
     gReflexRequested = GetPrivateProfileIntW(L"Display", L"NvidiaReflex", 0, gSettingsFile.c_str()) != 0;
@@ -1206,6 +1213,7 @@ void saveDisplaySettings() {
     WritePrivateProfileStringW(L"Display", L"GearPosition", std::to_wstring(gGearPosition).c_str(), gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Display", L"DirectComposition", gDirectCompositionEnabled ? L"1" : L"0", gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Display",L"Lr2Stretch",gLr2Stretch?L"1":L"0",gSettingsFile.c_str());
+    WritePrivateProfileStringW(L"Display",L"Lr2UpscaleFilter",std::to_wstring(int(gLr2UpscaleFilter)).c_str(),gSettingsFile.c_str());
     WritePrivateProfileStringW(L"Display", L"GpuRendering", gCompositionEnabled ? L"1" : L"0", gSettingsFile.c_str());
     constexpr std::array<const wchar_t*, 4> volumeKeys{L"MasterVolume", L"MusicVolume", L"KeyVolume", L"SfxVolume"};
     for (size_t i = 0; i < volumeKeys.size(); ++i)
@@ -2537,14 +2545,26 @@ void loadLr2PlaySkin(const bms::Chart& chart) {
     }
 }
 #endif
-RECT playBgaCanvas() noexcept {
+RECT playBgaCanvas(int width,int height,const sevenmania::skin::lr2::FrameScale* upscale=nullptr) noexcept {
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     if(gLr2PlayScene&&!gLr2GpuFailed&&gLr2PlayScene->hasBga()) {
-        const int size=std::min(gWindowWidth,gWindowHeight);
+        if(upscale)if(const int size=gLr2PlayScene->outputBgaCanvasSize(*upscale);size>0)return {0,0,size,size};
+        const int size=std::min(width,height);
         return {0,0,size,size};
     }
+#else
+    (void)upscale;
 #endif
-    return {0,0,gWindowWidth,gWindowHeight};
+    return {0,0,width,height};
+}
+RECT playBgaCanvas() noexcept {
+#ifdef BMS_ENABLE_SKIN_BINDINGS
+    if(gCompositionEnabled&&gLr2PlayScene&&!gLr2GpuFailed) {
+        const auto scale=gLr2PlayScene->upscale(gLr2UpscaleFilter,gWindowWidth,gWindowHeight);
+        if(scale)return playBgaCanvas(scale->width,scale->height,&*scale);
+    }
+#endif
+    return playBgaCanvas(gWindowWidth,gWindowHeight);
 }
 #include "PlaybackLoading.inl"
 #include "PlaybackLoadRuntime.inl"
@@ -2750,7 +2770,7 @@ void drawBenchmarkBadge(HDC dc) {
     drawLeftTextBody(dc, text, bounds, font, RGB(255, 214, 20));
 }
 
-void drawPracticeHud(HDC dc) {
+void drawPracticeHud(HDC dc,int width) {
     if (!gPractice.enabled) return;
     const std::array<std::wstring, 2> lines{L"배속: " + number(gPractice.rate(), 2) + L"x",
         L"구간: " + practiceTime(gPractice.startSeconds) + L" ~ " + practiceTime(gPractice.endSeconds)};
@@ -2767,7 +2787,7 @@ void drawPracticeHud(HDC dc) {
             widths[i] = extent.cx + 16; measuredLines[i] = lines[i];
             if (old) SelectObject(dc, old);
         }
-        const RECT bounds{gWindowWidth - 18 - widths[i], 14 + static_cast<int>(i) * 24, gWindowWidth - 18, 38 + static_cast<int>(i) * 24};
+        const RECT bounds{width - 18 - widths[i], 14 + static_cast<int>(i) * 24, width - 18, 38 + static_cast<int>(i) * 24};
         if (dc == gBackBufferDc && gBackBufferPixels) {
             GdiFlush();
             if (gTextRaster.draw(gGpuFrame ? nullptr : static_cast<uint32_t*>(gBackBufferPixels), gBackBufferWidth, gBackBufferHeight,
@@ -3076,7 +3096,8 @@ void retryPendingGpuOutput() {
         // audio or the CPU render loop again, or bypass its FPS ceiling.
         const uint64_t submittedBefore = gCompositionPresenter.submittedFrames();
         if (!gCompositionPresenter.present(gWindow, gBackBufferPixels, gBackBufferWidth, gBackBufferHeight)) {
-            gGpuUnavailable = true; notePresentFallback();
+            if(std::string_view(gCompositionPresenter.lastFailureStage())!="lr2-upscale-draw")gGpuUnavailable=true;
+            notePresentFallback();
             InvalidateRect(gWindow, nullptr, FALSE); UpdateWindow(gWindow);
         } else {
             if (gCompositionPresenter.submittedFrames() != submittedBefore) notePresentSubmitted(true);
@@ -4315,10 +4336,10 @@ COLORREF songDifficultyColor(const bms::Chart& chart) {
 
 bool handleBrowseShortcut(UINT message, WPARAM key, LPARAM flags) {
     if (message != WM_KEYDOWN && message != WM_KEYUP) return false;
-    const int command = key == VK_SPACE ? (gSummaryVisible ? ID_SETTINGS : ID_SUMMARY_SETTINGS) : key == VK_F2 ? ID_OPEN : key == VK_F5 ? ID_RESCAN : 0;
+    const int command = key == VK_SPACE ? ID_SETTINGS : key == VK_F2 ? ID_OPEN : key == VK_F5 ? ID_RESCAN : 0;
     if (!command || gStartupSplash || gPlaying || gShowingResult || gSettingsWindow || gPracticeWindow) return false;
     if ((GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000) || (GetKeyState(VK_SHIFT) & 0x8000)) return false;
-    if (message == WM_KEYDOWN && (flags & (1LL << 30)) == 0 && (!gLoading || command == ID_SUMMARY_SETTINGS))
+    if (message == WM_KEYDOWN && (flags & (1LL << 30)) == 0 && (!gLoading || command == ID_SETTINGS))
         SendMessageW(gWindow, WM_COMMAND, command, 0);
     return true;
 }
@@ -4417,7 +4438,6 @@ bool paintRmlSongList(HWND window, HDC dc) {
 LRESULT CALLBACK songListSubclass(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR id, DWORD_PTR) {
     if(gSongInfoVisible&&(message==WM_KEYDOWN||message==WM_LBUTTONDOWN||message==WM_MOUSEWHEEL)){if(message==WM_KEYDOWN&&wParam==VK_ESCAPE){gSongInfoVisible=false;ShowWindow(gList,SW_SHOWNA);InvalidateRect(gWindow,nullptr,FALSE);}return 0;}
 
-    if(summaryInput(message,wParam,lParam,window))return 0;
 #ifdef BMS_ENABLE_SKIN_BINDINGS
     if(lr2SelectInputLocked(message))return 0;
     if(message==WM_SETCURSOR&&lr2SelectSetCursor(lParam))return TRUE;

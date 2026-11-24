@@ -6,6 +6,8 @@
 #include "DirtyRect.h"
 #include "BgaSourceImage.h"
 #include "VideoNv12.h"
+#include "Lr2FrameScale.h"
+#include "Lr2HybridUpscale.h"
 #include <d3d11.h>
 #include <dxgi1_3.h>
 #include <dcomp.h>
@@ -66,8 +68,16 @@ class CompositionPresenter {
     bool modernDrawing_{};
     HWND outputWindow_{};
     using FrameOverlay = void (*)(ID2D1RenderTarget*,int,int);
-    FrameOverlay frameOverlay_{}, frameForeground_{},frameIntro_{};
+    FrameOverlay frameOverlay_{}, frameForeground_{},frameIntro_{},outputPlayOverlay_{};
     std::optional<std::size_t> foregroundBoundary_;
+    std::optional<std::size_t> outputOverlayBoundary_;
+    bool playLayersAtOutput_{};
+    std::optional<sevenmania::skin::lr2::FrameScale> frameScale_;
+    Ptr<ID2D1Bitmap1> nativeFrame_, nativeBackdrop_;
+    Ptr<ID3D11Texture2D> nativeHybridTexture_;
+    Lr2HybridUpscale hybridUpscale_;
+    D2D1_SIZE_U failedNativeSize_{};
+    bool upscaleDrawFailed_{};
     static LRESULT CALLBACK outputProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_ERASEBKGND) return 1;
@@ -242,6 +252,9 @@ public:
     latency::Controller& lowLatency() { return lowLatency_; }
     void reset() {
         frameOverlay_=nullptr;frameForeground_=nullptr;frameIntro_=nullptr;
+        frameScale_.reset(); outputOverlayBoundary_.reset(); playLayersAtOutput_=false; outputPlayOverlay_=nullptr;
+        nativeFrame_.Reset(); nativeBackdrop_.Reset(); failedNativeSize_={};
+        nativeHybridTexture_.Reset(); hybridUpscale_={};
         lowLatency_.detach();
         hybridLayer_.Reset(); hybridLayerPixels_.reset(); uploadedLayerPixels_.reset();
         sourceBackdrop_.Reset(); hybridSource_.reset(); uploadedSource_.reset();
@@ -352,11 +365,71 @@ public:
             gpuUsageWindow_ = std::chrono::steady_clock::now();
         }
         rectangles_.clear();
+        frameScale_.reset(); outputOverlayBoundary_.reset(); playLayersAtOutput_=false; outputPlayOverlay_=nullptr;
         frameFailed_ = false;
         presentationDeferred_ = false; pendingFrame_ = false;
         hybridFrame_ = false;
         return true;
     }
+    void retryUpscale() noexcept { upscaleDrawFailed_=false; failedNativeSize_={}; }
+    bool setFrameUpscale(sevenmania::skin::lr2::FrameScale scale, bool cpuBackdrop) {
+        using sevenmania::skin::lr2::UpscaleFilter;
+        if (upscaleDrawFailed_ || (!modernDrawing_ && !overlayOnly_) || !drawingTarget_ ||
+            scale.width>width_ || scale.height>height_) return false;
+        const auto size=D2D1::SizeU(scale.width,scale.height);
+        const auto matches=[&](D2D1_SIZE_U other) { return size.width==other.width&&size.height==other.height; };
+        if (matches(failedNativeSize_)) return false;
+        auto* target=static_cast<ID2D1DeviceContext*>(drawingTarget_.Get());
+        const auto format=D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_IGNORE);
+        HRESULT hr=S_OK;
+        if (scale.filter==UpscaleFilter::Hybrid && hybridUpscale_.enabled()) {
+            if (!nativeHybridTexture_) {
+                D3D11_TEXTURE2D_DESC texture{};
+                texture.Width=size.width; texture.Height=size.height;
+                texture.MipLevels=texture.ArraySize=1;
+                texture.Format=format.format;
+                texture.SampleDesc.Count=1;
+                texture.BindFlags=D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+                Ptr<ID3D11Texture2D> native;
+                Ptr<IDXGISurface> surface;
+                Ptr<ID2D1Bitmap1> bitmap;
+                if (SUCCEEDED(device_->CreateTexture2D(&texture,nullptr,&native)) &&
+                    SUCCEEDED(native.As(&surface)) &&
+                    SUCCEEDED(target->CreateBitmapFromDxgiSurface(surface.Get(),
+                        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,format,96,96),&bitmap)) &&
+                    hybridUpscale_.prepare(device_.Get(),native.Get(),frame_.Get())) {
+                    nativeHybridTexture_=native;
+                    nativeFrame_=bitmap;
+                } else hybridUpscale_.disable();
+            }
+        }
+        if (scale.filter==UpscaleFilter::Hybrid && !hybridUpscale_.enabled()) scale.filter=UpscaleFilter::Bicubic;
+        if (!nativeFrame_ || !matches(nativeFrame_->GetPixelSize())) {
+            nativeFrame_.Reset(); nativeBackdrop_.Reset();
+            nativeHybridTexture_.Reset(); hybridUpscale_.releaseInput();
+            hr=target->CreateBitmap(size,nullptr,0,
+                D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,format,96,96),&nativeFrame_);
+        }
+        if (nativeBackdrop_ && !matches(nativeBackdrop_->GetPixelSize())) nativeBackdrop_.Reset();
+        if (SUCCEEDED(hr)&&cpuBackdrop&&!nativeBackdrop_) {
+            hr=target->CreateBitmap(size,nullptr,0,
+                D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,format,96,96),&nativeBackdrop_);
+        }
+        if (FAILED(hr)) {
+            failedNativeSize_=size;
+            OutputDebugStringW(L"LR2 upscale: native bitmap creation failed. Using original rendering.\n");
+            return false;
+        }
+        frameScale_=scale;
+        return true;
+    }
+    // Native application controls use client coordinates above the filtered LR2 frame.
+    void markOutputOverlayBoundary() { outputOverlayBoundary_=rectangles_.size(); }
+    void drawPlayLayersAtOutput(FrameOverlay beforeNotes=nullptr) noexcept {
+        playLayersAtOutput_=true;
+        outputPlayOverlay_=beforeNotes;
+    }
+    bool drawsPlayLayersAtOutput() const noexcept { return playLayersAtOutput_&&frameScale_.has_value(); }
     RECT bgaViewport_{};
     void setBgaViewport(RECT area){bgaViewport_=area;}
     void hybridBackground(const uint32_t* pixels, uint64_t generation, int darkness,
@@ -509,7 +582,14 @@ public:
         GpuTimingSlot* timing = beginGpuTiming();
         const bool drawn = drawFrame(pixels, width, foreground, fw, fh, foregroundX, overlay);
         finishGpuTiming(timing);
-        if (!drawn) { fail("draw", deviceStatus()); reset(); return false; }
+        if (!drawn) {
+            const HRESULT status=deviceStatus();
+            if (frameScale_) {
+                upscaleDrawFailed_=SUCCEEDED(status);
+                OutputDebugStringW(L"LR2 upscale: rendering failed. Using original rendering.\n");
+            }
+            fail(frameScale_?"lr2-upscale-draw":"draw", status); reset(); return false;
+        }
         // A full presentation queue is normal, not a lost device. Keep drawing the
         // newest frame and submit only when there is room; never wait for a refresh.
         BMS_PERF_SCOPE(gpuQueueMs);
@@ -729,17 +809,55 @@ private:
     }
     bool drawFrame(const void* pixels, int width, const uint32_t* foreground, int fw, int fh, int foregroundX,
                    OverlayDraw overlay = {nullptr, nullptr}) {
-        if (hybridFrame_) { if (!uploadHybrid(static_cast<const uint32_t*>(pixels), width)) return false; }
-        else if (!overlayOnly_) { BMS_PERF_SCOPE(uploadMs);HUD_SCOPE(UploadFrame); context_->UpdateSubresource(frame_.Get(), 0, nullptr, pixels, width * 4, 0); uploadedBytes_ += uint64_t(width) * height_ * 4; }
+        const auto* scale=frameScale_?&*frameScale_:nullptr;
+        const int drawWidth=scale?scale->width:width_, drawHeight=scale?scale->height:height_;
+        const bool nativeCpuBackdrop=scale&&!overlay.draw&&!overlayOnly_;
+        if (nativeCpuBackdrop) {
+            if (!nativeBackdrop_ || FAILED(nativeBackdrop_->CopyFromMemory(nullptr,pixels,width*4))) return false;
+            uploadedBytes_+=uint64_t(drawWidth)*drawHeight*4;
+        } else if (!scale) {
+            if (hybridFrame_) { if (!uploadHybrid(static_cast<const uint32_t*>(pixels), width)) return false; }
+            else if (!overlayOnly_) { BMS_PERF_SCOPE(uploadMs);HUD_SCOPE(UploadFrame); context_->UpdateSubresource(frame_.Get(), 0, nullptr, pixels, width * 4, 0); uploadedBytes_ += uint64_t(width) * height_ * 4; }
+        }
         BMS_PERF_SCOPE(gpuDrawMs);HUD_SCOPE(CompositionDraw);
 #ifdef BMS_HUD_FRAME_PROBE
         hudprobe::recorder.lastBitmap=nullptr;
 #endif
+        auto* modern=scale?static_cast<ID2D1DeviceContext*>(drawingTarget_.Get()):nullptr;
+        Ptr<ID2D1Image> output;
+        if (modern) {
+            modern->GetTarget(&output);
+            modern->SetTarget(nativeFrame_.Get());
+        }
         {HUD_SCOPE(D2DBegin);drawingTarget_->BeginDraw();}
+        if (modern) {
+            modern->Clear(D2D1::ColorF(D2D1::ColorF::Black));
+            if (nativeCpuBackdrop) modern->DrawBitmap(nativeBackdrop_.Get(),
+                D2D1::RectF(0,0,float(drawWidth),float(drawHeight)),1,D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        }
+        HRESULT nativeDraw=S_OK;
+        const auto finishUpscale=[&] {
+            if (!modern) return;
+            if (scale->filter==sevenmania::skin::lr2::UpscaleFilter::Hybrid) {
+                nativeDraw=modern->EndDraw();
+                modern->SetTarget(output.Get());
+                if (SUCCEEDED(nativeDraw)) hybridUpscale_.draw(context_.Get(),*scale);
+                modern->BeginDraw();
+                modern=nullptr;
+                return;
+            }
+            modern->SetTarget(output.Get());
+            modern->Clear(D2D1::ColorF(D2D1::ColorF::Black));
+            const auto destination=D2D1::RectF(scale->x,scale->y,scale->x+scale->outputWidth,scale->y+scale->outputHeight);
+            const auto filter=scale->filter==sevenmania::skin::lr2::UpscaleFilter::Bicubic
+                ? D2D1_INTERPOLATION_MODE_CUBIC : D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+            modern->DrawBitmap(nativeFrame_.Get(),&destination,1,filter,nullptr,nullptr);
+            modern=nullptr;
+        };
         if (overlayOnly_) drawingTarget_->Clear(D2D1::ColorF(0, 0, 0));
-        if (overlay.draw) overlay.draw(overlay.data, drawingTarget_.Get(), width_, height_);
+        if (overlay.draw) overlay.draw(overlay.data, drawingTarget_.Get(), drawWidth, drawHeight);
         drawingTarget_->SetAntialiasMode(antialias_ ? D2D1_ANTIALIAS_MODE_PER_PRIMITIVE : D2D1_ANTIALIAS_MODE_ALIASED);
-        if (hybridFrame_) {
+        if (hybridFrame_&&!scale) {
             drawingTarget_->Clear(D2D1::ColorF(0,0,0));
             const auto area=bgaViewport_.right>bgaViewport_.left&&bgaViewport_.bottom>bgaViewport_.top?D2D1::RectF(float(bgaViewport_.left),float(bgaViewport_.top),float(bgaViewport_.right),float(bgaViewport_.bottom)):D2D1::RectF(0,0,float(width_),float(height_));
             if (videoActive_ && videoBitmap_) drawingTarget_->DrawBitmap(videoBitmap_.Get(), area, 1, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
@@ -756,9 +874,32 @@ private:
                 D2D1::RectF(static_cast<float>(region.rect.left), static_cast<float>(region.rect.top),
                     static_cast<float>(region.rect.right), static_cast<float>(region.rect.bottom)), 1, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
         }
-        if(frameOverlay_)frameOverlay_(drawingTarget_.Get(),width_,height_);
+        if(frameOverlay_)frameOverlay_(drawingTarget_.Get(),drawWidth,drawHeight);
+        // Keep the LR2 playfield in authored coordinates. Rasterize notes and
+        // layers above them into the output so covers and blends see the notes.
+        bool playClip=false;
+        D2D1_MATRIX_3X2_F playPrevious{};
+        if(drawsPlayLayersAtOutput()) {
+            finishUpscale();
+            drawingTarget_->GetTransform(&playPrevious);
+            drawingTarget_->SetTransform(D2D1::Matrix3x2F::Scale(scale->outputWidth/drawWidth,scale->outputHeight/drawHeight)*
+                D2D1::Matrix3x2F::Translation(scale->x,scale->y));
+            drawingTarget_->PushAxisAlignedClip(D2D1::RectF(0,0,float(drawWidth),float(drawHeight)),D2D1_ANTIALIAS_MODE_ALIASED);
+            playClip=true;
+            if(outputPlayOverlay_)outputPlayOverlay_(drawingTarget_.Get(),drawWidth,drawHeight);
+        }
+        const auto finishPlayLayers=[&] {
+            if(!playClip)return;
+            drawingTarget_->PopAxisAlignedClip();
+            drawingTarget_->SetTransform(playPrevious);
+            playClip=false;
+        };
         for (std::size_t i=0;i<rectangles_.size();++i) {
-            if(frameForeground_&&foregroundBoundary_==i)frameForeground_(drawingTarget_.Get(),width_,height_);
+            if(frameForeground_&&foregroundBoundary_==i)frameForeground_(drawingTarget_.Get(),drawWidth,drawHeight);
+            if(outputOverlayBoundary_==i) {
+                finishPlayLayers();
+                finishUpscale();
+            }
             const auto& rect=rectangles_[i];
             if(rect.clipped)drawingTarget_->PushAxisAlignedClip(rect.clip,D2D1_ANTIALIAS_MODE_ALIASED);
             if (rect.sprite) {
@@ -781,7 +922,9 @@ private:
             if(rect.clipped)drawingTarget_->PopAxisAlignedClip();
         }
         if(frameForeground_&&(!foregroundBoundary_||*foregroundBoundary_>=rectangles_.size()))
-            frameForeground_(drawingTarget_.Get(),width_,height_);
+            frameForeground_(drawingTarget_.Get(),drawWidth,drawHeight);
+        finishPlayLayers();
+        finishUpscale();
         HRESULT uploaded = S_OK;
         if (foreground && fw > 0 && fh > 0) {
             if (!overlay_ || fw != overlayWidth_ || fh != overlayHeight_) {
@@ -796,6 +939,6 @@ private:
         }
         if(frameIntro_)frameIntro_(drawingTarget_.Get(),width_,height_); // Above the full-frame CPU foreground too.
         HRESULT drawn;{HUD_SCOPE(D2DEnd);drawn = drawingTarget_->EndDraw();}
-        return SUCCEEDED(uploaded) && SUCCEEDED(drawn);
+        return SUCCEEDED(nativeDraw) && SUCCEEDED(uploaded) && SUCCEEDED(drawn);
     }
 };

@@ -1,0 +1,33 @@
+<rml><head><title>키 설정</title><link type="text/rcss" href="keyconfig.rcss" /></head><body>
+<div id="shell">
+<div id="modes">
+<div id="title">KEY CONFIG</div>
+<div class="mode" id="mode-1">7KEY</div>
+<div class="mode" id="mode-4">14KEY</div>
+<div class="mode" id="mode-0">5KEY</div>
+<div class="mode" id="mode-3">10KEY</div>
+<div class="mode" id="mode-2">9KEY</div>
+</div>
+<div id="main">
+<div id="heading"><div class="slot-label">LANE</div><div class="column">KEYBOARD</div><div class="column">CONTROLLER</div></div>
+<div id="slots">
+<div class="slot" id="slot-0" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-0-label"></div><div class="key" id="slot-0-key"></div><div class="key" id="slot-0-pad"></div></div></div>
+<div class="slot" id="slot-1" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-1-label"></div><div class="key" id="slot-1-key"></div><div class="key" id="slot-1-pad"></div></div></div>
+<div class="slot" id="slot-2" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-2-label"></div><div class="key" id="slot-2-key"></div><div class="key" id="slot-2-pad"></div></div></div>
+<div class="slot" id="slot-3" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-3-label"></div><div class="key" id="slot-3-key"></div><div class="key" id="slot-3-pad"></div></div></div>
+<div class="slot" id="slot-4" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-4-label"></div><div class="key" id="slot-4-key"></div><div class="key" id="slot-4-pad"></div></div></div>
+<div class="slot" id="slot-5" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-5-label"></div><div class="key" id="slot-5-key"></div><div class="key" id="slot-5-pad"></div></div></div>
+<div class="slot" id="slot-6" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-6-label"></div><div class="key" id="slot-6-key"></div><div class="key" id="slot-6-pad"></div></div></div>
+<div class="slot" id="slot-7" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-7-label"></div><div class="key" id="slot-7-key"></div><div class="key" id="slot-7-pad"></div></div></div>
+<div class="slot" id="slot-8" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-8-label"></div><div class="key" id="slot-8-key"></div><div class="key" id="slot-8-pad"></div></div></div>
+<div class="slot" id="slot-9" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-9-label"></div><div class="key" id="slot-9-key"></div><div class="key" id="slot-9-pad"></div></div></div>
+<div class="slot" id="slot-10" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-10-label"></div><div class="key" id="slot-10-key"></div><div class="key" id="slot-10-pad"></div></div></div>
+<div class="slot" id="slot-11" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-11-label"></div><div class="key" id="slot-11-key"></div><div class="key" id="slot-11-pad"></div></div></div>
+<div class="slot" id="slot-12" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-12-label"></div><div class="key" id="slot-12-key"></div><div class="key" id="slot-12-pad"></div></div></div>
+<div class="slot" id="slot-13" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-13-label"></div><div class="key" id="slot-13-key"></div><div class="key" id="slot-13-pad"></div></div></div>
+<div class="slot" id="slot-14" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-14-label"></div><div class="key" id="slot-14-key"></div><div class="key" id="slot-14-pad"></div></div></div>
+<div class="slot" id="slot-15" style="display:none"><div class="slot-line"><div class="slot-label" id="slot-15-label"></div><div class="key" id="slot-15-key"></div><div class="key" id="slot-15-pad"></div></div></div>
+</div>
+<div id="device"></div>
+<div id="footer"><span id="status"></span>   빨간 글자 클릭 후 키·버튼 입력 · ↑↓ Enter · PgUp/PgDn 모드 · Esc 닫기</div>
+</div></div></body></rml>

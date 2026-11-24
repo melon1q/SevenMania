@@ -334,7 +334,7 @@ void restartPlayback() {
     const auto bgaCanvas=playBgaCanvas();
     gBgaRaster.start(chart,bgaCanvas.right,bgaCanvas.bottom,gPlayhead);
     if (!chart.fallbackVideo.empty()) {
-        gVideoBga.request(std::max(0.0, gPlayhead - gBgaVideoStartSeconds), gWindowWidth, gWindowHeight);
+        gVideoBga.request(std::max(0.0, gPlayhead - gBgaVideoStartSeconds), bgaCanvas.right, bgaCanvas.bottom);
         gVideoBga.waitUntilPrepared();
     }
     releaseBgaBackplate();

@@ -2,6 +2,7 @@
 #include "CompositionPresenter.h"
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "dcomp.lib")
@@ -76,14 +77,274 @@ struct GpuTestAccess {
         renderer.context_->Unmap(staging.Get(), 0);
         return pixels;
     }
+
+    static void verifyLr2Upscale(HWND window) {
+        using namespace sevenmania::skin::lr2;
+        require(!frameScale(UpscaleFilter::Original,640,480,1920,1080,false),"original path must stay direct");
+        require(!frameScale(UpscaleFilter::Nearest,640,480,1280,480,false),"letterbox at original size must stay direct");
+        require(!frameScale(UpscaleFilter::Nearest,1280,720,1024,768,true),"a shrinking axis must stay direct");
+        require(!frameScale(UpscaleFilter::Bicubic,1920,1080,3840,2160,true),"FHD skins are excluded");
+        const auto hd=frameScale(UpscaleFilter::Bicubic,1280,720,1600,900,true);
+        require(hd&&hd->x==0&&hd->outputHeight==900,"HD stretch with fractional scale");
+        const auto wide=frameScale(UpscaleFilter::Nearest,640,480,1366,768,false);
+        require(wide&&std::abs(wide->x-171.f)<.01f,"fractional SD scale centered");
+        float pointerX=683,pointerY=384;
+        wide->toCanvas(pointerX,pointerY);
+        require(std::abs(pointerX-320)<.01f&&std::abs(pointerY-240)<.01f,"client pointer did not map to native canvas");
+
+        CompositionPresenter renderer;
+        renderer.setModernDrawing(true);
+        constexpr int size=1280;
+        std::vector<uint32_t> base(size_t(size)*size,0xff204060u);
+        ID2D1Bitmap1* previousNative{};
+        for (const auto filter:{UpscaleFilter::Nearest,UpscaleFilter::Bicubic}) {
+            require(renderer.prepare(window,size,size),"native frame renderer unavailable");
+            const auto scale=frameScale(filter,640,480,size,size,false);
+            require(scale&&renderer.setFrameUpscale(*scale,true),"native target allocation failed");
+            if(previousNative)require(renderer.nativeFrame_.Get()==previousNative,"filter switch recreated the native bitmap");
+            previousNative=renderer.nativeFrame_.Get();
+            renderer.rectangle(320,0,640,480,RGB(255,255,255));
+            renderer.setFrameForeground([](ID2D1RenderTarget* target,int w,int h) {
+                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+                if(SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Blue),&brush)))
+                    target->FillRectangle(D2D1::RectF(float(w-40),float(h-40),float(w),float(h)),brush.Get());
+            });
+            renderer.markFrameForegroundBoundary();
+            renderer.markOutputOverlayBoundary();
+            renderer.rectangle(20,20,40,40,RGB(0,255,0));
+            require(renderer.drawFrame(base.data(),size,nullptr,0,0,0),"native LR2 frame failed to draw");
+            std::vector<uint32_t> pixels;
+            require(renderer.captureLastFrame(pixels,size,size),"upscaled frame readback failed");
+            const auto rgb=[&](int px,int py) { return pixels[size_t(py)*size+px]&0xffffffu; };
+            require(rgb(10,10)==0&&rgb(30,30)==0x00ff00u,"letterbox or client-space overlay changed");
+            require(rgb(200,640)==0x204060u&&rgb(900,640)==0xffffffu&&rgb(1240,1080)==0x0000ffu,
+                "upscaled CPU frame, notes or foreground missing");
+            if(filter==UpscaleFilter::Nearest)require(rgb(639,640)==0x204060u&&rgb(640,640)==0xffffffu,
+                "nearest neighbor blended a source pixel edge");
+            else require(rgb(639,640)!=0x204060u&&rgb(640,640)!=0xffffffu,"Bicubic did not smooth the edge");
+        }
+        renderer.reset();
+        require(renderer.prepare(window,1600,900)&&renderer.setFrameUpscale(*hd,false),"resize to an HD skin failed");
+        std::pair<int,int> canvas{};
+        require(renderer.drawFrame(nullptr,1600,nullptr,0,0,0,{
+            [](void* data,ID2D1RenderTarget* target,int w,int h) {
+                *static_cast<std::pair<int,int>*>(data)={w,h};
+                target->Clear(D2D1::ColorF(D2D1::ColorF::Red));
+            },&canvas}),"scene-only upscale failed");
+        std::vector<uint32_t> pixels;
+        require(canvas==std::pair{1280,720}&&renderer.captureLastFrame(pixels,1600,900)&&
+            (pixels[450*1600+800]&0xffffffu)==0xff0000u,"scene-only frame did not use the HD native canvas");
+
+        require(renderer.prepare(window,size,size),"resize back to SD output failed");
+        const auto sd=frameScale(UpscaleFilter::Nearest,640,480,size,size,false);
+        require(sd&&renderer.setFrameUpscale(*sd,true),"native target could not be recreated");
+        renderer.nativeBackdrop_.Reset(); // Simulate loss of an upscale-specific resource before drawing.
+        renderer.hybridReadyPermit_=true;
+        require(!renderer.present(window,base.data(),size,size)&&
+            std::string_view(renderer.lastFailureStage())=="lr2-upscale-draw","failed upscale was not diagnosed");
+        require(renderer.prepare(window,size,size)&&!renderer.setFrameUpscale(*sd,true)&&
+            renderer.drawFrame(base.data(),size,nullptr,0,0,0)&&renderer.captureLastFrame(pixels,size,size)&&
+            (pixels[0]&0xffffffu)==0x204060u,"original drawing did not recover after a failed upscale");
+        renderer.retryUpscale();
+        require(renderer.setFrameUpscale(*sd,true),"changing the filter did not allow upscale recreation");
+
+#if BMS_HAS_LR2_HYBRID
+        std::vector<uint32_t> hybridPixels;
+        for (const auto filter:{UpscaleFilter::Hybrid,UpscaleFilter::Bicubic}) {
+            require(renderer.prepare(window,size,size),"hybrid output prepare failed");
+            const auto scale=frameScale(filter,640,480,size,size,false);
+            require(scale&&renderer.setFrameUpscale(*scale,true)&&renderer.frameScale_->filter==filter,
+                "hybrid source or shader failed to initialize");
+            renderer.rectangle(320,0,640,480,RGB(255,255,255));
+            renderer.markOutputOverlayBoundary();
+            renderer.rectangle(20,20,40,40,RGB(0,255,0));
+            require(renderer.drawFrame(base.data(),size,nullptr,0,0,0)&&renderer.captureLastFrame(pixels,size,size),
+                "hybrid draw or readback failed");
+            const auto rgb=[&](int px,int py) { return pixels[size_t(py)*size+px]&0xffffffu; };
+            require(rgb(10,10)==0&&rgb(30,30)==0x00ff00u&&rgb(200,640)==0x204060u&&rgb(900,640)==0xffffffu,
+                "hybrid output broke letterbox, native overlay order or flat colors");
+            if (filter==UpscaleFilter::Hybrid) {
+                hybridPixels=pixels;
+                for (int xEdge=635;xEdge<645;++xEdge) {
+                    const auto color=rgb(xEdge,640);
+                    require(((color>>16)&255)>=0x20&&((color>>8)&255)>=0x40&&(color&255)>=0x60,
+                        "hybrid undershot the local color range");
+                }
+            } else {
+                require(!std::equal(pixels.begin()+640*size+635,pixels.begin()+640*size+645,
+                    hybridPixels.begin()+640*size+635),"hybrid and Bicubic produced identical edge samples");
+            }
+        }
+        constexpr int fractionalWidth=1366,fractionalHeight=768;
+        require(renderer.prepare(window,fractionalWidth,fractionalHeight),"fractional hybrid output prepare failed");
+        const auto fractional=frameScale(UpscaleFilter::Hybrid,640,480,fractionalWidth,fractionalHeight,false);
+        require(fractional&&renderer.setFrameUpscale(*fractional,true),"fractional hybrid resource unavailable");
+        std::vector<uint32_t> gradient(size_t(fractionalWidth)*fractionalHeight,0xff000000u);
+        for(int y=0;y<480;++y)for(int x=0;x<640;++x)
+            gradient[size_t(y)*fractionalWidth+x]=0xff000000u+uint32_t(x*255/639)*0x010101u;
+        const uint32_t halfRed=0x80800000u;
+        require(renderer.sprite(&halfRed,1,1,20,20,12,12,142),"translucent sprite setup failed");
+        require(renderer.drawFrame(gradient.data(),fractionalWidth,nullptr,0,0,0)&&
+            renderer.captureLastFrame(pixels,fractionalWidth,fractionalHeight),"fractional hybrid readback failed");
+        const auto sample=[&](int x,int y) { return pixels[size_t(y)*fractionalWidth+x]&0xffffffu; };
+        require(sample(170,384)==0&&sample(1195,384)==0,"fractional letterbox boundaries moved");
+        require(std::abs(int(sample(683,384)&255)-127)<=2&&sample(500,384)<sample(800,384),
+            "flat gradient developed a discontinuity");
+        const auto red=sample(211,40);
+        require(((red>>16)&255)>=130&&(red&255)<=7,"premultiplied sprite blend changed");
+        require(renderer.prepare(window,size,size),"could not restore output size after fractional test");
+#endif
+        require(frameScale(UpscaleFilter::Hybrid,1280,720,1920,1080,false)->filter==UpscaleFilter::Bicubic,
+            "HD should fall back to Bicubic");
+        renderer.hybridUpscale_.disable();
+        require(renderer.prepare(window,size,size)&&
+            renderer.setFrameUpscale(*frameScale(UpscaleFilter::Hybrid,640,480,size,size,false),true)&&
+            renderer.frameScale_->filter==UpscaleFilter::Bicubic,"unavailable hybrid did not fall back to Bicubic");
+    }
+
+    static void verifyLr2OutputNotes(HWND window) {
+        using namespace sevenmania::skin::lr2;
+        CompositionPresenter renderer;
+        renderer.setModernDrawing(true);
+        renderer.setAntialias(false);
+        constexpr int width=1600,height=1280;
+        const std::vector<uint32_t> base(size_t(width)*height,0xff000000u);
+        std::vector<uint32_t> pixels;
+        for(const auto filter:{UpscaleFilter::Bicubic,UpscaleFilter::Nearest,UpscaleFilter::Hybrid}) {
+            for(const bool stretch:{false,true}) {
+                require(renderer.prepare(window,width,height),"LR2 note output prepare failed");
+                const auto scale=frameScale(filter,640,480,width,height,stretch);
+                require(scale&&renderer.setFrameUpscale(*scale,true),"LR2 note canvas unavailable");
+                renderer.drawPlayLayersAtOutput([](ID2D1RenderTarget* target,int,int) {
+                    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+                    if(SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Purple),&brush)))
+                        target->FillRectangle(D2D1::RectF(102,110,110,170),brush.Get());
+                });
+                renderer.setFrameForeground([](ID2D1RenderTarget* target,int,int) {
+                    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+                    if(SUCCEEDED(target->CreateSolidColorBrush(D2D1::ColorF(0,0,1,.5f),&brush)))
+                        target->FillRectangle(D2D1::RectF(100,90,130,110),brush.Get());
+                });
+                // A note source and its lane clip are expressed in authored coordinates.
+                const uint32_t white=0xffffffff;
+                const RECT clip{100,90,111,160};
+                auto* target=renderer.renderTarget();
+                Microsoft::WRL::ComPtr<ID2D1Bitmap> note;
+                require(SUCCEEDED(target->CreateBitmap(D2D1::SizeU(1,1),&white,4,
+                    D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)),
+                    &note)),"output note sprite creation failed");
+                require(renderer.bitmapSprite(note.Get(),D2D1::RectF(98,95,120,150),1,&clip,D2D1::RectF(0,0,1,1)),
+                    "output note sprite queue failed");
+                renderer.rectangle(100,95,120,100,RGB(255,0,0)); // Player cover above the note.
+                renderer.markFrameForegroundBoundary();
+                renderer.markOutputOverlayBoundary();
+                renderer.rectangle(10,10,20,20,RGB(0,255,0)); // Native pause UI coordinates.
+                require(renderer.drawFrame(base.data(),width,nullptr,0,0,0)&&renderer.captureLastFrame(pixels,width,height),
+                    "output note capture failed");
+                const auto rgb=[&](int x,int y) { return pixels[size_t(y)*width+x]&0xffffffu; };
+                const auto at=[&](float x,float y) {
+                    return rgb(int(scale->x+x*scale->outputWidth/scale->width),
+                               int(scale->y+y*scale->outputHeight/scale->height));
+                };
+                require(at(105,120)==0xffffffu&&at(113,120)==0&&at(97,120)==0,"note or lane clip in wrong coordinates");
+                require(at(105,160)==0x800080u,"pre-note output layer is missing or drawn over the notes");
+                const auto covered=at(105,97);
+                require((covered>>16)>=126&&(covered&255)>=126&&(covered&0xff00u)==0,
+                    "player cover or authored translucent cover changed order");
+                const auto translucent=at(105,105);
+                require((translucent>>16)>=126&&(translucent&255)==255,
+                    "authored foreground did not see the output note underneath");
+                require(rgb(15,15)==0x00ff00u,"client-space overlay inherited the playfield transform");
+                const int edge=int(std::lround(scale->x+100*scale->outputWidth/scale->width));
+                const int noteY=int(scale->y+120*scale->outputHeight/scale->height);
+                require(rgb(edge-1,noteY)==0&&rgb(edge,noteY)==0xffffffu,"background filter softened the note edge");
+            }
+        }
+    }
+
+#if BMS_HAS_LR2_HYBRID
+    static void measureLr2Upscale(HWND window) {
+        using namespace sevenmania::skin::lr2;
+        CompositionPresenter renderer;
+        renderer.setModernDrawing(true);
+        constexpr int frames=30;
+        for (const int height : {1080,1440}) {
+            const int width=height*16/9;
+            std::vector<uint32_t> base(size_t(width)*height,0xff18304au);
+            require(renderer.prepare(window,width,height),"benchmark output prepare failed");
+            for (const auto filter : {UpscaleFilter::Bicubic,UpscaleFilter::Hybrid}) {
+                require(renderer.prepare(window,width,height),"benchmark frame prepare failed");
+                const auto scale=frameScale(filter,640,480,width,height,false);
+                require(scale&&renderer.setFrameUpscale(*scale,true)&&renderer.frameScale_->filter==filter,
+                    "benchmark filter unavailable");
+                // Simulate narrow lanes, hard diagonals and translucent HUD details.
+                for (int x=12;x<640;x+=26)renderer.rectangle(float(x),10,float(x+1),470,RGB(220,220,255));
+                for (int y=0;y<300;++y)renderer.rectangle(float(y),float(y),float(y+2),float(y+1),RGB(255,190,0),.6f);
+                auto draw=[&] { return renderer.drawFrame(base.data(),width,nullptr,0,0,0); };
+                require(draw(),"benchmark warmup failed");
+                std::vector<double> timings;
+                auto* immediate=renderer.context_.Get();
+                using Query=Microsoft::WRL::ComPtr<ID3D11Query>;
+                auto create=[&](D3D11_QUERY type) {
+                    Query query;
+                    const D3D11_QUERY_DESC desc{type,0};
+                    require(SUCCEEDED(renderer.device_->CreateQuery(&desc,&query)),"GPU timing query unavailable");
+                    return query;
+                };
+                const auto disjoint=create(D3D11_QUERY_TIMESTAMP_DISJOINT);
+                std::array<Query,frames> start,end;
+                for(int i=0;i<frames;++i) {
+                    start[i]=create(D3D11_QUERY_TIMESTAMP);
+                    end[i]=create(D3D11_QUERY_TIMESTAMP);
+                }
+                immediate->Begin(disjoint.Get());
+                for(int i=0;i<frames;++i) {
+                    immediate->End(start[i].Get());
+                    require(draw(),"benchmark frame failed");
+                    immediate->End(end[i].Get());
+                }
+                immediate->End(disjoint.Get());
+                immediate->Flush();
+                D3D11_QUERY_DATA_TIMESTAMP_DISJOINT clock{};
+                HRESULT ready=S_FALSE;
+                for (int wait=0;wait<2000 && ready==S_FALSE;++wait) {
+                    ready=immediate->GetData(disjoint.Get(),&clock,sizeof(clock),D3D11_ASYNC_GETDATA_DONOTFLUSH);
+                    if(ready==S_FALSE)Sleep(1);
+                }
+                if(ready!=S_OK || clock.Disjoint || !clock.Frequency) {
+                    std::cout << "GPU timing unavailable at " << height << "p\n";
+                    continue;
+                }
+                for(int i=0;i<frames;++i) {
+                    UINT64 first{},last{};
+                    if(immediate->GetData(start[i].Get(),&first,sizeof(first),0)==S_OK &&
+                       immediate->GetData(end[i].Get(),&last,sizeof(last),0)==S_OK && last>=first)
+                        timings.push_back(double(last-first)*1000/clock.Frequency);
+                }
+                if(timings.empty())continue;
+                std::sort(timings.begin(),timings.end());
+                std::cout << height << "p " << (filter==UpscaleFilter::Hybrid?"Hybrid":"Bicubic")
+                          << " GPU median " << timings[timings.size()/2] << " ms, p95 "
+                          << timings[(95*timings.size()+99)/100-1] << " ms\n";
+            }
+        }
+    }
+#endif
 };
-int main() {
+int main(int argc,char** argv) {
     const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     HWND window = CreateWindowW(L"STATIC", L"GPU test", WS_OVERLAPPEDWINDOW, 0, 0, 128, 128,
         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     int result = 0;
     try {
         require(window != nullptr, "GPU test window failed");
+        if(argc==2&&std::string_view(argv[1])=="--lr2-upscale") {
+            GpuTestAccess::verifyLr2Upscale(window);
+            GpuTestAccess::verifyLr2OutputNotes(window);
+#if BMS_HAS_LR2_HYBRID
+            GpuTestAccess::measureLr2Upscale(window);
+#endif
+        } else {
         CompositionPresenter renderer;
         renderer.setVsync(true);
         for (int size : {64, 96}) {
@@ -305,6 +566,7 @@ int main() {
         }
         renderer.reset();
         std::cout << "Hardware GPU: notes, fractional edges, cover, alpha HUD, resizing and presentation passed.\n";
+        }
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; result = 1; }
     if (window) DestroyWindow(window);
     if (SUCCEEDED(com)) CoUninitialize();

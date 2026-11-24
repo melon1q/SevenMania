@@ -72,6 +72,9 @@ struct SkinChoices {
 struct Header {
     int type = -1;
     std::string name, author;
+    // #INFORMATION's fifth field: the skin's preview picture (LR2 "thumbnail"), as written; resolve it
+    // with resolveAssetPath. Empty when the skin names none.
+    std::string thumbnail;
     unsigned width = 640, height = 480;
     std::vector<CustomOption> options;
     std::vector<CustomFile> files;

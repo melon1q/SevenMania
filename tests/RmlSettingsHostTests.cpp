@@ -6,6 +6,9 @@
 #include <stdexcept>
 #include <thread>
 #include <map>
+#include <algorithm>
+#include <filesystem>
+#include <vector>
 
 void require(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 struct Surface {
@@ -112,6 +115,100 @@ int wmain(int argc, wchar_t** argv) {
         HWND closed = host.window(); key(closed, VK_ESCAPE);
         MSG message{}; while (PeekMessageW(&message, closed, WM_CLOSE, WM_CLOSE, PM_REMOVE)) DispatchMessageW(&message);
         require(!host.window(), "Escape did not close the input host"); host.close();
+        {
+            // Skin select screen: the document loads without RML/RCSS errors, shows a large preview picture,
+            // and screen rows and arrows report their ids; unsupported screens have no id to click.
+            const auto document = std::filesystem::path(argv[1]).parent_path() / L"skinselect.rml";
+            std::vector<std::string> clicked;
+            require(host.open(nullptr, document, [&](const auto& id, const auto&) { clicked.push_back(id); }, false), "skin select document did not load");
+            const auto picture = std::filesystem::path(argv[2]) / L"skin-preview.png";
+            std::filesystem::create_directories(picture.parent_path());
+            {
+                Gdiplus::Bitmap bitmap(320, 180, PixelFormat32bppARGB);
+                { Gdiplus::Graphics graphics(&bitmap); graphics.Clear(Gdiplus::Color(255, 40, 120, 200)); }
+                CLSID png{}; CLSIDFromString(L"{557CF406-1A04-11D3-9A73-0000F81EF32E}", &png);
+                require(bitmap.Save(picture.c_str(), &png) == Gdiplus::Ok, "preview fixture not written");
+            }
+            const auto utf8 = [](const std::wstring& text) {
+                const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0, nullptr, nullptr);
+                std::string out(size_t(size), '\0'); WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), out.data(), size, nullptr, nullptr); return out;
+            };
+            require(host.setImage("preview", utf8(picture.wstring()) + "#preview"), "preview image not set");
+            require(host.setVisible("option-0", true) && host.setText("option-0-label", "MODE") && host.setText("option-0-value", "A"), "option row not filled");
+            require(host.setClass("screen-2", "selected", true), "screen row missing");
+            require(host.setVisible("option-1", true) && host.setText("option-1-label", "レーン明るさ(LANE BRIGHTNESS)") &&
+                host.setText("option-1-value", "標準(DEFAULT)"), "second option row not filled");
+            surface.paint(host);
+            // A shown row keeps its label, arrows and value on one line, and rows do not overlap.
+            const RECT label = host.bounds("option-0-label"), dec = host.bounds("option-0-dec"), value = host.bounds("option-0-value"),
+                       inc = host.bounds("option-0-inc"), next = host.bounds("option-1-label"), longLabel = host.bounds("option-1-label");
+            require(label.right <= dec.left + 1 && dec.right <= value.left + 1 && value.right <= inc.left + 1, "option row parts are not side by side");
+            require(std::abs(label.top - dec.top) <= 12 && std::abs(dec.top - inc.top) <= 2, "option row parts are not on one line");
+            require(next.top >= label.bottom - 1, "option rows overlap");
+            require(longLabel.bottom - longLabel.top <= 48, "a long label wraps onto a second line");
+            {
+                // Real LR2 option names (LITONE5_PLAYAC) for a look at the finished screen: Validation/RmlSettings/skin-select.png.
+                const char* names[][2] = {{"プレイサイド(PLAYSIDE)", "1P"}, {"レーン明るさ(LANE BRIGHTNESS)", "標準(DEFAULT)"},
+                    {"グラフ位置(GRAPH POSITION)", "遠い(FAR)"}, {"判定タイミング表示(JUDGE TIMING)", "なし(OFF)"}, {"ボム(BOMB)", "金(GOLD)"},
+                    {"LNボム(LN BOMB)", "金(GOLD)"}, {"ターンテーブル(TURNTABLE)", "小さい(SMALL)"}, {"鍵盤透過(TRANSPARENT KEYS)", "なし(OFF)"},
+                    {"ローディング(LOADING)", "曲読み込み情報(MUSIC LOADING)"}, {"LR2 F/S(FAST/SLOW)", "使用していない(NO USE)"},
+                    {"ノーツ(NOTES)", "標準(DEFAULT)"}, {"レーザー(LASER)", "標準(DEFAULT)"}};
+                for (int i = 0; i < 12; ++i) {
+                    const auto id = "option-" + std::to_string(i);
+                    host.setVisible(id, true); host.setText(id + "-label", names[i][0]); host.setText(id + "-value", names[i][1]);
+                }
+                host.setClass("option-3", "focused", true);
+                surface.paint(host); // lay the rows out first
+                const RECT box = host.bounds("options");
+                require(host.bounds("option-11").top >= box.bottom, "the last row should start below the visible list");
+                require(host.scrollIntoView("option-11"), "rows below the list cannot be scrolled into view");
+                const RECT shown = host.bounds("option-11");
+                require(shown.top >= box.top && shown.bottom <= box.bottom + 1, "scrolling into view did not bring the row into the list");
+                host.setText("skin-name", "LITONE5_PLAYAC"); host.setText("skin-author", "ネアラ"); host.setText("skin-value", "LITONE5_PLAYAC  (2/3)");
+                surface.paint(host);
+                Gdiplus::Bitmap shot(surface.bitmap, nullptr);
+                CLSID png{}; CLSIDFromString(L"{557CF406-1A04-11D3-9A73-0000F81EF32E}", &png);
+                shot.Save((std::filesystem::path(argv[2]) / L"skin-select.png").c_str(), &png);
+                host.scrollTop("options"); surface.paint(host); // back to the first rows for the clicks below
+            }
+            click(host, "skin-next"); click(host, "screen-4"); click(host, "option-0-inc"); click(host, "skin-inc");
+            require(std::find(clicked.begin(), clicked.end(), "skin-inc") != clicked.end(), "the skin row arrow did not report its id");
+            require(std::find(clicked.begin(), clicked.end(), "skin-next") != clicked.end() &&
+                std::find(clicked.begin(), clicked.end(), "screen-4") != clicked.end() &&
+                std::find(clicked.begin(), clicked.end(), "option-0-inc") != clicked.end(), "skin select clicks did not report their ids");
+            host.close();
+        }
+        {
+            // Key config screen: modes on the left, a row per lane with its key and controller button side by
+            // side; the red texts and modes report their ids. Capture: Validation/RmlSettings/key-config.png.
+            const auto document = std::filesystem::path(argv[1]).parent_path() / L"keyconfig.rml";
+            std::vector<std::string> clicked;
+            require(host.open(nullptr, document, [&](const auto& id, const auto&) { clicked.push_back(id); }, false), "key config document did not load");
+            const char* lanes[][3] = {{"스크래치", "L-SHIFT", "BUTTON 8, 9 + AXIS X"}, {"1번 건반", "S", "BUTTON 1"}, {"2번 건반", "D", "BUTTON 2"},
+                {"3번 건반", "F", "BUTTON 3"}, {"4번 건반", "SPACE", "BUTTON 4"}, {"5번 건반", "J", "BUTTON 5"}, {"6번 건반", "K", "BUTTON 6"}, {"7번 건반", "L", "---"}};
+            for (int i = 0; i < 8; ++i) {
+                const auto id = "slot-" + std::to_string(i);
+                require(host.setVisible(id, true) && host.setText(id + "-label", lanes[i][0]) && host.setText(id + "-key", lanes[i][1]) &&
+                    host.setText(id + "-pad", lanes[i][2]), "key config row missing");
+            }
+            host.setClass("slot-7-pad", "unset", true);
+            host.setClass("mode-1", "selected", true); host.setClass("slot-2", "focused", true);
+            host.setText("slot-3-key", "입력 대기"); host.setText("slot-3-pad", "..."); host.setClass("slot-3-key", "listening", true); host.setClass("slot-3-pad", "listening", true);
+            host.setText("device", "컨트롤러: 연결됨");
+            surface.paint(host);
+            const RECT label = host.bounds("slot-0-label"), keyText = host.bounds("slot-0-key"), pad = host.bounds("slot-0-pad"), next = host.bounds("slot-1-key");
+            require(label.right <= keyText.left + 1 && keyText.right <= pad.left + 1, "key config row parts are not side by side");
+            require(std::abs(keyText.top - pad.top) <= 2 && next.top >= keyText.bottom - 1, "key config rows are not laid out in lines");
+            {
+                Gdiplus::Bitmap shot(surface.bitmap, nullptr);
+                CLSID png{}; CLSIDFromString(L"{557CF406-1A04-11D3-9A73-0000F81EF32E}", &png);
+                shot.Save((std::filesystem::path(argv[2]) / L"key-config.png").c_str(), &png);
+            }
+            click(host, "slot-1-key"); click(host, "slot-2-pad"); click(host, "mode-4");
+            for (const char* id : {"slot-1-key", "slot-2-pad", "mode-4"})
+                require(std::find(clicked.begin(), clicked.end(), id) != clicked.end(), "a key config click did not report its id");
+            host.close();
+        }
         std::cout << "Rml settings host input, Unicode, resize/DPI, lifetime and failure recovery passed.\n";
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; code=1; }
     Gdiplus::GdiplusShutdown(token); return code;
